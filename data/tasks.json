@@ -1,0 +1,73 @@
+{
+  "tasks": [
+    {
+      "id": "task-001",
+      "name": "医疗物资配送-中心医院",
+      "aircraft_id": "uav-001",
+      "type": "delivery",
+      "priority": 9,
+      "departure_time": 0,
+      "objective_weights": {"distance": 0.2, "time": 0.5, "risk": 0.2, "energy": 0.1},
+      "waypoints": [
+        {"id": "start", "x": 500, "y": 500, "z": 80, "type": "start"},
+        {"id": "end", "x": 600, "y": 2200, "z": 170, "type": "end", "task_description": "配送医疗物资至中心医院楼顶"}
+      ]
+    },
+    {
+      "id": "task-002",
+      "name": "园区巡检-科技园区",
+      "aircraft_id": "uav-002",
+      "type": "inspection",
+      "priority": 5,
+      "departure_time": 10,
+      "objective_weights": {"distance": 0.3, "time": 0.2, "risk": 0.3, "energy": 0.2},
+      "waypoints": [
+        {"id": "start", "x": 1500, "y": 1800, "z": 150, "type": "start"},
+        {"id": "wp1", "x": 1700, "y": 2000, "z": 170, "type": "via", "task_description": "巡检B座外立面"},
+        {"id": "wp2", "x": 2000, "y": 2200, "z": 100, "type": "via", "task_description": "巡检园区道路"},
+        {"id": "end", "x": 1500, "y": 1800, "z": 150, "type": "end"}
+      ]
+    },
+    {
+      "id": "task-003",
+      "name": "快递配送-商业综合体",
+      "aircraft_id": "uav-003",
+      "type": "delivery",
+      "priority": 7,
+      "departure_time": 20,
+      "objective_weights": {"distance": 0.4, "time": 0.3, "risk": 0.1, "energy": 0.2},
+      "waypoints": [
+        {"id": "start", "x": 4200, "y": 800, "z": 60, "type": "start"},
+        {"id": "end", "x": 3500, "y": 1500, "z": 220, "type": "end", "task_description": "快递投放至商业综合体"}
+      ]
+    },
+    {
+      "id": "task-004",
+      "name": "电力巡检-高压电塔",
+      "aircraft_id": "uav-005",
+      "type": "inspection",
+      "priority": 6,
+      "departure_time": 30,
+      "objective_weights": {"distance": 0.2, "time": 0.1, "risk": 0.5, "energy": 0.2},
+      "waypoints": [
+        {"id": "start", "x": 800, "y": 3500, "z": 100, "type": "start"},
+        {"id": "wp1", "x": 1200, "y": 1000, "z": 160, "type": "via", "hover_time": 30, "task_description": "近距离巡检高压电塔"},
+        {"id": "end", "x": 800, "y": 3500, "z": 100, "type": "end"}
+      ]
+    },
+    {
+      "id": "task-005",
+      "name": "应急侦察-中心区域",
+      "aircraft_id": "uav-004",
+      "type": "surveillance",
+      "priority": 10,
+      "departure_time": 5,
+      "objective_weights": {"distance": 0.1, "time": 0.6, "risk": 0.2, "energy": 0.1},
+      "waypoints": [
+        {"id": "start", "x": 4500, "y": 4500, "z": 100, "type": "start"},
+        {"id": "wp1", "x": 3000, "y": 3000, "z": 120, "type": "via", "task_description": "侦察中心区域"},
+        {"id": "end", "x": 2500, "y": 2500, "z": 270, "type": "end", "task_description": "悬停侦察"}
+      ]
+    }
+  ]
+}
