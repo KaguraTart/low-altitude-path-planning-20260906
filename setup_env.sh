@@ -37,7 +37,7 @@ conda run -n "${ENV_NAME}" python -c \
 case "${1:-}" in
     plan)
         echo "[+] 运行 demo 规划..."
-        conda run -n "${ENV_NAME}" python run_planning.py --output-dir ./output/demo "$@"
+        conda run -n "${ENV_NAME}" python run_planning.py --output-dir ./output/demo "${@:2}"
         conda run -n "${ENV_NAME}" python visualize.py --input ./output/demo
         ;;
     stress)
