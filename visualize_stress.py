@@ -197,16 +197,21 @@ def _plot_success_rate(results: Dict[str, List[dict]], output_path: str):
 
     fig, ax = plt.subplots(figsize=(10, 6))
     colors = {"FULL": "#1f77b4", "DISPATCH": "#2ca02c"}
-    x = np.arange(len(list(results.values())[0]))
-    width = 0.35
+
+    # 对齐不同模式的规模列表（支持某个模式中断导致规模缺失）
+    all_scales = sorted({r["scale"] for data in results.values() for r in data})
+    x = np.arange(len(all_scales))
+    width = 0.8 / max(1, len(results))
 
     for i, (mode, data) in enumerate(results.items()):
-        scales = [r["scale"] for r in data]
-        rates = [r["success_rate"] for r in data]
+        by_n = {r["scale"]: r["success_rate"] for r in data}
+        rates = [by_n.get(n, float("nan")) for n in all_scales]
         offset = (i - (len(results) - 1) / 2) * width
         bars = ax.bar(x + offset, rates, width, color=colors.get(mode, "#888"),
                       alpha=0.75, label=mode, edgecolor="black")
         for bar, r in zip(bars, rates):
+            if r != r:  # NaN
+                continue
             ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 0.5,
                     f"{r:.1f}%", ha="center", va="bottom", fontsize=8)
 
@@ -214,7 +219,7 @@ def _plot_success_rate(results: Dict[str, List[dict]], output_path: str):
     ax.set_ylabel("成功率 (%)", fontsize=12)
     ax.set_title("规划成功率", fontsize=14, fontweight="bold")
     ax.set_xticks(x)
-    ax.set_xticklabels([str(r["scale"]) for r in list(results.values())[0]])
+    ax.set_xticklabels([str(s) for s in all_scales])
     ax.set_ylim(80, 102)
     ax.grid(axis="y", alpha=0.3)
     ax.legend(fontsize=10)
