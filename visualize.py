@@ -12,8 +12,8 @@
 
 用法:
     python visualize.py --input ./output/demo
-    python visualize.py --input ./output/stress/visualizations
     python visualize.py --input ./output/demo --no-interactive  # 跳过 plotly
+    python visualize_stress.py --input ./output/stress
 """
 
 from __future__ import annotations
