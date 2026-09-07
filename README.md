@@ -95,6 +95,8 @@ python -c "import numpy, scipy, matplotlib, plotly, pydantic; print('OK', plotly
 
 ### 3.3 运行（**规划与可视化分离**）
 
+> 📘 **输入输出字段详细手册**：[`docs/INPUT_OUTPUT_GUIDE.md`](docs/INPUT_OUTPUT_GUIDE.md)（608 行，含 5 个输入文件完整字段表 + 7 个输出文件结构 + 校验规则详解）
+
 本项目把**规划代码**和**可视化代码**完全分离：
 
 | 步骤 | 脚本 | 作用 | 输出 |
@@ -381,7 +383,9 @@ output/
 
 **`plan_multi.py` 启动时自动校验**：每个任务的飞行器性能是否满足 `requirements`（载荷 ≤ 容量、续航 ≤ 上限、速度 ≤ 上限、高度 ≤ 上限）。
 
-详细字段定义见 [`docs/input_output_spec.md`](docs/input_output_spec.md)。
+**详细字段定义**：
+- 📘 **完整字段手册**：[`docs/INPUT_OUTPUT_GUIDE.md`](docs/INPUT_OUTPUT_GUIDE.md)（608 行，含 5 个输入文件完整字段表 + 7 个输出文件结构）
+- 简版规范：[`docs/input_output_spec.md`](docs/input_output_spec.md)
 
 ### 6.2 输出（`output/` 目录）
 
