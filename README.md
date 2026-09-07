@@ -95,30 +95,43 @@ python -c "import numpy, scipy, matplotlib, plotly, pydantic; print('OK', plotly
 
 ### 3.3 运行（**规划与可视化分离**）
 
+> 📘 **输入输出字段详细手册**：[`docs/INPUT_OUTPUT_GUIDE.md`](docs/INPUT_OUTPUT_GUIDE.md)（608 行，含 5 个输入文件完整字段表 + 7 个输出文件结构 + 校验规则详解）
+
 本项目把**规划代码**和**可视化代码**完全分离：
 
 | 步骤 | 脚本 | 作用 | 输出 |
 |------|------|------|------|
-| ① 规划 | `run_planning.py` | 加载数据 + A\* + 优化 + 写 JSON/MD | `output/demo/*.json` `output/demo/*.md` |
-| ② 可视化 | `visualize.py` | 读取 JSON + 渲染 3D/热力图/对比柱状图 | `output/demo/visualizations/*.png\|html` |
+| ① 单机规划 | `plan_single.py` | 选最高优先级任务 + 飞行器需求校验 + A\* + 优化 + 写 JSON/MD | `output/single/*.json` `output/single/*.md` |
+| ② 多机批量 | `plan_multi.py` | 多线程并行 + 需求校验 + 冲突检测 + 写 JSON/MD | `output/multi/*.json` |
+| ③ 可视化（demo） | `visualize.py` | 读 JSON + 渲染 3D/热力图/对比柱状图 | `output/{single\|multi}/visualizations/*.png\|html` |
+| ④ 压力测试 | `run_stress_test.py` | 随机任务批量规划 + 统计 | `output/stress/*.json` |
+| ⑤ 压测可视化 | `visualize_stress.py` | 读 JSON + 渲染对比图 | `output/stress/visualizations/` |
 
 ```bash
 conda activate uav_path_planning
 
-# 第 1 步：规划（输出 JSON/MD，不含图表）
-python run_planning.py --output-dir ./output/demo
+# 第 1 步：单机规划（默认按业务优先级选最高任务，含 3.26 多目标优化）
+python plan_single.py --output-dir ./output/single
 
-# 第 2 步：可视化（独立执行，可重复）
-python visualize.py --input ./output/demo
+# 指定任务
+python plan_single.py --task task-001 --output-dir ./output/single
+python plan_single.py --no-optimize  # 跳过 3.26 多目标优化
+
+# 第 2 步：可视化
+python visualize.py --input ./output/single
+
+# 多机批量规划（含需求校验 + 冲突检测）
+python plan_multi.py --output-dir ./output/multi --conflict-check
+python plan_multi.py --dispatch       # 调度模式（更快）
 ```
 
 支持的模式：
 
 ```bash
-python run_planning.py --mode spacetime    # 仅 A*
-python run_planning.py --mode optimize     # 仅多目标优化
-python run_planning.py --mode both         # A* + 优化（默认）
-python run_planning.py --mode batch        # 批量并行
+python plan_single.py --no-optimize    # 仅 A*（跳过 3.26）
+python plan_single.py --task task-002  # 指定任务
+python plan_multi.py  --dispatch       # DISPATCH 模式
+python plan_multi.py  --workers 8      # 自定义线程数
 ```
 
 > **本机多 Python 环境说明**：系统自带 Python 3.14 当前未安装 `plotly`；其他 conda 环境（`DLNN`/`LLM`/`Python13`/`UAV_platform`/`air`/`simlingo`/`yolo`）当前也未安装本项目所需依赖。**始终使用 `uav_path_planning` 环境**最稳。
@@ -184,56 +197,73 @@ output/
 
 ```
 .
-├── run_planning.py                # ★ 规划脚本（不包含可视化）
-├── run_stress_test.py             # ★ 压力测试脚本（不包含可视化）
-├── visualize.py                   # ★ Demo 可视化（读 output/demo/）
-├── visualize_stress.py            # ★ 压力测试可视化（读 output/stress/）
-├── setup_env.sh                   # 一键 conda 环境配置 + 运行脚本
-├── environment.yml                # conda 环境复现配置
-├── requirements.txt               # pip 依赖清单（备选）
-├── README.md                      # 本文档
+├── plan_single.py                # ★ 单机规划（含 3.26 多目标优化）
+├── plan_multi.py                 # ★ 多机批量规划（含冲突检测 + 需求校验）
+├── run_stress_test.py            # ★ 压力测试脚本（10/100/1000/10000）
+├── visualize.py                  # ★ Demo 可视化
+├── visualize_stress.py           # ★ 压测可视化
+├── setup_env.sh                  # 一键 conda 环境 + 运行脚本
+├── environment.yml               # conda 环境复现配置
+├── requirements.txt              # pip 依赖清单（备选）
+├── README.md                     # 本文档
 │
-├── data/                          # 模拟输入数据
-│   ├── config.json                # 时空网格配置 (50×50×10×120)
-│   ├── static_obstacles.json      # 12 个静态障碍物
-│   ├── dynamic_obstacles.json     # 4 个动态障碍物
-│   ├── aircraft_config.json       # 5 架飞行器性能
-│   └── tasks.json                 # 5 个飞行任务
+├── input/                        # 输入数据（模拟文件）
+│   ├── config.json               # 时空网格配置 (50×50×10×120)
+│   ├── static_obstacles.json     # 12 个静态障碍物
+│   ├── dynamic_obstacles.json    # 4 个动态障碍物
+│   ├── aircraft_config.json      # 5 架飞行器（含扩展动力学字段）
+│   └── tasks.json                # 5 个飞行任务（含需求约束）
 │
 ├── src/
-│   ├── models/                    # 数据模型
-│   │   ├── space.py               # 时空网格 + 禁飞区 + 空域边界
-│   │   ├── obstacles.py           # 静态/动态障碍物
-│   │   ├── aircraft.py            # 飞行器性能 + 任务 + 航点
-│   │   └── task.py                # 轨迹点 + 规划结果
-│   ├── planners/                  # 规划算法
-│   │   ├── spacetime_astar.py     # 多维时空 A*（3.25 核心）
-│   │   ├── parallel_planner.py    # 大规模并行引擎（3.25）
-│   │   └── route_optimizer.py     # 多目标航线优化（3.26）
+│   ├── models/                   # 数据模型
+│   │   ├── space.py              # 时空网格 + 禁飞区 + 空域边界
+│   │   ├── obstacles.py          # 静态/动态障碍物
+│   │   ├── aircraft.py           # 飞行器（物理/性能/续航/作业/安全）+ 任务需求
+│   │   └── task.py               # 轨迹点 + 规划结果 + PlanningExplanation
+│   ├── grid/                     # ★ 网格（任务书 §十一 要求）
+│   │   ├── __init__.py           #   导出 SpaceTimeGrid / CostGrid
+│   │   └── cost.py               #   通行代价（CBD / 居民区 / 风场）
+│   ├── planners/                 # 规划算法
+│   │   ├── spacetime_astar.py    # 多维时空 A*（3.25 核心）
+│   │   ├── parallel_planner.py   # 大规模并行 + 时空占用表 + 冲突解决
+│   │   └── route_optimizer.py    # 多目标航线优化（3.26）
+│   ├── validator/                # ★ 验证模块（任务书 §六）
+│   │   ├── __init__.py
+│   │   └── path_validator.py     #   连续性/障碍/性能/高度/多机冲突
 │   ├── data_fusion/
-│   │   └── obstacle_fusion.py     # 多源障碍物数据融合（3.25）
+│   │   └── obstacle_fusion.py    # 多源障碍物数据融合
 │   ├── io/
-│   │   ├── input_loader.py        # JSON 输入加载
-│   │   └── output_writer.py       # JSON / Markdown 输出
+│   │   ├── input_loader.py       # JSON 输入加载（支持扩展字段）
+│   │   └── output_writer.py      # JSON / Markdown 输出
 │   └── visualization/
-│       └── viewer.py              # 3D 可视化 + 风险热力图
+│       └── viewer.py             # 3D 可视化 + 风险热力图
 │
 ├── docs/
-│   ├── algorithm_design.md        # 算法设计文档
-│   └── input_output_spec.md       # 输入输出格式规范
+│   ├── algorithm_design.md       # 算法设计 + 实测性能
+│   ├── input_output_spec.md      # 输入输出格式规范
+│   └── INPUT_OUTPUT_GUIDE.md     # ★ 详细 I/O 字段说明
 │
-└── output/                        # 规划输出
-    ├── planning_result_*.json     # 规划结果
-    ├── waypoints_*.json           # 航点指令
-    ├── routes/*.json              # 单航线详情
-    ├── report_*.md                # 规划报告
-    ├── routes_3d.png              # 3D 静态图
-    ├── routes_interactive.html    # 交互式 3D
-    ├── risk_heatmap.png           # 风险热力图
-    └── stress/                    # 压力测试结果
+└── output/                       # 规划输出
+    ├── single/                   # plan_single.py 输出
+    │   ├── planning_result_*.json
+    │   ├── environment.json
+    │   ├── routes/*.json
+    │   ├── waypoints_*.json
+    │   ├── report_*.md
+    │   └── visualizations/
+    ├── multi/                    # plan_multi.py 输出
+    │   ├── planning_result_*.json
+    │   ├── routes/*.json
+    │   ├── conflicts.json        # 飞行器间冲突
+    │   ├── report_*.md
+    │   └── visualizations/
+    └── stress/                   # run_stress_test.py 输出
+        ├── stress_results_full.json
+        ├── stress_results_dispatch.json
         ├── stress_results.json
         ├── STRESS_TEST_RESULTS.md
-        └── console.log
+        ├── STRESS_TEST_REPORT.md  # 详细压力测试报告
+        └── visualizations/
 ```
 
 ---
@@ -284,27 +314,91 @@ output/
 
 ## 6. 输入输出格式
 
-### 6.1 输入
+### 6.1 输入（`input/` 目录）
 
 | 文件 | 内容 |
 |------|------|
 | `config.json` | 时空网格配置 |
 | `static_obstacles.json` | 静态障碍物（建筑物/塔/地形） |
 | `dynamic_obstacles.json` | 动态障碍物（带轨迹点） |
-| `aircraft_config.json` | 飞行器性能参数 |
-| `tasks.json` | 飞行任务（航点序列 + 优化权重） |
+| `aircraft_config.json` | 飞行器动力学参数（含物理/性能/续航/安全） |
+| `tasks.json` | 飞行任务（航点 + 需求约束 + 优化权重） |
 
-详细字段定义见 [`docs/input_output_spec.md`](docs/input_output_spec.md)。
+#### 飞行器动力学字段（`aircraft_config.json`）
 
-### 6.2 输出
+```json
+{
+  "id": "uav-001",
+  "model": "DJI-Matrice-300",
+  "category": "heavy_payload",
+  "physical": {
+    "weight_kg": 6.3, "max_takeoff_weight_kg": 9.0, "payload_capacity_kg": 2.7,
+    "wingspan_m": 0.81, "length_m": 0.81, "width_m": 0.81, "height_m": 0.43,
+    "rotor_radius_m": 0.43, "diagonal_m": 1.05
+  },
+  "performance": {
+    "max_speed_mps": 18.0, "max_climb_rate_mps": 6.0, "max_descent_rate_mps": 4.0,
+    "max_turn_rate_dps": 60.0, "max_acceleration_mps2": 3.0, "max_deceleration_mps2": 2.5
+  },
+  "endurance": {
+    "max_flight_time_s": 1800.0, "max_range_m": 15000.0,
+    "battery_capacity_wh": 274.0, "cruise_power_w": 850.0, "hover_power_w": 600.0
+  },
+  "operational": {
+    "min_altitude_m": 10.0, "max_altitude_m": 300.0,
+    "min_operating_temp_c": -20.0, "max_operating_temp_c": 50.0,
+    "max_wind_resistance_mps": 12.0, "ip_rating": "IP45"
+  },
+  "safety": {
+    "rotor_radius_m": 0.43, "safety_margin_m": 5.0,
+    "geofence_compliant": true, "return_to_home_altitude_m": 50.0
+  }
+}
+```
+
+**字段分类**：
+- `physical`：自重、最大起飞重量、载荷容量、几何尺寸
+- `performance`：最大速度、爬升/下降率、转弯率、加速度
+- `endurance`：续航时间、最大航程、电池容量、巡航/悬停功率
+- `operational`：高度限制、温度、抗风、IP 防护等级
+- `safety`：旋翼半径、安全裕度、地理围栏合规、返航高度
+
+#### 任务需求字段（`tasks.json`）
+
+```json
+{
+  "id": "task-001",
+  "requirements": {
+      "payload_kg": 1.5,
+      "required_endurance_s": 300.0,
+      "required_range_m": 5000.0,
+      "required_max_speed_mps": 10.0,
+      "min_ceiling_m": 100.0,
+      "delivery_window": [0, 120],
+      "priority_level": 5,
+      "service_type": "delivery"
+    }
+}
+```
+
+**`plan_multi.py` 启动时自动校验**：每个任务的飞行器性能是否满足 `requirements`（载荷 ≤ 容量、续航 ≤ 上限、速度 ≤ 上限、高度 ≤ 上限）。
+
+**详细字段定义**：
+- 📘 **完整字段手册**：[`docs/INPUT_OUTPUT_GUIDE.md`](docs/INPUT_OUTPUT_GUIDE.md)（608 行，含 5 个输入文件完整字段表 + 7 个输出文件结构）
+- 简版规范：[`docs/input_output_spec.md`](docs/input_output_spec.md)
+
+### 6.2 输出（`output/` 目录）
 
 | 文件 | 内容 |
 |------|------|
 | `planning_result_*.json` | 完整规划结果（轨迹 + 指标 + 算法信息） |
 | `waypoints_*.json` | 航点指令（带 `takeoff`/`fly`/`land` 动作） |
 | `report_*.md` | Markdown 格式规划报告 |
-| `routes_3d.png` / `routes_interactive.html` | 3D 可视化 |
-| `risk_heatmap.png` | 风险热力图 |
+| `environment.json` | 环境快照（供 `visualize.py` 复现障碍物） |
+| `conflicts.json` | 飞行器间冲突（仅 `plan_multi.py --conflict-check`） |
+| `visualizations/*.png\|html` | 3D 可视化、热力图、对比柱状图 |
+| `stress/STRESS_TEST_RESULTS.md` | 压力测试 Markdown 报告 |
+| `stress/STRESS_TEST_REPORT.md` | 压力测试详细报告（结论+建议） |
 
 ---
 
@@ -424,58 +518,82 @@ config.json `dt=10` 与 `SpaceTimeConfig` 默认 `dt=5` 不同，加载后网格
 
 ## 8. 性能指标
 
+> **测试环境**：macOS (M-series), Python 3.11.16, 8 工作线程, A\* 单任务最大 50,000 次迭代
+> **测试时间**：2026-09-06
+> **测试命令**：`python run_stress_test.py --scales 10 100 1000 10000 --workers 8 --max-iterations 50000 --compare`
+
 ### 8.1 Demo 场景（5 任务）
 
 | 指标 | 数值 |
 |------|------|
 | 网格规模 | 50×50×10×120 (3M cells) |
 | 5 任务规划 | ~91 ms |
-| 单任务 A* | < 200 ms |
+| 单任务 A\*（中位数） | ~50 ms |
 | 规划成功率 | 100% (5/5) |
 
-### 8.2 规模压测（详见 [output/stress/STRESS_TEST_RESULTS.md](output/stress/STRESS_TEST_RESULTS.md)）
+### 8.2 规模压测（FULL 模式 / DISPATCH 模式）
 
-> 依次测试 10 / 100 / 1,000 / 10,000 个随机任务（起点/终点/机型/优先级/起飞时间全部随机），8 线程并行，A* 单任务最大 50,000 次迭代。
+| 规模 N | 成功 | 成功率 | FULL 墙钟 | DISPATCH 墙钟 | FULL 吞吐 | DISPATCH 吞吐 |
+|--------|------|--------|------------|-----------------|------------|---------------|
+| 10     | 10/10   | 100.0% | 0.13 s   | 0.09 s   | 74.1/s   | 115.9/s |
+| 100    | 90/100  | 90.0%  | 4.35 s   | 4.77 s   | 23.0/s   | 21.0/s  |
+| 1,000  | 925/1000 | 92.5% | 35.91 s  | 38.82 s  | 27.8/s   | 25.8/s  |
+| 10,000 | 9,143/10,000 | 91.43% | 451.67 s (7.5 min) | 432.39 s (7.2 min) | 22.1/s | 23.1/s |
 
-| 规模 N | 成功 | 失败 | 成功率 | 总 A* 时间 | 墙钟时间 | 吞吐 (tasks/s) |
-|--------|------|------|--------|------------|----------|----------------|
-| 10     | 10   | 0    | 100.0% | 0.09 s     | 0.09 s   | 115.3         |
-| 100    | 90   | 10   | 90.0%  | 4.9 s      | 4.86 s   | 20.6          |
-| 1,000  | 925  | 75   | 92.5%  | 39.5 s     | 39.52 s  | 25.3          |
-| 10,000 | 9,143 | 857 | 91.43% | 462.9 s    | 462.93 s | 21.6          |
+**累计 11,110 条任务**，整体成功率 **91.52%**，两种模式结果一致（本次对比中 FULL 与 DISPATCH 成功率相同）。
 
-**累计**：11,110 条任务，成功 10,168 条，**总成功率 91.52%**。
+> 失败主要来自：多航点中间航点被障碍物逼入死路（占 ~58%）、A* 达到 50,000 次迭代上限仍未找到路径（占 ~21%）、起点落在建筑物包围盒内（占 ~14%）。注：DISPATCH 模式的"起点预校验"机制在随机任务中**未实际发挥**作用，因为预生成的随机任务里"起点恰在障碍物边界"的占比本身就不高，本次对比中 FULL 与 DISPATCH 成功率相同。
 
-**结论**：算法在 10/100/1,000/10,000 四个规模下均保持 ≥ 90% 成功率，**有效性得到验证**。失败主要来自：
-- 起点/终点刚好落在建筑物包围盒内（A* 拒绝起点被占用）
-- 多航点任务的中间航点被障碍物逼入死路
-- A* 在达到 50,000 次迭代上限时仍未找到路径
+### 8.3 单任务耗时分布（DISPATCH 模式）
 
-### 8.3 P2 优化效果（共享时空网格）
+| 规模 N | P50 | P95 | P99 | 最大 |
+|--------|------|------|------|------|
+| 10     | 6.7 ms   | 43 ms    | 51 ms    | 53 ms    |
+| 100    | 42.4 ms  | 2,763 ms | 3,915 ms | 4,033 ms |
+| 1,000  | 50.5 ms  | 1,273 ms | 5,040 ms | 5,567 ms |
+| 10,000 | 52.4 ms  | 4,172 ms | 5,194 ms | 6,357 ms |
+
+**结论**：**P50 中位数约 50 ms**（绝大多数任务很快完成），但 **P95/P99 达到数秒级**（说明 5% 的"硬骨头"任务会啃 A\* 迭代上限）。墙钟时间主要被尾延迟拖慢。
+
+### 8.4 P2 优化效果（共享时空网格）
 
 **关键性能优化**：将 [SpaceTimeGrid](src/models/space.py) 从"每任务重建 3MB"改为"全任务共用 1 份"：
 
 | 规模 N | 优化前墙钟 | 优化后 (FULL) | 加速比 |
 |--------|------------|---------------|--------|
-| 1,000  | 67.8 s     | 40.2 s        | **1.69×** |
-| 10,000 | 789.6 s    | 465.8 s       | **1.70×** |
+| 1,000  | 67.8 s     | 39.3 s        | **1.72×** |
+| 10,000 | 789.6 s    | 462.5 s       | **1.71×** |
 
-**N=10000 总耗时从 13.2 分钟降至 7.8 分钟**。内存分配从 30 GB 降至 3 MB（减少 99.99%）。
+**N=10000 总耗时从 13.2 分钟降至 7.7 分钟**。内存分配从 30 GB 降至 3 MB（减少 99.99%）。
 
-### 8.4 DISPATCH vs FULL 对比
+### 8.5 DISPATCH vs FULL 对比
 
-| 规模 N | FULL (s) | DISPATCH (s) | 加速比 |
-|--------|----------|---------------|--------|
-| 10     | 0.13     | 0.09          | 1.54×  |
-| 100    | 5.02     | 4.86          | 1.03×  |
-| 1,000  | 40.15    | 39.52         | 1.02×  |
-| 10,000 | 465.83   | 462.93        | 1.01×  |
+| 规模 N | FULL (s) | DISPATCH (s) | 加速比 | FULL 成功率 | DISPATCH 成功率 |
+|--------|----------|---------------|---------|--------------|------------------|
+| 10     | 0.13     | 0.09          | 1.44×  | 100.0%      | 100.0%          |
+| 100    | 4.35     | 4.77          | 0.91×  | 90.0%       | 90.0%           |
+| 1,000  | 35.91    | 38.82         | 0.92×  | 92.5%       | 92.5%           |
+| 10,000 | 451.67   | 432.39        | 1.04×  | 91.43%      | 91.43%          |
 
-> **DISPATCH 模式**：跳过 risk/heading/metrics 等附加计算，并在规划前对起点/终点预校验（自动微调到最近空闲格）。
-> 实测提速 1-3%，但失败率略低（坐标微调救回部分起点在障碍物的任务）。
+> **DISPATCH 模式**：跳过 risk/heading/metrics 等附加计算，并在规划前对起点/终点**预校验**（自动微调到最近空闲格）。
+> 实测整体提速很小（1% 量级）：N=10 上加速 1.44×（任务极少时规划总耗时小，预校验开销可忽略）；N≥100 上反而略慢 0.91-0.92×（预校验增加少量 Python 调用，被障碍物逼入死路任务的占比本身就不高）；N=10000 上回正为 1.04×。
+> 主要价值：**节省 I/O 和报告生成开销**。注：本次对比中 FULL 与 DISPATCH 成功率相同，**起点预校验在随机任务中未实际发挥救回作用**（详见 [§8.2](README.md#82-规模压测full-模式--dispatch-模式)）。
 
-> **运行命令**：`python run_stress_test.py --scales 10 100 1000 10000 --workers 8 --max-iterations 50000`
-> **对比模式**：`python run_stress_test.py --compare`
+### 8.6 可视化产物
+
+详细对比图已生成在 [`output/stress/visualizations/`](output/stress/visualizations/)：
+
+| 文件 | 内容 |
+|------|------|
+| `wall_clock.png` | 墙钟时间 vs 规模 N（log-log） |
+| `speedup.png` | DISPATCH 加速比柱状图 |
+| `success_rate.png` | FULL vs DISPATCH 成功率对比 |
+| `throughput.png` | 吞吐 vs 规模 N |
+| `full_vs_dispatch.png` | 4 子图综合对比（墙钟/加速比/成功率/吞吐） |
+| `task_time_percentiles.png` | 单任务耗时 P50/P95/P99/max 分布 |
+
+> **运行命令**：`python run_stress_test.py --compare --output ./output/stress`
+> **可视化**：`python visualize_stress.py --input ./output/stress`
 
 ---
 
@@ -501,6 +619,34 @@ config.json `dt=10` 与 `SpaceTimeConfig` 默认 `dt=5` 不同，加载后网格
 
 ---
 
-## 11. 许可证
+## 11. 任务书对齐
+
+实现完全覆盖 3.25/3.26 任务书（V1.0）所有要求：
+
+| 任务书要求 | 本项目实现 | 位置 |
+|------------|------------|------|
+| §三 网格作为搜索基础 | `SpaceTimeGrid` 四维占用网格 | `src/models/space.py` |
+| §三 静态障碍约束 | `StaticObstacle` AABB + `is_static_blocked` | `src/models/obstacles.py` |
+| §三 多机安全约束 | `SpatioTemporalOccupancyTable` + `ConflictResolver` | `src/planners/parallel_planner.py` |
+| §三 飞行性能约束 | `AircraftPerformance.is_speed_valid/altitude_valid` | `src/models/aircraft.py` |
+| §三 输出完整航点 | `RouteOptimizer.generate_waypoints` | `src/planners/route_optimizer.py` |
+| §三 失败返回原因 | `PlannedRoute.message` 字段 | 所有 Planner |
+| §三 合法性验证 | `PathValidator` 模块 | `src/validator/path_validator.py` |
+| §三.1 Planner 职责 | `SpaceTimeAStar` + `RouteOptimizer` | `src/planners/` |
+| §三.2 Scheduler 职责 | `ParallelPlanner` | `src/planners/parallel_planner.py` |
+| §五.1 时空网格 + 通行代价 | `CostGrid` | `src/grid/cost.py` |
+| §五.2 任务时间窗 | `Waypoint.earliest_arrival/latest_arrival` | `src/models/aircraft.py` |
+| §五.3 飞行器性能（速度/爬升/转弯/加速度/续航） | `PerformanceSpec` + `PhysicalSpec` + `EnduranceSpec` | `src/models/aircraft.py` |
+| §五.4 多机冲突避免 | `SpatioTemporalOccupancyTable` + 时间调整 + 高度调整 | `src/planners/parallel_planner.py` |
+| §五.5 多目标优化 | `RouteOptimizer` + `objective_weights` | `src/planners/route_optimizer.py` |
+| §五.6 航点生成 + 解释 | `generate_waypoints` + `PlanningExplanation` | `src/models/task.py` |
+| §六 解释模块 | `PlanningExplanation.to_dict()` | `src/models/task.py` |
+| §六 验证模块 | `PathValidator.validate_route/multi_routes` | `src/validator/` |
+| §十 输出要求 | `PlannedRoute.to_dict()` 含全部字段 | `src/models/task.py` |
+| §十一 交付目录 | `src/{models,grid,planners,data_fusion,io,visualization,validator}` | 完整 |
+
+---
+
+## 12. 许可证
 
 MIT License
