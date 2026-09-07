@@ -189,16 +189,53 @@ def main():
     print(f"    其中 {len(planned)} 条成功规划")
 
     # 2. 加载环境（config + obstacles）
-    print(f"\n[2/4] 加载环境配置: {args.data_dir}")
-    config_path = os.path.join(args.data_dir, "config.json")
-    static_path = os.path.join(args.data_dir, "static_obstacles.json")
-    dynamic_path = os.path.join(args.data_dir, "dynamic_obstacles.json")
+    env_snapshot = os.path.join(input_dir, "environment.json")
+    if os.path.exists(env_snapshot):
+        print(f"\n[2/4] 加载环境快照: {env_snapshot}")
+        with open(env_snapshot, "r", encoding="utf-8") as f:
+            snap = json.load(f)
+        config = SpaceTimeConfig(**snap.get("config", {}))
+        obstacle_set = ObstacleSet()
 
-    if not os.path.exists(config_path):
-        print(f"[!] 缺少 config.json: {config_path}")
-        sys.exit(1)
-    config = _load_config(config_path)
-    obstacle_set = _parse_obstacles(static_path, dynamic_path)
+        for item in snap.get("static_obstacles", {}).get("obstacles", []):
+            obstacle_set.add_static(StaticObstacle(
+                obstacle_id=item.get("id", "unknown"),
+                name=item.get("name", "unnamed"),
+                obstacle_type=item.get("type", "other"),
+                x=float(item["x"]),
+                y=float(item["y"]),
+                z=float(item.get("z", 0)),
+                width=float(item.get("width", 20.0)),
+                depth=float(item.get("depth", 20.0)),
+                height=float(item.get("height", 50.0)),
+                source=item.get("source", "file"),
+            ))
+
+        for item in snap.get("dynamic_obstacles", {}).get("obstacles", []):
+            trajectory = [
+                (float(p["x"]), float(p["y"]), float(p["z"]), float(p["t"]))
+                for p in item.get("trajectory", [])
+            ]
+            obstacle_set.add_dynamic(DynamicObstacle(
+                obstacle_id=item.get("id", "unknown"),
+                name=item.get("name", "unnamed"),
+                obstacle_type=item.get("type", "other"),
+                trajectory=trajectory,
+                safety_radius=float(item.get("safety_radius", 10.0)),
+                source=item.get("source", "file"),
+            ))
+    else:
+        print(f"\n[2/4] 加载环境配置: {args.data_dir}")
+        config_path = os.path.join(args.data_dir, "config.json")
+        static_path = os.path.join(args.data_dir, "static_obstacles.json")
+        dynamic_path = os.path.join(args.data_dir, "dynamic_obstacles.json")
+
+        if not os.path.exists(config_path):
+            print(f"[!] 缺少 config.json: {config_path}")
+            sys.exit(1)
+        config = _load_config(config_path)
+        obstacle_set = _parse_obstacles(static_path, dynamic_path)
+
     print(f"  时空网格: {config.nx}x{config.ny}x{config.nz}x{config.nt}")
     print(f"  障碍物: {len(obstacle_set.static_obstacles)} 静态 + "
           f"{len(obstacle_set.dynamic_obstacles)} 动态")
