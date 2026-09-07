@@ -30,14 +30,15 @@ class PhysicalSpec:
 
 @dataclass
 class PerformanceSpec:
-    """飞行器运动性能"""
+    """飞行器运动性能（任务书 §五.3 飞行器性能数据）"""
 
-    max_speed_mps: float = 15.0             # 最大水平速度 (m/s)
-    max_climb_rate_mps: float = 5.0         # 最大爬升率
-    max_descent_rate_mps: float = 3.0       # 最大下降率
+    max_speed_mps: float = 15.0             # 最大水平速度 (m/s) — 必须满足
+    max_climb_rate_mps: float = 5.0         # 最大爬升率 (m/s)
+    max_descent_rate_mps: float = 3.0       # 最大下降率 (m/s)
     max_turn_rate_dps: float = 45.0         # 最大转弯率 (度/秒)
-    max_acceleration_mps2: float = 3.0      # 最大加速度
-    max_deceleration_mps2: float = 2.5      # 最大减速度
+    max_acceleration_mps2: float = 3.0      # 最大加速度 (m/s²)
+    max_deceleration_mps2: float = 2.5      # 最大减速度 (m/s²)
+    min_turn_radius_m: float = 0.0          # 最小转弯半径（米），0 表示未指定；>0 时 A* 必须满足
 
 
 @dataclass
@@ -103,7 +104,15 @@ class AircraftPerformance:
     safety_margin: float = 5.0
 
     def is_speed_valid(self, vx: float, vy: float, vz: float) -> bool:
-        """检查速度是否在性能范围内"""
+        """检查速度是否在性能范围内
+
+        检查项：
+        - 水平速度 ≤ max_speed_mps
+        - 爬升率 ≤ max_climb_rate_mps
+        - 下降率 ≤ max_descent_rate_mps
+
+        注意：加速度约束通过相邻速度差检测（不在本函数中）。
+        """
         horizontal_speed = np.sqrt(vx * vx + vy * vy)
         max_h = self.performance.max_speed_mps
         max_c = self.performance.max_climb_rate_mps
@@ -115,6 +124,18 @@ class AircraftPerformance:
         if vz < -max_d - 1e-6:
             return False
         return True
+
+    def is_acceleration_valid(self, ax: float, ay: float, az: float) -> bool:
+        """检查加速度是否在性能范围内（用于相邻段速度差检查）"""
+        a = np.sqrt(ax * ax + ay * ay + az * az)
+        return a <= self.performance.max_acceleration_mps2 + 1e-6
+
+    def is_turn_radius_valid(self, radius: float) -> bool:
+        """检查转弯半径是否 ≥ 最小转弯半径（如果指定）"""
+        min_r = self.performance.min_turn_radius_m
+        if min_r <= 0:
+            return True
+        return radius >= min_r - 1e-6
 
     def is_altitude_valid(self, z: float) -> bool:
         """检查高度是否在运行范围内"""

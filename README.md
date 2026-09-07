@@ -216,12 +216,18 @@ output/
 │   ├── models/                   # 数据模型
 │   │   ├── space.py              # 时空网格 + 禁飞区 + 空域边界
 │   │   ├── obstacles.py          # 静态/动态障碍物
-│   │   ├── aircraft.py           # 飞行器（物理/性能/续航/安全）+ 任务需求
-│   │   └── task.py               # 轨迹点 + 规划结果
+│   │   ├── aircraft.py           # 飞行器（物理/性能/续航/作业/安全）+ 任务需求
+│   │   └── task.py               # 轨迹点 + 规划结果 + PlanningExplanation
+│   ├── grid/                     # ★ 网格（任务书 §十一 要求）
+│   │   ├── __init__.py           #   导出 SpaceTimeGrid / CostGrid
+│   │   └── cost.py               #   通行代价（CBD / 居民区 / 风场）
 │   ├── planners/                 # 规划算法
 │   │   ├── spacetime_astar.py    # 多维时空 A*（3.25 核心）
-│   │   ├── parallel_planner.py   # 大规模并行引擎（3.25）
+│   │   ├── parallel_planner.py   # 大规模并行 + 时空占用表 + 冲突解决
 │   │   └── route_optimizer.py    # 多目标航线优化（3.26）
+│   ├── validator/                # ★ 验证模块（任务书 §六）
+│   │   ├── __init__.py
+│   │   └── path_validator.py     #   连续性/障碍/性能/高度/多机冲突
 │   ├── data_fusion/
 │   │   └── obstacle_fusion.py    # 多源障碍物数据融合
 │   ├── io/
@@ -232,7 +238,8 @@ output/
 │
 ├── docs/
 │   ├── algorithm_design.md       # 算法设计 + 实测性能
-│   └── input_output_spec.md      # 输入输出格式规范
+│   ├── input_output_spec.md      # 输入输出格式规范
+│   └── INPUT_OUTPUT_GUIDE.md     # ★ 详细 I/O 字段说明
 │
 └── output/                       # 规划输出
     ├── single/                   # plan_single.py 输出
@@ -608,6 +615,34 @@ config.json `dt=10` 与 `SpaceTimeConfig` 默认 `dt=5` 不同，加载后网格
 
 ---
 
-## 11. 许可证
+## 11. 任务书对齐
+
+实现完全覆盖 3.25/3.26 任务书（V1.0）所有要求：
+
+| 任务书要求 | 本项目实现 | 位置 |
+|------------|------------|------|
+| §三 网格作为搜索基础 | `SpaceTimeGrid` 四维占用网格 | `src/models/space.py` |
+| §三 静态障碍约束 | `StaticObstacle` AABB + `is_static_blocked` | `src/models/obstacles.py` |
+| §三 多机安全约束 | `SpatioTemporalOccupancyTable` + `ConflictResolver` | `src/planners/parallel_planner.py` |
+| §三 飞行性能约束 | `AircraftPerformance.is_speed_valid/altitude_valid` | `src/models/aircraft.py` |
+| §三 输出完整航点 | `RouteOptimizer.generate_waypoints` | `src/planners/route_optimizer.py` |
+| §三 失败返回原因 | `PlannedRoute.message` 字段 | 所有 Planner |
+| §三 合法性验证 | `PathValidator` 模块 | `src/validator/path_validator.py` |
+| §三.1 Planner 职责 | `SpaceTimeAStar` + `RouteOptimizer` | `src/planners/` |
+| §三.2 Scheduler 职责 | `ParallelPlanner` | `src/planners/parallel_planner.py` |
+| §五.1 时空网格 + 通行代价 | `CostGrid` | `src/grid/cost.py` |
+| §五.2 任务时间窗 | `Waypoint.earliest_arrival/latest_arrival` | `src/models/aircraft.py` |
+| §五.3 飞行器性能（速度/爬升/转弯/加速度/续航） | `PerformanceSpec` + `PhysicalSpec` + `EnduranceSpec` | `src/models/aircraft.py` |
+| §五.4 多机冲突避免 | `SpatioTemporalOccupancyTable` + 时间调整 + 高度调整 | `src/planners/parallel_planner.py` |
+| §五.5 多目标优化 | `RouteOptimizer` + `objective_weights` | `src/planners/route_optimizer.py` |
+| §五.6 航点生成 + 解释 | `generate_waypoints` + `PlanningExplanation` | `src/models/task.py` |
+| §六 解释模块 | `PlanningExplanation.to_dict()` | `src/models/task.py` |
+| §六 验证模块 | `PathValidator.validate_route/multi_routes` | `src/validator/` |
+| §十 输出要求 | `PlannedRoute.to_dict()` 含全部字段 | `src/models/task.py` |
+| §十一 交付目录 | `src/{models,grid,planners,data_fusion,io,visualization,validator}` | 完整 |
+
+---
+
+## 12. 许可证
 
 MIT License

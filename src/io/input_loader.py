@@ -119,6 +119,7 @@ def _parse_performance(d: dict) -> PerformanceSpec:
         max_turn_rate_dps=float(d.get("max_turn_rate_dps", d.get("max_turn_rate", 45.0))),
         max_acceleration_mps2=float(d.get("max_acceleration_mps2", d.get("max_acceleration", 3.0))),
         max_deceleration_mps2=float(d.get("max_deceleration_mps2", 2.5)),
+        min_turn_radius_m=float(d.get("min_turn_radius_m", 0.0)),
     )
 
 
