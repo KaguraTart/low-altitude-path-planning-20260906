@@ -184,7 +184,6 @@ class RouteVisualizer:
         title: str = "低空无人机路径规划交互式可视化",
         show_obstacles: bool = True,
         show_dynamic: bool = True,
-        animate: bool = True,
     ) -> str:
         """
         生成 Plotly 交互式 HTML 可视化
@@ -195,13 +194,11 @@ class RouteVisualizer:
             title: 图表标题
             show_obstacles: 是否显示静态障碍物
             show_dynamic: 是否显示动态障碍物
-            animate: 是否启用时间动画
 
         Returns:
             输出文件路径
         """
         import plotly.graph_objects as go
-        from plotly.subplots import make_subplots
 
         fig = go.Figure()
 

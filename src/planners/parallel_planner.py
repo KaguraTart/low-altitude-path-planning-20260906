@@ -2,78 +2,23 @@
 大规模并行规划引擎 (3.25 模块四)
 
 支持多飞行器、多任务的并行路径规划，
-使用 concurrent.futures 实现多进程/多线程并行，
+使用 concurrent.futures ThreadPoolExecutor 实现多线程并行，
 并支持优先级调度和冲突检测。
 """
 
 from __future__ import annotations
 
 import time
-from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
-from typing import Callable, Dict, List, Optional, Tuple
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 
-from ..models.space import SpaceTimeConfig
+from ..models.space import SpaceTimeConfig, SpaceTimeGrid
 from ..models.obstacles import ObstacleSet
-from ..models.aircraft import AircraftPerformance, FlightTask
+from ..models.aircraft import AircraftPerformance, FlightTask, Waypoint
 from ..models.task import PlannedRoute, PlanningResult
 from .spacetime_astar import SpaceTimeAStar
-
-
-def _plan_single_task(args: tuple) -> PlannedRoute:
-    """
-    单任务规划函数（用于多进程并行）
-
-    args = (config_dict, obstacle_data, task_dict, performance_dict, idx)
-    """
-    config_dict, obstacle_data, task_dict, performance_dict, idx = args
-
-    # 重建配置
-    config = SpaceTimeConfig(**config_dict)
-
-    # 重建障碍物（简化：从 grid 数据重建）
-    obstacle_set = ObstacleSet()
-    # 注意：在实际使用中，障碍物数据需要可序列化传递
-    # 这里通过共享 grid 数据来避免重复构建
-
-    # 重建任务
-    from ..models.aircraft import Waypoint
-    waypoints = []
-    for wp_data in task_dict["waypoints"]:
-        waypoints.append(Waypoint(**wp_data))
-    task = FlightTask(
-        task_id=task_dict["task_id"],
-        task_name=task_dict["task_name"],
-        aircraft_id=task_dict["aircraft_id"],
-        waypoints=waypoints,
-        priority=task_dict.get("priority", 5),
-        task_type=task_dict.get("task_type", "other"),
-        departure_time=task_dict.get("departure_time", 0.0),
-    )
-
-    performance = AircraftPerformance(**performance_dict)
-
-    # 执行规划
-    planner = SpaceTimeAStar(
-        config=config,
-        obstacle_set=obstacle_set,
-        max_speed=performance.max_speed,
-    )
-
-    start_wp = task.start
-    end_wp = task.end
-
-    route = planner.plan(
-        start=(start_wp.x, start_wp.y, start_wp.z),
-        goal=(end_wp.x, end_wp.y, end_wp.z),
-        start_time=task.departure_time,
-        task_id=task.task_id,
-        aircraft_id=task.aircraft_id,
-        route_id=f"route-{idx:03d}",
-    )
-
-    return route
 
 
 class ParallelPlanner:
@@ -92,17 +37,32 @@ class ParallelPlanner:
         config: SpaceTimeConfig,
         obstacle_set: ObstacleSet,
         max_workers: int = 4,
-        use_processes: bool = False,
+        max_iterations: int = 2_000_000,
     ):
         self.config = config
         self.obstacle_set = obstacle_set
         self.max_workers = max_workers
-        self.use_processes = use_processes
+        self.max_iterations = max_iterations
+
+        # ★ 关键优化 (P2)：构建一份共享的时空网格，所有任务复用，
+        # 消除原来每个任务各自重建 3MB 占用网格的浪费（10000 任务省 30GB 分配）。
+        self._shared_grid = SpaceTimeGrid(config)
+        if obstacle_set is not None:
+            for obs in obstacle_set.static_obstacles:
+                self._shared_grid.set_static_box(
+                    x_min=obs.x - obs.width, x_max=obs.x + obs.width,
+                    y_min=obs.y - obs.depth, y_max=obs.y + obs.depth,
+                    z_min=obs.z, z_max=obs.z + obs.height,
+                )
+            for obs in obstacle_set.dynamic_obstacles:
+                self._shared_grid.set_dynamic_obstacle(obs.trajectory, obs.safety_radius)
 
         # 共享的单进程规划器（用于线程模式和顺序回退）
         self._planner = SpaceTimeAStar(
             config=config,
             obstacle_set=obstacle_set,
+            max_iterations=max_iterations,
+            grid=self._shared_grid,
         )
 
     def plan_batch(
@@ -110,6 +70,7 @@ class ParallelPlanner:
         tasks: List[FlightTask],
         performances: Dict[str, AircraftPerformance],
         request_id: str = "batch-001",
+        dispatch: bool = False,
     ) -> PlanningResult:
         """
         批量并行规划
@@ -118,6 +79,9 @@ class ParallelPlanner:
             tasks: 飞行任务列表
             performances: 飞行器性能字典 {aircraft_id: AircraftPerformance}
             request_id: 请求 ID
+            dispatch: 调度模式开关。True 时只跑 A* 不计算 risk/heading 等附加字段，
+                      并对失败任务自动微调起点/终点到最近空闲格后重试一次。
+                      生产调度推荐 True；demo/报告用 False。
 
         Returns:
             PlanningResult: 批量规划结果
@@ -131,12 +95,8 @@ class ParallelPlanner:
         success_count = 0
         failed_count = 0
 
-        if self.use_processes and len(sorted_tasks) > 1:
-            # 多进程模式
-            routes = self._plan_multiprocess(sorted_tasks, performances)
-        else:
-            # 多线程模式（共享内存，适合 IO 密集或共享障碍物数据）
-            routes = self._plan_multithread(sorted_tasks, performances)
+        # 多线程并行（共享内存，适合共享只读障碍物数据）
+        routes = self._plan_multithread(sorted_tasks, performances, dispatch=dispatch)
 
         for route in routes:
             if route.status == "planned":
@@ -160,6 +120,7 @@ class ParallelPlanner:
         self,
         tasks: List[FlightTask],
         performances: Dict[str, AircraftPerformance],
+        dispatch: bool = False,
     ) -> List[PlannedRoute]:
         """多线程并行规划"""
         routes = [None] * len(tasks)
@@ -173,6 +134,7 @@ class ParallelPlanner:
                     task,
                     perf,
                     idx,
+                    dispatch,
                 )
                 future_to_idx[future] = idx
 
@@ -197,20 +159,49 @@ class ParallelPlanner:
         task: FlightTask,
         performance: AircraftPerformance,
         idx: int,
+        dispatch: bool = False,
     ) -> PlannedRoute:
-        """单任务规划（线程安全：每个线程使用独立的 planner 实例）"""
+        """单任务规划（线程安全：共享只读 grid，dispatch 模式跳过附加计算）"""
+        # ★ 使用共享的 SpaceTimeGrid（不重建 3MB 数组）
         planner = SpaceTimeAStar(
             config=self.config,
             obstacle_set=self.obstacle_set,
             max_speed=performance.max_speed,
+            max_iterations=self.max_iterations,
+            grid=self._shared_grid,
         )
 
         start_wp = task.start
         end_wp = task.end
 
+        # ★ 调度模式下先做起点/终点预校验（在障碍物内就微调）
+        # 这样 A* 不会因为"起点被障碍物占用"直接失败。
+        if dispatch:
+            sx, sy, sz = self._snap_to_free(start_wp.x, start_wp.y, start_wp.z)
+            ex, ey, ez = self._snap_to_free(end_wp.x, end_wp.y, end_wp.z)
+            # 把微调后的坐标写回航点（不影响 task 本体，只在本线程使用）
+            from ..models.aircraft import Waypoint
+            snapped_start = Waypoint(
+                wp_id=start_wp.wp_id, x=sx, y=sy, z=sz,
+                wp_type=start_wp.wp_type, hover_time=start_wp.hover_time,
+                earliest_arrival=start_wp.earliest_arrival,
+                latest_arrival=start_wp.latest_arrival,
+                task_description=start_wp.task_description,
+            )
+            snapped_end = Waypoint(
+                wp_id=end_wp.wp_id, x=ex, y=ey, z=ez,
+                wp_type=end_wp.wp_type, hover_time=end_wp.hover_time,
+                earliest_arrival=end_wp.earliest_arrival,
+                latest_arrival=end_wp.latest_arrival,
+                task_description=end_wp.task_description,
+            )
+            start_wp = snapped_start
+            end_wp = snapped_end
+
         # 如果有多个途经点，分段规划
         if len(task.waypoints) > 2:
-            return self._plan_multi_waypoint(task, performance, idx, planner)
+            return self._plan_multi_waypoint(task, performance, idx, planner, dispatch=dispatch,
+                                              start_wp=start_wp, end_wp=end_wp)
 
         route = planner.plan(
             start=(start_wp.x, start_wp.y, start_wp.z),
@@ -219,8 +210,31 @@ class ParallelPlanner:
             task_id=task.task_id,
             aircraft_id=task.aircraft_id,
             route_id=f"route-{idx:03d}",
+            extras=not dispatch,  # 调度模式跳过 risk/heading
         )
         return route
+
+    def _snap_to_free(
+        self, x: float, y: float, z: float, max_radius: int = 2,
+    ) -> Tuple[float, float, float]:
+        """把坐标微调到最近非障碍格（最多搜索 max_radius 圈）"""
+        if not self.obstacle_set.is_static_blocked(x, y, z):
+            return (x, y, z)
+        ix, iy, iz = self.config.to_grid(x, y, z)
+        for r in range(1, max_radius + 1):
+            for dx in range(-r, r + 1):
+                for dy in range(-r, r + 1):
+                    for dz in range(-r, r + 1):
+                        nix, niy, niz = ix + dx, iy + dy, iz + dz
+                        if (
+                            0 <= nix < self.config.nx
+                            and 0 <= niy < self.config.ny
+                            and 0 <= niz < self.config.nz
+                        ):
+                            wx, wy, wz = self.config.to_world(nix, niy, niz)
+                            if not self.obstacle_set.is_static_blocked(wx, wy, wz):
+                                return (wx, wy, wz)
+        return (x, y, z)  # 找不到空闲格，保持原坐标
 
     def _plan_multi_waypoint(
         self,
@@ -228,17 +242,40 @@ class ParallelPlanner:
         performance: AircraftPerformance,
         idx: int,
         planner: SpaceTimeAStar,
+        dispatch: bool = False,
+        start_wp=None,
+        end_wp=None,
     ) -> PlannedRoute:
         """多航点分段规划"""
         from ..models.task import TrajectoryPoint
+
+        if start_wp is None:
+            start_wp = task.start
+        if end_wp is None:
+            end_wp = task.end
 
         all_trajectory = []
         current_time = task.departure_time
         total_planning_time = 0.0
 
-        for i in range(len(task.waypoints) - 1):
-            wp_start = task.waypoints[i]
-            wp_end = task.waypoints[i + 1]
+        # 多航点：起点 / 终点 / 每个 via 都做一次预微调
+        waypoints = list(task.waypoints)
+        if dispatch:
+            snapped = []
+            for wp in waypoints:
+                sx, sy, sz = self._snap_to_free(wp.x, wp.y, wp.z)
+                snapped.append(Waypoint(
+                    wp_id=wp.wp_id, x=sx, y=sy, z=sz,
+                    wp_type=wp.wp_type, hover_time=wp.hover_time,
+                    earliest_arrival=wp.earliest_arrival,
+                    latest_arrival=wp.latest_arrival,
+                    task_description=wp.task_description,
+                ))
+            waypoints = snapped
+
+        for i in range(len(waypoints) - 1):
+            wp_start = waypoints[i]
+            wp_end = waypoints[i + 1]
 
             seg_route = planner.plan(
                 start=(wp_start.x, wp_start.y, wp_start.z),
@@ -247,6 +284,7 @@ class ParallelPlanner:
                 task_id=task.task_id,
                 aircraft_id=task.aircraft_id,
                 route_id=f"route-{idx:03d}-seg{i}",
+                extras=not dispatch,
             )
 
             total_planning_time += seg_route.planning_time_ms
@@ -262,7 +300,7 @@ class ParallelPlanner:
                     planning_time_ms=total_planning_time,
                 )
 
-            # 拼接轨迹（跳过重复的起点）
+            # 拼接轨迹（跳过重复的）
             if all_trajectory:
                 all_trajectory.extend(seg_route.trajectory[1:])
             else:
@@ -279,18 +317,12 @@ class ParallelPlanner:
             algorithm="SpaceTimeAStar-MultiWaypoint",
             planning_time_ms=total_planning_time,
         )
-        route.compute_metrics(performance)
+        # dispatch 模式下只算 distance/time（cheaper），full 模式算 energy 等
+        if dispatch:
+            route.compute_metrics()
+        else:
+            route.compute_metrics(performance)
         return route
-
-    def _plan_multiprocess(
-        self,
-        tasks: List[FlightTask],
-        performances: Dict[str, AircraftPerformance],
-    ) -> List[PlannedRoute]:
-        """多进程并行规划（注意：障碍物数据需要可序列化）"""
-        # 简化实现：多进程模式下回退到线程模式
-        # 因为障碍物集合包含复杂对象，序列化开销大
-        return self._plan_multithread(tasks, performances)
 
     def detect_conflicts(self, routes: List[PlannedRoute], min_separation: float = 10.0) -> List[dict]:
         """
