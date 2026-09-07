@@ -36,9 +36,23 @@ conda run -n "${ENV_NAME}" python -c \
 # 5. 根据参数执行任务
 case "${1:-}" in
     plan)
-        echo "[+] 运行 demo 规划..."
-        conda run -n "${ENV_NAME}" python run_planning.py --output-dir ./output/demo "${@:2}"
-        conda run -n "${ENV_NAME}" python visualize.py --input ./output/demo
+        echo "[+] 单机规划..."
+        conda run -n "${ENV_NAME}" python plan_single.py --output-dir ./output/single "${@:2}"
+        conda run -n "${ENV_NAME}" python visualize.py --input ./output/single
+
+        echo "[+] 多机批量规划..."
+        conda run -n "${ENV_NAME}" python plan_multi.py --output-dir ./output/multi --conflict-check
+        conda run -n "${ENV_NAME}" python visualize.py --input ./output/multi
+        ;;
+    single)
+        echo "[+] 单机规划..."
+        conda run -n "${ENV_NAME}" python plan_single.py --output-dir ./output/single "${@:2}"
+        conda run -n "${ENV_NAME}" python visualize.py --input ./output/single
+        ;;
+    multi)
+        echo "[+] 多机批量规划..."
+        conda run -n "${ENV_NAME}" python plan_multi.py --output-dir ./output/multi --conflict-check
+        conda run -n "${ENV_NAME}" python visualize.py --input ./output/multi
         ;;
     stress)
         echo "[+] 运行压力测试 (10/100/1000/10000, FULL vs DISPATCH)..."
@@ -49,17 +63,21 @@ case "${1:-}" in
         ;;
     visualize)
         echo "[+] 为已有产物生成可视化..."
-        if [ -d ./output/demo ]; then
-            conda run -n "${ENV_NAME}" python visualize.py --input ./output/demo
-        fi
+        for d in ./output/single ./output/multi; do
+            if [ -d "$d" ]; then
+                conda run -n "${ENV_NAME}" python visualize.py --input "$d"
+            fi
+        done
         if [ -d ./output/stress ]; then
             conda run -n "${ENV_NAME}" python visualize_stress.py --input ./output/stress
         fi
         ;;
     all)
         echo "[+] 完整流程..."
-        conda run -n "${ENV_NAME}" python run_planning.py --output-dir ./output/demo "$@"
-        conda run -n "${ENV_NAME}" python visualize.py --input ./output/demo
+        conda run -n "${ENV_NAME}" python plan_single.py --output-dir ./output/single
+        conda run -n "${ENV_NAME}" python visualize.py --input ./output/single
+        conda run -n "${ENV_NAME}" python plan_multi.py --output-dir ./output/multi --conflict-check
+        conda run -n "${ENV_NAME}" python visualize.py --input ./output/multi
         conda run -n "${ENV_NAME}" python -u run_stress_test.py \
             --scales 10 100 1000 10000 --workers 8 --max-iterations 50000 \
             --compare --output ./output/stress "$@"
@@ -69,10 +87,12 @@ case "${1:-}" in
         echo ""
         echo "[✓] 环境已就绪: conda activate ${ENV_NAME}"
         echo "  可执行命令:"
-        echo "    ./setup_env.sh plan         # 规划 demo + 可视化"
+        echo "    ./setup_env.sh plan         # 单机 + 多机批量 + 可视化"
+        echo "    ./setup_env.sh single       # 仅单机规划"
+        echo "    ./setup_env.sh multi        # 仅多机批量"
         echo "    ./setup_env.sh stress       # 压力测试 + 可视化"
         echo "    ./setup_env.sh visualize    # 为已有产物生成可视化"
-        echo "    ./setup_env.sh all          # plan + stress 全流程"
+        echo "    ./setup_env.sh all          # 全流程"
         echo "    conda activate ${ENV_NAME}  # 手动进入环境"
         ;;
 esac

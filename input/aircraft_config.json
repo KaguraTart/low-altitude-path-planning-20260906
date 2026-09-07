@@ -1,0 +1,259 @@
+{
+  "aircraft": [
+    {
+      "id": "uav-001",
+      "model": "DJI-Matrice-300",
+      "category": "heavy_payload",
+      "manufacturer": "DJI",
+
+      "physical": {
+        "weight_kg": 6.3,
+        "max_takeoff_weight_kg": 9.0,
+        "payload_capacity_kg": 2.7,
+        "wingspan_m": 0.81,
+        "length_m": 0.81,
+        "width_m": 0.81,
+        "height_m": 0.43,
+        "rotor_radius_m": 0.43,
+        "diagonal_m": 1.05
+      },
+
+      "performance": {
+        "max_speed_mps": 18.0,
+        "max_climb_rate_mps": 6.0,
+        "max_descent_rate_mps": 4.0,
+        "max_turn_rate_dps": 60.0,
+        "max_acceleration_mps2": 3.0,
+        "max_deceleration_mps2": 2.5
+      },
+
+      "endurance": {
+        "max_flight_time_s": 1800.0,
+        "max_range_m": 15000.0,
+        "battery_capacity_wh": 274.0,
+        "cruise_power_w": 850.0,
+        "hover_power_w": 600.0
+      },
+
+      "operational": {
+        "min_altitude_m": 10.0,
+        "max_altitude_m": 300.0,
+        "min_operating_temp_c": -20.0,
+        "max_operating_temp_c": 50.0,
+        "max_wind_resistance_mps": 12.0,
+        "ip_rating": "IP45"
+      },
+
+      "safety": {
+        "rotor_radius_m": 0.43,
+        "safety_margin_m": 5.0,
+        "geofence_compliant": true,
+        "return_to_home_altitude_m": 50.0
+      }
+    },
+    {
+      "id": "uav-002",
+      "model": "DJI-Mavic-3-Enterprise",
+      "category": "medium_payload",
+      "manufacturer": "DJI",
+
+      "physical": {
+        "weight_kg": 1.05,
+        "max_takeoff_weight_kg": 1.20,
+        "payload_capacity_kg": 0.15,
+        "wingspan_m": 0.38,
+        "length_m": 0.35,
+        "width_m": 0.30,
+        "height_m": 0.11,
+        "rotor_radius_m": 0.10,
+        "diagonal_m": 0.50
+      },
+
+      "performance": {
+        "max_speed_mps": 15.0,
+        "max_climb_rate_mps": 5.0,
+        "max_descent_rate_mps": 3.0,
+        "max_turn_rate_dps": 45.0,
+        "max_acceleration_mps2": 2.5,
+        "max_deceleration_mps2": 2.0
+      },
+
+      "endurance": {
+        "max_flight_time_s": 2700.0,
+        "max_range_m": 20000.0,
+        "battery_capacity_wh": 77.0,
+        "cruise_power_w": 130.0,
+        "hover_power_w": 95.0
+      },
+
+      "operational": {
+        "min_altitude_m": 10.0,
+        "max_altitude_m": 250.0,
+        "min_operating_temp_c": -10.0,
+        "max_operating_temp_c": 40.0,
+        "max_wind_resistance_mps": 12.0,
+        "ip_rating": "IP54"
+      },
+
+      "safety": {
+        "rotor_radius_m": 0.10,
+        "safety_margin_m": 3.0,
+        "geofence_compliant": true,
+        "return_to_home_altitude_m": 50.0
+      }
+    },
+    {
+      "id": "uav-003",
+      "model": "Custom-Delivery-Drone",
+      "category": "delivery",
+      "manufacturer": "Custom",
+
+      "physical": {
+        "weight_kg": 8.5,
+        "max_takeoff_weight_kg": 15.0,
+        "payload_capacity_kg": 6.5,
+        "wingspan_m": 1.20,
+        "length_m": 1.00,
+        "width_m": 1.00,
+        "height_m": 0.45,
+        "rotor_radius_m": 0.40,
+        "diagonal_m": 1.55
+      },
+
+      "performance": {
+        "max_speed_mps": 12.0,
+        "max_climb_rate_mps": 4.0,
+        "max_descent_rate_mps": 2.5,
+        "max_turn_rate_dps": 30.0,
+        "max_acceleration_mps2": 2.0,
+        "max_deceleration_mps2": 1.8
+      },
+
+      "endurance": {
+        "max_flight_time_s": 1200.0,
+        "max_range_m": 8000.0,
+        "battery_capacity_wh": 412.0,
+        "cruise_power_w": 1450.0,
+        "hover_power_w": 1100.0
+      },
+
+      "operational": {
+        "min_altitude_m": 20.0,
+        "max_altitude_m": 200.0,
+        "min_operating_temp_c": 0.0,
+        "max_operating_temp_c": 40.0,
+        "max_wind_resistance_mps": 10.0,
+        "ip_rating": "IP43"
+      },
+
+      "safety": {
+        "rotor_radius_m": 0.40,
+        "safety_margin_m": 6.0,
+        "geofence_compliant": true,
+        "return_to_home_altitude_m": 80.0
+      }
+    },
+    {
+      "id": "uav-004",
+      "model": "DJI-Matrice-300",
+      "category": "heavy_payload",
+      "manufacturer": "DJI",
+
+      "physical": {
+        "weight_kg": 6.3,
+        "max_takeoff_weight_kg": 9.0,
+        "payload_capacity_kg": 2.7,
+        "wingspan_m": 0.81,
+        "length_m": 0.81,
+        "width_m": 0.81,
+        "height_m": 0.43,
+        "rotor_radius_m": 0.43,
+        "diagonal_m": 1.05
+      },
+
+      "performance": {
+        "max_speed_mps": 18.0,
+        "max_climb_rate_mps": 6.0,
+        "max_descent_rate_mps": 4.0,
+        "max_turn_rate_dps": 60.0,
+        "max_acceleration_mps2": 3.0,
+        "max_deceleration_mps2": 2.5
+      },
+
+      "endurance": {
+        "max_flight_time_s": 1800.0,
+        "max_range_m": 15000.0,
+        "battery_capacity_wh": 274.0,
+        "cruise_power_w": 850.0,
+        "hover_power_w": 600.0
+      },
+
+      "operational": {
+        "min_altitude_m": 10.0,
+        "max_altitude_m": 300.0,
+        "min_operating_temp_c": -20.0,
+        "max_operating_temp_c": 50.0,
+        "max_wind_resistance_mps": 12.0,
+        "ip_rating": "IP45"
+      },
+
+      "safety": {
+        "rotor_radius_m": 0.43,
+        "safety_margin_m": 5.0,
+        "geofence_compliant": true,
+        "return_to_home_altitude_m": 50.0
+      }
+    },
+    {
+      "id": "uav-005",
+      "model": "Inspection-Drone-Pro",
+      "category": "inspection",
+      "manufacturer": "Custom",
+
+      "physical": {
+        "weight_kg": 2.2,
+        "max_takeoff_weight_kg": 2.8,
+        "payload_capacity_kg": 0.6,
+        "wingspan_m": 0.55,
+        "length_m": 0.45,
+        "width_m": 0.45,
+        "height_m": 0.25,
+        "rotor_radius_m": 0.20,
+        "diagonal_m": 0.65
+      },
+
+      "performance": {
+        "max_speed_mps": 10.0,
+        "max_climb_rate_mps": 3.0,
+        "max_descent_rate_mps": 2.0,
+        "max_turn_rate_dps": 25.0,
+        "max_acceleration_mps2": 2.0,
+        "max_deceleration_mps2": 1.5
+      },
+
+      "endurance": {
+        "max_flight_time_s": 2400.0,
+        "max_range_m": 12000.0,
+        "battery_capacity_wh": 99.0,
+        "cruise_power_w": 145.0,
+        "hover_power_w": 100.0
+      },
+
+      "operational": {
+        "min_altitude_m": 15.0,
+        "max_altitude_m": 150.0,
+        "min_operating_temp_c": -10.0,
+        "max_operating_temp_c": 45.0,
+        "max_wind_resistance_mps": 8.0,
+        "ip_rating": "IP54"
+      },
+
+      "safety": {
+        "rotor_radius_m": 0.20,
+        "safety_margin_m": 4.0,
+        "geofence_compliant": true,
+        "return_to_home_altitude_m": 40.0
+      }
+    }
+  ]
+}

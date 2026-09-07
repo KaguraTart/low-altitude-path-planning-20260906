@@ -314,7 +314,7 @@ def run_scale(
 
 def main():
     parser = argparse.ArgumentParser(description="无人机规模压力测试")
-    parser.add_argument("--data-dir", default="./data", help="输入数据目录")
+    parser.add_argument("--data-dir", default="./input", help="输入数据目录")
     parser.add_argument(
         "--scales", type=int, nargs="+", default=[10, 100, 1000, 10000],
         help="测试规模列表（默认 10 100 1000 10000）",
