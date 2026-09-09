@@ -165,30 +165,40 @@ python visualize_stress.py --input ./output/stress
 
 ```
 output/
-├── demo/                              # run_planning.py 输出
-│   ├── planning_result_*.json        # 聚合规划结果
-│   ├── environment.json               # 环境快照（供 visualize.py 复现障碍物）
-│   ├── routes/*.json                  # 每条航线详情
-│   ├── waypoints_*.json               # 航点指令
-│   ├── report_*.md                    # 规划报告
-│   └── visualizations/                # visualize.py 输出
-│       ├── routes_3d.png              # Matplotlib 3D 静态图
-│       ├── routes_interactive.html    # Plotly 交互式 3D
-│       ├── risk_heatmap.png           # 风险热力图
-│       └── route_metrics_bar.png      # 航线指标对比柱状图
+├── single/                          # plan_single.py 输出
+│   ├── planning_result_*.json
+│   ├── environment.json
+│   ├── routes/*.json
+│   ├── waypoints_*.json
+│   ├── report_*.md
+│   └── visualizations/               # visualize.py 输出
+│       ├── routes_3d.png
+│       ├── routes_interactive.html
+│       ├── risk_heatmap.png
+│       └── route_metrics_bar.png
 │
-└── stress/                            # run_stress_test.py 输出
-    ├── stress_results_full.json       # FULL 模式结果
-    ├── stress_results_dispatch.json   # DISPATCH 模式结果
-    ├── stress_results.json            # 主结果（最后一次跑）
-    ├── STRESS_TEST_RESULTS.md         # Markdown 报告
-    └── visualizations/                # visualize_stress.py 输出
-        ├── wall_clock.png             # 墙钟时间对比
-        ├── speedup.png                # 加速比柱状图
-        ├── success_rate.png           # 成功率对比
-        ├── throughput.png             # 吞吐对比
-        ├── full_vs_dispatch.png       # FULL vs DISPATCH 综合
-        └── task_time_percentiles.png  # 单任务耗时分布
+├── multi/                           # plan_multi.py 输出
+│   ├── planning_result_*.json
+│   ├── routes/*.json
+│   ├── conflicts.json               # 飞行器间冲突（仅 --conflict-check）
+│   ├── environment.json
+│   ├── report_*.md
+│   └── visualizations/
+│
+└── stress/                          # run_stress_test.py 输出
+    ├── stress_results_full.json
+    ├── stress_results_dispatch.json
+    ├── stress_results.json
+    ├── STRESS_TEST_RESULTS.md
+    ├── STRESS_TEST_REPORT.md         # 详细报告
+    ├── console.log
+    └── visualizations/               # visualize_stress.py 输出
+        ├── wall_clock.png
+        ├── speedup.png
+        ├── success_rate.png
+        ├── throughput.png
+        ├── full_vs_dispatch.png
+        └── task_time_percentiles.png
 ```
 
 ---
@@ -418,7 +428,7 @@ output/
 
 `ParallelPlanner.__init__` 现在**预先构建一份只读 `SpaceTimeGrid`**，所有子规划器共享同一个引用。10000 任务从原来的 30 GB 分配降至**单次 3 MB**。
 
-实测收益（与原始 13 分钟对比）：**N=10000 墙钟从 789s 降至 ~200-300s**（详见 `output/stress_compare/`）。
+实测收益（与原始 13 分钟对比）：**N=10000 墙钟从 789s 降至 451s**（详见 [`output/stress/STRESS_TEST_REPORT.md`](output/stress/STRESS_TEST_REPORT.md)）。
 
 #### P3. 失败任务没有重试 ✅ **已修复**
 
@@ -599,13 +609,17 @@ config.json `dt=10` 与 `SpaceTimeConfig` 默认 `dt=5` 不同，加载后网格
 
 ## 9. 项目交付清单
 
-- [x] 完整源码（4 个规划模块 + 4 个数据模型 + 可视化 + I/O）
-- [x] Demo 数据集（12 静态 + 4 动态障碍物 + 5 飞行器 + 5 任务）
-- [x] 主运行脚本 `run_planning.py`
+- [x] 完整源码（4 个规划模块 + 4 个数据模型 + grid/validator + 可视化 + I/O）
+- [x] Demo 数据集（12 静态 + 4 动态障碍物 + 5 飞行器 + 5 任务，含扩展动力学字段）
+- [x] 单机规划脚本 `plan_single.py`
+- [x] 多机批量脚本 `plan_multi.py`
 - [x] 压力测试脚本 `run_stress_test.py`
+- [x] 可视化脚本 `visualize.py` / `visualize_stress.py`
 - [x] 算法设计文档 `docs/algorithm_design.md`
-- [x] 输入输出规范 `docs/input_output_spec.md`
+- [x] 输入输出详细手册 `docs/INPUT_OUTPUT_GUIDE.md`（608 行）
+- [x] 输入输出简版规范 `docs/input_output_spec.md`
 - [x] README（本文档）
+- [x] conda 环境 `environment.yml` + `setup_env.sh`
 - [ ] 单元测试（_见 §7.2 P9_）
 - [ ] CI 配置（_建议补 GitHub Actions_）
 
