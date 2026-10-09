@@ -553,26 +553,30 @@ output/stress/
 [
   {
     "scale": 10000,
-    "success_count": 9143,
-    "failed_count": 857,
-    "success_rate": 91.43,
-    "total_planning_time_ms": 451670.0,
-    "avg_planning_time_per_task_ms": 45.17,
+    "success_count": 9095,
+    "failed_count": 905,
+    "success_rate": 90.95,
+    "total_planning_time_ms": 1559977.47,
+    "avg_planning_time_per_task_ms": 156.0,
     "min_task_time_ms": 0.01,
-    "max_task_time_ms": 5998.02,
-    "p50_task_time_ms": 50.9,
-    "p95_task_time_ms": 4024.0,
-    "p99_task_time_ms": 5069.0,
-    "avg_distance_m": 3739.9,
-    "avg_time_s": 382.8,
-    "avg_min_obstacle_dist_m": 139.8,
-    "wall_clock_time_s": 451.67,
-    "throughput_tasks_per_s": 22.1,
-    "conflict_count_sample200": 47,
+    "max_task_time_ms": 25092.99,
+    "p50_task_time_ms": 93.02,
+    "p95_task_time_ms": 7322.73,
+    "p99_task_time_ms": 22199.65,
+    "avg_distance_m": 3798.32,
+    "avg_time_s": 396.44,
+    "avg_min_obstacle_dist_m": 202.83,
+    "wall_clock_time_s": 1559.98,
+    "throughput_tasks_per_s": 6.41,
+    "conflict_count_sample200": 117,
     "workers_used": 8
   }
 ]
 ```
+
+> 样例数据取自 2026-10-08 压测（飞行器包线约束 + 通行代价层接入后）。
+> `avg_min_obstacle_dist_m` 由 139.75 提升到 202.83，是代价层的直接效果；
+> `total_planning_time_ms` 上升是约束收紧与代价层查表的必然代价。
 
 ---
 

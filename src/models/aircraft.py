@@ -316,4 +316,22 @@ class FlightTask:
                 f"飞行高度不足: 需要 {req.min_ceiling_m}m, 可用 {perf.get_max_altitude()}m"
             )
 
+        # 航点高度必须落在飞行器实际工作包线内。
+        # requirements.min_ceiling_m 只表达"任务需要多高"，若与航点实际高度
+        # 不一致（例如需求写 200m 但航点放在 220m），规划必然失败，
+        # 因此这里按航点逐一核对，给出可定位的问题描述。
+        min_alt = perf.get_min_altitude()
+        max_alt = perf.get_max_altitude()
+        for wp in self.waypoints:
+            if max_alt is not None and wp.z > max_alt + 1e-6:
+                problems.append(
+                    f"航点 {wp.wp_id} 高度 {wp.z}m 超出飞行器升限 "
+                    f"{max_alt}m"
+                )
+            elif min_alt is not None and wp.z < min_alt - 1e-6:
+                problems.append(
+                    f"航点 {wp.wp_id} 高度 {wp.z}m 低于飞行器最低工作高度 "
+                    f"{min_alt}m"
+                )
+
         return (len(problems) == 0, problems)

@@ -36,6 +36,7 @@ from ..models.space import SpaceTimeConfig, SpaceTimeGrid
 from ..models.obstacles import ObstacleSet
 from ..models.aircraft import AircraftPerformance, FlightTask, Waypoint
 from ..models.task import PlannedRoute, PlanningResult
+from ..grid.cost import CostGrid, build_clearance_cost_grid
 from .spacetime_astar import SpaceTimeAStar
 
 
@@ -47,7 +48,7 @@ class SpatioTemporalOccupancyTable:
 
     实现细节：
     - 用 hash set 存储离散化的占用格 (ix, iy, iz, it)
-    - 每个格记录"被哪些飞机占用"，支持冲突溯源
+    - 每个格记录"被哪些飞机、哪些航线占用"，支持冲突溯源
     - 占用格在路线插入时计算，路线回滚时清除
 
     API：
@@ -65,8 +66,8 @@ class SpatioTemporalOccupancyTable:
         """
         self.config = config
         self.min_separation = min_separation
-        # {(ix, iy, iz, it): {aircraft_id, ...}} 占用记录
-        self._occupancy: Dict[Tuple[int, int, int, int], set] = {}
+        # {(ix, iy, iz, it): {aircraft_id: {route_id, ...}}} 占用记录
+        self._occupancy: Dict[Tuple[int, int, int, int], Dict[str, set]] = {}
 
     def _world_to_grid_with_radius(
         self, x: float, y: float, z: float, t: float, radius: float
@@ -94,19 +95,27 @@ class SpatioTemporalOccupancyTable:
         for p in route.trajectory:
             cells = self._world_to_grid_with_radius(p.x, p.y, p.z, p.t, safety_radius)
             for cell in cells:
-                if cell not in self._occupancy:
-                    self._occupancy[cell] = set()
-                self._occupancy[cell].add(route.aircraft_id)
+                by_aircraft = self._occupancy.get(cell)
+                if by_aircraft is None:
+                    by_aircraft = {}
+                    self._occupancy[cell] = by_aircraft
+                by_aircraft.setdefault(route.aircraft_id, set()).add(route.route_id)
 
     def unmark_route(self, route: PlannedRoute, safety_radius: float = 0.0):
         """从占用表中移除航线的占用格"""
         for p in route.trajectory:
             cells = self._world_to_grid_with_radius(p.x, p.y, p.z, p.t, safety_radius)
             for cell in cells:
-                if cell in self._occupancy:
-                    self._occupancy[cell].discard(route.aircraft_id)
-                    if not self._occupancy[cell]:
-                        del self._occupancy[cell]
+                by_aircraft = self._occupancy.get(cell)
+                if by_aircraft is None:
+                    continue
+                routes_of_aircraft = by_aircraft.get(route.aircraft_id)
+                if routes_of_aircraft is not None:
+                    routes_of_aircraft.discard(route.route_id)
+                    if not routes_of_aircraft:
+                        del by_aircraft[route.aircraft_id]
+                if not by_aircraft:
+                    del self._occupancy[cell]
 
     def is_occupied(
         self, x: float, y: float, z: float, t: float,
@@ -116,16 +125,15 @@ class SpatioTemporalOccupancyTable:
         """查询 (x, y, z, t) 是否被占用（可排除自身飞机）"""
         cells = self._world_to_grid_with_radius(x, y, z, t, safety_radius)
         for cell in cells:
-            occupants = self._occupancy.get(cell)
-            if occupants is None:
+            by_aircraft = self._occupancy.get(cell)
+            if by_aircraft is None:
                 continue
             if exclude_aircraft is None:
-                if occupants:
+                if by_aircraft:
                     return True
             else:
                 # 排除自身飞机的占用
-                others = {a for a in occupants if a != exclude_aircraft}
-                if others:
+                if any(a != exclude_aircraft for a in by_aircraft):
                     return True
         return False
 
@@ -133,37 +141,39 @@ class SpatioTemporalOccupancyTable:
         self, route: PlannedRoute, min_separation: float = 10.0,
         time_window: float = 5.0,
     ) -> List[dict]:
-        """找出新航线与已规划航线之间的所有冲突
+        """找出新航线与已登记航线之间的所有冲突
 
         Returns:
-            [{"route_a", "route_b", "time", "position", "distance"}, ...]
+            [{"route_a", "route_b", "aircraft_b", "time", "position_a",
+              "position_b", "distance"}, ...]
         """
         conflicts = []
         for pa in route.trajectory:
-            for existing_cells, aircraft_set in self._occupancy.items():
-                ix_a, iy_a, iz_a, it_a = existing_cells
+            for cell, by_aircraft in self._occupancy.items():
+                ix_a, iy_a, iz_a, it_a = cell
                 if abs(pa.t - self.config.step_to_time(it_a)) > time_window:
                     continue
-                # 距离检查
-                if route.aircraft_id in aircraft_set:
-                    continue  # 自身不算冲突
-                # 把网格索引转回世界坐标中心
+                # 距离检查（把网格索引转回世界坐标中心）
                 wx, wy, wz = self.config.to_world(ix_a, iy_a, iz_a)
                 dx = pa.x - wx
                 dy = pa.y - wy
                 dz = pa.z - wz
-                d = np.sqrt(dx * dx + dy * dy + dz * dz)
-                if d < min_separation:
-                    # 找到现有航线 ID（取第一个）
-                    other_aircraft = next(iter(aircraft_set))
-                    conflicts.append({
-                        "route_a": route.route_id,
-                        "route_b": f"aircraft:{other_aircraft}",
-                        "time": pa.t,
-                        "position_a": (pa.x, pa.y, pa.z),
-                        "position_b": (wx, wy, wz),
-                        "distance": float(d),
-                    })
+                d = float(np.sqrt(dx * dx + dy * dy + dz * dz))
+                if d >= min_separation:
+                    continue
+                for aircraft_id, route_ids in by_aircraft.items():
+                    if aircraft_id == route.aircraft_id:
+                        continue  # 自身不算冲突
+                    for other_route_id in route_ids:
+                        conflicts.append({
+                            "route_a": route.route_id,
+                            "route_b": other_route_id,
+                            "aircraft_b": aircraft_id,
+                            "time": round(pa.t, 2),
+                            "position_a": (round(pa.x, 1), round(pa.y, 1), round(pa.z, 1)),
+                            "position_b": (round(wx, 1), round(wy, 1), round(wz, 1)),
+                            "distance": round(d, 2),
+                        })
         return conflicts
 
     def clear(self):
@@ -215,6 +225,9 @@ class ParallelPlanner:
         obstacle_set: ObstacleSet,
         max_workers: int = 4,
         max_iterations: int = 2_000_000,
+        use_cost_grid: bool = False,
+        clearance: float = 200.0,
+        clearance_cost: float = 3.0,
     ):
         self.config = config
         self.obstacle_set = obstacle_set
@@ -234,12 +247,21 @@ class ParallelPlanner:
             for obs in obstacle_set.dynamic_obstacles:
                 self._shared_grid.set_dynamic_obstacle(obs.trajectory, obs.safety_radius)
 
+        # 通行代价层（与 occupancy 正交，只读共享，可跨线程复用）
+        self._shared_cost_grid: Optional[CostGrid] = None
+        if use_cost_grid:
+            self._shared_cost_grid = build_clearance_cost_grid(
+                self._shared_grid, obstacle_set,
+                clearance=clearance, clearance_cost=clearance_cost,
+            )
+
         # 共享的单进程规划器（用于线程模式和顺序回退）
         self._planner = SpaceTimeAStar(
             config=config,
             obstacle_set=obstacle_set,
             max_iterations=max_iterations,
             grid=self._shared_grid,
+            cost_grid=self._shared_cost_grid,
         )
 
     def plan_batch(
@@ -346,6 +368,11 @@ class ParallelPlanner:
             max_speed=performance.max_speed,
             max_iterations=self.max_iterations,
             grid=self._shared_grid,
+            cost_grid=self._shared_cost_grid,
+            min_altitude=performance.get_min_altitude(),
+            max_altitude=performance.get_max_altitude(),
+            max_climb_rate=performance.get_max_climb_rate(),
+            max_descent_rate=performance.get_max_descent_rate(),
         )
 
         start_wp = task.start
@@ -499,6 +526,10 @@ class ParallelPlanner:
             route.compute_metrics()
         else:
             route.compute_metrics(performance)
+            # 分段时每个 seg_route 各自算过 risk，但拼接后的整条航路是新的
+            # PlannedRoute 对象，必须在这里对合并轨迹重算一次，否则
+            # min_obstacle_distance / max_risk / avg_risk 会停留在默认值 0.0
+            planner._compute_risk(route)
         return route
 
     def detect_conflicts(self, routes: List[PlannedRoute], min_separation: float = 10.0) -> List[dict]:
@@ -549,6 +580,115 @@ class ParallelPlanner:
                         "distance": round(dist, 2),
                     })
         return conflicts if conflicts else None
+
+    def build_occupancy_table(
+        self,
+        routes: List[PlannedRoute],
+        min_separation: float = 10.0,
+        safety_radius: float = 0.0,
+    ) -> SpatioTemporalOccupancyTable:
+        """
+        为一组航线构建时空占用表（任务书 §三.2 时空资源管理）
+
+        Args:
+            routes: 航线列表（自动过滤 status != "planned"）
+            min_separation: 多机最小安全间隔（米）
+            safety_radius: 每条航线的占用半径（米）
+        """
+        table = SpatioTemporalOccupancyTable(self.config, min_separation=min_separation)
+        for route in routes:
+            if route.status == "planned":
+                table.mark_route(route, safety_radius=safety_radius)
+        return table
+
+    def detect_conflicts_occupancy(
+        self,
+        routes: List[PlannedRoute],
+        min_separation: float = 10.0,
+        time_window: float = 5.0,
+        safety_radius: float = 0.0,
+        max_routes: Optional[int] = None,
+    ) -> List[dict]:
+        """
+        基于时空占用表的冲突检测（任务书 §五.4）
+
+        与 :meth:`detect_conflicts` 的 O(n²·m²) 两两比对不同，这里按航线
+        顺序增量登记：查冲突 → 登记占用，每条航线只与"已登记的"航线比较，
+        避免重复比对同一对航线。冲突条目去重后返回。
+
+        Args:
+            routes: 航线列表（自动过滤 status != "planned"）
+            min_separation: 最小安全间隔（米）
+            time_window: 时间对齐窗口（秒）
+            safety_radius: 占用半径（米）
+            max_routes: 最多检查多少条航线（超大规模时限制采样量）
+
+        Returns:
+            去重后的冲突列表
+        """
+        planned = [r for r in routes if r.status == "planned"]
+        if max_routes is not None:
+            planned = planned[:max_routes]
+
+        table = SpatioTemporalOccupancyTable(self.config, min_separation=min_separation)
+        seen = set()
+        conflicts = []
+        for route in planned:
+            for c in table.find_conflicts(route, min_separation, time_window):
+                key = (c["route_a"], c["route_b"], c["time"])
+                if key in seen:
+                    continue
+                seen.add(key)
+                conflicts.append(c)
+            table.mark_route(route, safety_radius=safety_radius)
+        return conflicts
+
+    def resolve_conflicts(
+        self,
+        conflicts: List[dict],
+        routes: List[PlannedRoute],
+        max_delay_s: float = 60.0,
+    ) -> List[dict]:
+        """
+        冲突协调 (任务书 §三.2 冲突协调)
+
+        为每条冲突给出协调建议：
+        - 冲突时刻早于可接受延迟窗口 → 建议"延迟起飞"（等对方先飞过）
+        - 冲突时刻过晚，延迟反而会撞进冲突窗口 → 建议"高度调整"（上移一个网格层）
+
+        注意 ConflictResolver.suggest_delay 会把结果截断到 max_delay_s，
+        因此这里不能用"延迟量是否超限"来判断分支（那样 altitude 分支永远不可达），
+        而是直接用冲突时刻与 max_delay_s 的关系判断。
+
+        Args:
+            conflicts: detect_conflicts_occupancy 的输出
+            routes: 航线列表（用于取当前高度）
+            max_delay_s: 可接受的最大延迟（秒）
+
+        Returns:
+            带 resolution 字段的冲突列表
+        """
+        resolver = ConflictResolver(self.config, min_separation=10.0)
+        z_by_route = {
+            r.route_id: (r.trajectory[len(r.trajectory) // 2].z if r.trajectory else 0.0)
+            for r in routes
+        }
+        resolved = []
+        for c in conflicts:
+            item = dict(c)
+            if c.get("time", 0.0) <= max_delay_s:
+                item["resolution"] = "delay"
+                item["suggested_delay_s"] = round(
+                    resolver.suggest_delay(c, max_delay_s) or 0.0, 1
+                )
+            else:
+                current_z = z_by_route.get(c["route_a"], 0.0)
+                item["resolution"] = "altitude_shift"
+                item["suggested_z"] = round(
+                    resolver.suggest_altitude_shift(current_z), 1
+                )
+            resolved.append(item)
+        return resolved
 
     def scale_test(self, num_tasks: int = 100) -> dict:
         """

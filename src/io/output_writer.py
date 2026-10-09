@@ -83,15 +83,76 @@ def write_waypoints(waypoints: List[dict], output_dir: str, filename: str) -> st
     return filepath
 
 
+def _issue_to_dict(issue) -> dict:
+    """ValidationIssue → JSON 可序列化 dict"""
+    return {
+        "severity": issue.severity.value,
+        "code": issue.code,
+        "message": issue.message,
+        "trajectory_index": issue.trajectory_index,
+        "time": round(issue.time, 2),
+        "position": [round(v, 2) for v in issue.position],
+    }
+
+
+def write_validation(
+    validation,
+    output_dir: str,
+    filename: str,
+    extra: Optional[dict] = None,
+) -> str:
+    """
+    写入路径合法性验证结果（3.26 验证模块输出）
+
+    Args:
+        validation: PathValidator.ValidationResult
+        output_dir: 输出目录
+        filename: 文件名
+        extra: 附加信息（如数据质量报告）
+
+    Returns:
+        输出文件路径
+    """
+    ensure_output_dir(output_dir)
+    filepath = os.path.join(output_dir, filename)
+
+    output = {
+        "generated_at": datetime.now().isoformat(),
+        "is_valid": validation.is_valid,
+        "summary_text": validation.summary_text(),
+        "summary": validation.summary,
+        "issue_count": len(validation.issues),
+        "issues": [_issue_to_dict(i) for i in validation.issues],
+    }
+    if extra:
+        output.update(extra)
+
+    with open(filepath, "w", encoding="utf-8") as f:
+        json.dump(output, f, ensure_ascii=False, indent=2)
+
+    return filepath
+
+
 def generate_report(
     result: PlanningResult,
     config_info: dict,
     obstacle_info: dict,
     output_dir: str,
     filename: Optional[str] = None,
+    validation=None,
+    data_quality: Optional[dict] = None,
 ) -> str:
     """
     生成规划报告（Markdown 格式）
+
+    Args:
+        result: 批量规划结果
+        config_info: 环境配置信息
+        obstacle_info: 障碍物统计
+        output_dir: 输出目录
+        filename: 报告文件名
+        validation: PathValidator.ValidationResult（可选，渲染验证章节）
+        data_quality: 多源数据融合质量报告（可选）
 
     Returns:
         报告文件路径
@@ -151,7 +212,48 @@ def generate_report(
         lines.append(f"- 平均风险: {route.avg_risk:.4f}")
         lines.append(f"- 最近障碍距离: {route.min_obstacle_distance:.2f} m")
         lines.append(f"- 轨迹点数: {len(route.trajectory)}")
+        if route.explanation:
+            lines.append(f"- 规划解释: {route.explanation.summary}")
+            breakdown = ", ".join(
+                f"{k}={v:.4f}" for k, v in route.explanation.objective_breakdown.items()
+            )
+            lines.append(f"  - 目标得分: {breakdown}")
+            margin = ", ".join(
+                f"{k}={v:.2%}" for k, v in route.explanation.performance_margin.items()
+            )
+            lines.append(f"  - 性能裕度: {margin}")
+            lines.append(f"  - 规避障碍物数: {route.explanation.avoidance_count}")
+            for note in route.explanation.notes:
+                lines.append(f"  - ⚠ {note}")
         lines.append("")
+
+    if data_quality:
+        lines.extend([
+            "## 5. 多源数据融合质量",
+            "",
+            f"- 登记数据源: {data_quality.get('registered_sources', 0)}",
+            f"- 告警数量: {data_quality.get('warning_count', 0)}",
+        ])
+        for w in data_quality.get("warnings", []):
+            lines.append(f"  - ⚠ {w}")
+        lines.append("")
+
+    if validation is not None:
+        lines.extend([
+            "## 6. 合法性验证",
+            "",
+            f"- {validation.summary_text()}",
+            f"- 统计: {validation.summary}",
+            "",
+        ])
+        if validation.issues:
+            lines.append("| 严重度 | 代码 | 描述 |")
+            lines.append("|---|---|---|")
+            for issue in validation.issues[:100]:
+                lines.append(f"| {issue.severity.value} | {issue.code} | {issue.message} |")
+            if len(validation.issues) > 100:
+                lines.append(f"\n（仅展示前 100 条，共 {len(validation.issues)} 条）")
+            lines.append("")
 
     with open(filepath, "w", encoding="utf-8") as f:
         f.write("\n".join(lines))

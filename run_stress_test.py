@@ -73,12 +73,14 @@ AIRCRAFT_TEMPLATES = [
 TASK_TYPES = ["delivery", "inspection", "patrol", "surveillance"]
 
 
-def _load_obstacles(data_dir: str) -> ObstacleSet:
-    from src.io.input_loader import load_obstacle_set
-    return load_obstacle_set(
-        os.path.join(data_dir, "static_obstacles.json"),
-        os.path.join(data_dir, "dynamic_obstacles.json"),
+def _load_obstacles(data_dir: str):
+    """多源融合加载障碍物，与 plan_multi.py 保持同一条输入路径"""
+    from src.io.input_loader import load_obstacle_set_fused
+    obstacle_set, quality = load_obstacle_set_fused(
+        [os.path.join(data_dir, "static_obstacles.json")],
+        [os.path.join(data_dir, "dynamic_obstacles.json")],
     )
+    return obstacle_set, quality
 
 
 def _make_valid_position(
@@ -215,6 +217,7 @@ def run_scale(
     max_workers: int,
     max_iterations: int,
     dispatch: bool = False,
+    use_cost_grid: bool = True,
     verbose: bool = True,
 ) -> ScaleResult:
     rng = random.Random(seed + n)
@@ -238,6 +241,7 @@ def run_scale(
         config=config, obstacle_set=obstacle_set,
         max_workers=max_workers,
         max_iterations=max_iterations,
+        use_cost_grid=use_cost_grid,
     )
 
     t0 = time.time()
@@ -337,6 +341,10 @@ def main():
         "--compare", action="store_true",
         help="对比模式：依次跑 FULL 和 DISPATCH 两种模式，输出对比表",
     )
+    parser.add_argument(
+        "--no-cost-grid", action="store_true",
+        help="关闭通行代价层（默认开启，与 plan_multi.py 保持一致）",
+    )
     args = parser.parse_args()
 
     from src.io.input_loader import load_config
@@ -344,9 +352,13 @@ def main():
     print(f"时空网格: {config.nx}x{config.ny}x{config.nz}x{config.nt} "
           f"(空间 1/{config.dx}m, 时间步 {config.dt}s)")
 
-    obstacle_set = _load_obstacles(args.data_dir)
+    obstacle_set, data_quality = _load_obstacles(args.data_dir)
     print(f"障碍物: {len(obstacle_set.static_obstacles)} 静态 + "
           f"{len(obstacle_set.dynamic_obstacles)} 动态")
+    print(f"融合数据源: {data_quality['registered_sources']} 个 "
+          f"(告警 {data_quality['warning_count']} 条)")
+    use_cost_grid = not args.no_cost_grid
+    print(f"通行代价层: {'on' if use_cost_grid else 'off'}")
 
     os.makedirs(args.output, exist_ok=True)
 
@@ -374,7 +386,8 @@ def main():
                     n=n, config=config, obstacle_set=obstacle_set,
                     seed=args.seed, max_workers=args.workers,
                     max_iterations=args.max_iterations,
-                    dispatch=dispatch_flag, verbose=True,
+                    dispatch=dispatch_flag, use_cost_grid=use_cost_grid,
+                    verbose=True,
                 )
                 results.append(sr)
                 # 立即写中间结果（每模式一个 JSON 文件，供 visualize_stress.py 复用）

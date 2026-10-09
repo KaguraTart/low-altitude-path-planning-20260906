@@ -3,11 +3,18 @@
 提供：
 - SpaceTimeGrid: 四维时空占用网格（重导出自 src.models.space）
 - CostGrid: 网格通行代价
+- build_default_cost_grid: 人工划定区域的城市代价网格
+- build_clearance_cost_grid: 按障碍物净空距离自动生成的代价网格
 
 任务书要求"建立三维GridMap，包括网格坐标、占用状态、通行代价"。
 占用和代价正交：占用 = 能不能走，代价 = 走起来多费力。
 """
 from ..models.space import SpaceTimeGrid
-from .cost import CostGrid, build_default_cost_grid
+from .cost import CostGrid, build_default_cost_grid, build_clearance_cost_grid
 
-__all__ = ["SpaceTimeGrid", "CostGrid", "build_default_cost_grid"]
+__all__ = [
+    "SpaceTimeGrid",
+    "CostGrid",
+    "build_default_cost_grid",
+    "build_clearance_cost_grid",
+]

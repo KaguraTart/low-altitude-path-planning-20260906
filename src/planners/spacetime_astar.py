@@ -33,6 +33,7 @@ import numpy as np
 from ..models.space import SpaceTimeConfig, SpaceTimeGrid
 from ..models.obstacles import ObstacleSet
 from ..models.task import TrajectoryPoint, PlannedRoute
+from ..grid.cost import CostGrid
 
 
 class SpaceTimeAStar:
@@ -58,6 +59,11 @@ class SpaceTimeAStar:
         neighbor_mode: str = "6",
         max_iterations: int = 2_000_000,
         grid: Optional[SpaceTimeGrid] = None,
+        cost_grid: Optional[CostGrid] = None,
+        min_altitude: Optional[float] = None,
+        max_altitude: Optional[float] = None,
+        max_climb_rate: Optional[float] = None,
+        max_descent_rate: Optional[float] = None,
     ):
         self.config = config
         self.obstacle_set = obstacle_set
@@ -65,6 +71,16 @@ class SpaceTimeAStar:
         self.wait_enabled = wait_enabled
         self.neighbor_mode = neighbor_mode
         self.max_iterations = max_iterations
+        # 可选的通行代价层（3.25 扩展）：让规划器偏好低代价空域。
+        # 与 occupancy 正交——occupancy 决定"不能走"，cost 决定"更费力"。
+        self.cost_grid = cost_grid
+        # 飞行器高度包线（operational min/max altitude）。
+        # 与网格 z 范围求交集后作为搜索的 z 边界，避免规划出超出升限的航路。
+        self.min_altitude = min_altitude
+        self.max_altitude = max_altitude
+        self.max_climb_rate = max_climb_rate
+        self.max_descent_rate = max_descent_rate
+        self._iz_min, self._iz_max = self._resolve_altitude_band()
 
         if neighbor_mode == "26":
             self.neighbors = [
@@ -87,6 +103,26 @@ class SpaceTimeAStar:
             if obstacle_set is not None:
                 self._build_grid_from_obstacles()
 
+    def _resolve_altitude_band(self) -> Tuple[int, int]:
+        """飞行器高度包线 ∩ 网格 z 范围 → (iz_min, iz_max)"""
+        iz_min, iz_max = 0, self.config.nz - 1
+        if self.min_altitude is not None:
+            iz_min = max(iz_min, self.config.to_grid(0, 0, self.min_altitude)[2])
+        if self.max_altitude is not None:
+            iz_max = min(iz_max, self.config.to_grid(0, 0, self.max_altitude)[2])
+        if iz_min > iz_max:
+            # 高度包线与可用空域无交集，退回整个 z 范围并交由验证模块报错
+            return 0, self.config.nz - 1
+        return iz_min, iz_max
+
+    def altitude_error(self, point: Tuple[float, float, float], label: str) -> Optional[str]:
+        """检查一个空间点是否落在飞行器高度包线内，返回错误描述或 None"""
+        if self.min_altitude is not None and point[2] < self.min_altitude - 1e-6:
+            return f"{label}高度 {point[2]:.1f}m 低于飞行器最低高度 {self.min_altitude}m"
+        if self.max_altitude is not None and point[2] > self.max_altitude + 1e-6:
+            return f"{label}高度 {point[2]:.1f}m 超过飞行器最高高度 {self.max_altitude}m"
+        return None
+
     def _build_grid_from_obstacles(self):
         """将障碍物集合写入时空占用网格"""
         # 静态障碍物（使用精确包围盒）
@@ -106,13 +142,23 @@ class SpaceTimeAStar:
 
     def _heuristic(self, state: Tuple[int, int, int, int], goal: Tuple[int, int, int, int]) -> float:
         """
-        启发函数: 曼哈顿网格距离 * 时间步长
-        估计到达目标所需的最少时间步数，保证可采纳性。
+        启发函数: 曼哈顿网格距离 * 时间步长 * 全局最小代价倍率
+
+        无代价层时 min_cost = 1.0，退化为标准曼哈顿时间下界。
+        启用代价层时每条边的真实代价 ≥ dt * min_cost，按此缩放后
+        启发函数仍然是真实剩余代价的下界，保证最优性不被破坏。
         """
         ix, iy, iz, it = state
         gx, gy, gz, gt = goal
         manhattan = abs(ix - gx) + abs(iy - gy) + abs(iz - gz)
-        return manhattan * self.config.dt
+        return manhattan * self.config.dt * self._min_cost_scale
+
+    @property
+    def _min_cost_scale(self) -> float:
+        """代价层带来的启发函数缩放系数"""
+        if self.cost_grid is None:
+            return 1.0
+        return max(1e-6, self.cost_grid.min_cost)
 
     def _get_neighbors(
         self, state: Tuple[int, int, int, int]
@@ -124,17 +170,21 @@ class SpaceTimeAStar:
         ix, iy, iz, it = state
         neighbors = []
 
+        # 代价数组直取，避免在热循环里反复调用 CostGrid.get_cost
+        # （每次扩展要查 6 个空间邻居 + 1 个等待动作）
+        cmul = self.cost_grid.lookup_array() if self.cost_grid is not None else None
+        cmul_3d = cmul is not None and cmul.ndim == 3
+
         # 空间移动（6/26 邻域）
         for dx, dy, dz in self.neighbors:
             nix, niy, niz = ix + dx, iy + dy, iz + dz
             nit = it + 1  # 每次移动推进一个时间步
 
-            # 边界检查
+            # 边界检查（含飞行器高度包线）
             if not (
                 0 <= nix < self.config.nx
                 and 0 <= niy < self.config.ny
-                and 0 <= niz < self.config.nz
-                and 0 <= nit < self.config.nt
+                and self._iz_min <= niz <= self._iz_max
             ):
                 continue
 
@@ -147,12 +197,37 @@ class SpaceTimeAStar:
             if spatial_dist / self.config.dt > self.max_speed + 1e-6:
                 continue
 
+            # 爬升/下降率约束：网格 dz 通常远大于"单时间步可爬升的高度"，
+            # 因此一个 dz 位移可能需要多个时间步（阶梯式爬升/下降），
+            # 否则爬升率受限的飞行器将完全无法改变高度。
+            steps = 1
+            if dz != 0:
+                dz_m = abs(dz) * self.config.dz
+                rate_limit = self.max_climb_rate if dz > 0 else self.max_descent_rate
+                if rate_limit is not None and rate_limit > 0:
+                    steps = max(1, int(np.ceil(dz_m / (rate_limit * self.config.dt) - 1e-9)))
+                nit = it + steps
+                if nit >= self.config.nt:
+                    continue
+                # 阶梯沿途也必须无碰撞（同一竖直线上的中间格）
+                blocked = False
+                for k in range(1, steps):
+                    mid_z = iz + int(round(dz * k / steps))
+                    if not self.grid.is_free(nix, niy, mid_z, it + k):
+                        blocked = True
+                        break
+                if blocked:
+                    continue
+
             # 碰撞检查
             if not self.grid.is_free(nix, niy, niz, nit):
                 continue
 
             # 代价 = 时间步长（每次移动消耗 dt 时间）+ 微小距离惩罚（打破平局，偏好短路径）
-            cost = self.config.dt + spatial_dist * 0.001
+            cost = self.config.dt * steps + spatial_dist * 0.001
+            if cmul is not None:
+                # 通行代价倍率（默认 1.0；净空缓冲带等区域可 > 1）
+                cost *= cmul[nix, niy, niz] if cmul_3d else cmul[nix, niy, niz, nit]
             neighbors.append(((nix, niy, niz, nit), cost))
 
         # 等待动作（原地停留，时间推进）
@@ -160,6 +235,8 @@ class SpaceTimeAStar:
             nit = it + 1
             if nit < self.config.nt and self.grid.is_free(ix, iy, iz, nit):
                 cost = self.config.dt * 1.05  # 等待略贵于移动，鼓励前进
+                if cmul is not None:
+                    cost *= cmul[ix, iy, iz] if cmul_3d else cmul[ix, iy, iz, nit]
                 neighbors.append(((ix, iy, iz, nit), cost))
 
         return neighbors
@@ -192,6 +269,20 @@ class SpaceTimeAStar:
             PlannedRoute: 规划结果
         """
         t0 = time.time()
+
+        # 起点/终点高度可行性预检（在占用检查之前，给出可读的原因）
+        for label, point in (("起点", start), ("终点", goal)):
+            err = self.altitude_error(point, label)
+            if err is not None:
+                return PlannedRoute(
+                    route_id=route_id,
+                    task_id=task_id,
+                    aircraft_id=aircraft_id,
+                    status="failed",
+                    message=err,
+                    algorithm="SpaceTimeAStar",
+                    planning_time_ms=(time.time() - t0) * 1000,
+                )
 
         # 转换为网格坐标
         six, siy, siz = self.config.to_grid(*start)

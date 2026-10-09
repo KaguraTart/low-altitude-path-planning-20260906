@@ -1,0 +1,95 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: 安装依赖
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pytest
+
+      - name: 导入冒烟测试
+        run: python -c "import numpy, scipy, matplotlib, plotly; print('imports OK')"
+
+      - name: 单元测试
+        run: python -m pytest tests/ -v
+
+      - name: 单机规划端到端
+        run: python plan_single.py --output-dir /tmp/ci-single
+
+      - name: 多机规划端到端（含冲突检测与合法性验证）
+        run: python plan_multi.py --output-dir /tmp/ci-multi --conflict-check --validate --workers 2
+
+      - name: 小规模压测
+        run: python run_stress_test.py --scales 10 50 --seed 20260906 --workers 2 --output /tmp/ci-stress
+
+  stress:
+    # 万级规模压测手动触发（耗时约 10 分钟）
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    if: github.event_name == 'workflow_dispatch'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - run: pip install -r requirements.txt
+
+      - name: 万级规模压测
+        run: |
+          python run_stress_test.py \
+            --scales 10 100 1000 10000 \
+            --seed 20260906 --workers 4 --compare \
+            --output ./output/stress
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: stress-results
+          path: output/stress/
+
+  visualize:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - run: pip install -r requirements.txt
+
+      - name: 生成样例规划结果
+        run: python plan_single.py --output-dir /tmp/ci-viz
+
+      - name: 可视化冒烟测试
+        run: python visualize.py --input /tmp/ci-viz
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: visualizations
+          path: /tmp/ci-viz/visualizations/

@@ -42,11 +42,20 @@ def load_config(filepath: str) -> SpaceTimeConfig:
     return SpaceTimeConfig(**data)
 
 
+def _extract_items(data) -> list:
+    """兼容两种 JSON 顶层格式：{"obstacles": [...]} 或裸数组 [...]"""
+    if isinstance(data, list):
+        return data
+    if isinstance(data, dict):
+        return data.get("obstacles", [])
+    return []
+
+
 def load_static_obstacles(filepath: str) -> List[StaticObstacle]:
     """加载静态障碍物"""
     data = load_json(filepath)
     obstacles = []
-    for item in data.get("obstacles", data if isinstance(data, list) else []):
+    for item in _extract_items(data):
         obstacles.append(StaticObstacle(
             obstacle_id=item.get("id", item.get("obstacle_id", "unknown")),
             name=item.get("name", "unnamed"),
@@ -66,7 +75,7 @@ def load_dynamic_obstacles(filepath: str) -> List[DynamicObstacle]:
     """加载动态障碍物"""
     data = load_json(filepath)
     obstacles = []
-    for item in data.get("obstacles", data if isinstance(data, list) else []):
+    for item in _extract_items(data):
         trajectory = []
         for point in item.get("trajectory", []):
             trajectory.append((
@@ -95,6 +104,69 @@ def load_obstacle_set(static_file: str, dynamic_file: Optional[str] = None) -> O
         for obs in load_dynamic_obstacles(dynamic_file):
             obstacle_set.add_dynamic(obs)
     return obstacle_set
+
+
+# 各来源的融合优先级（10 最高）。电力/通信塔等低空障碍精度要求最高，
+# 城市 GIS 次之，DEM 地形最低。融合时高优先级源先入表，去重时占位优先。
+SOURCE_PRIORITY = {
+    "power_grid": 10,
+    "telecom": 9,
+    "city_gis": 7,
+    "radar": 8,
+    "flight_plan": 8,
+    "ecological": 6,
+    "dem": 4,
+    "meteorological": 5,
+}
+
+
+def load_obstacle_set_fused(
+    static_files: List[str],
+    dynamic_files: Optional[List[str]] = None,
+) -> Tuple[ObstacleSet, dict]:
+    """
+    多源障碍物数据融合加载 (3.25 模块三)
+
+    与 :func:`load_obstacle_set` 的区别：所有来源的数据先按每条记录的
+    ``source`` 字段分组，统一交给 :class:`ObstacleDataFusion` 融合：
+    - 多源数据格式统一（缺字段容错解析，解析失败记入 warnings 而不中断）
+    - 跨源去重（静态按 10m 栅格位置 + 类型，动态按 ID）
+    - 优先级处理（按 SOURCE_PRIORITY 排序，高优先级源先占位）
+    - 数据质量报告
+
+    Args:
+        static_files: 静态障碍物 JSON 文件列表（可来自不同数据源）
+        dynamic_files: 动态障碍物 JSON 文件列表
+
+    Returns:
+        (obstacle_set, quality_report)
+    """
+    from ..data_fusion.obstacle_fusion import ObstacleDataFusion
+
+    fusion = ObstacleDataFusion()
+    static_data: Dict[str, List[dict]] = {}
+    dynamic_data: Dict[str, List[dict]] = {}
+
+    def _collect(files, sink, source_type):
+        for path in files or []:
+            if not path or not os.path.exists(path):
+                continue
+            data = load_json(path)
+            items = _extract_items(data)
+            fallback = os.path.splitext(os.path.basename(path))[0]
+            for item in items:
+                src = item.get("source") or fallback
+                sink.setdefault(src, []).append(item)
+                if src not in fusion.sources:
+                    fusion.register_source(
+                        src, source_type, SOURCE_PRIORITY.get(src, 5)
+                    )
+
+    _collect(static_files, static_data, "static_buildings")
+    _collect(dynamic_files, dynamic_data, "dynamic_uav")
+
+    obstacle_set = fusion.fuse(static_data, dynamic_data)
+    return obstacle_set, fusion.quality_report()
 
 
 def _parse_physical(d: dict) -> PhysicalSpec:

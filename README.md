@@ -42,18 +42,18 @@
 
 | 维度 | 评分 | 说明 |
 |------|------|------|
-| 功能完整性 | 9 / 10 | 全部需求模块实现，无关键缺失 |
+| 功能完整性 | 9 / 10 | 全部需求模块实现并接入主链路，无关键缺失 |
 | 代码可读性 | 8 / 10 | 结构清晰，命名规范；存在少量死代码（已识别待清理） |
-| 算法正确性 | 8 / 10 | Demo 5/5 成功；10/100/1000/10000 压测 91.43% 成功率 |
-| 性能 | 8 / 10 | **P2 优化后 N=10000 从 13 min 降至 7.8 min（1.7× 提速）**；仍可 JIT 进一步加速 |
-| 工程化 | 6 / 10 | 无单元测试、无 CI、日志/监控未接入 |
+| 算法正确性 | 8 / 10 | Demo 合规任务 100% 成功且全部通过 7 维合法性验证；万级规模压测见 §4 |
+| 性能 | 8 / 10 | **P2 共享网格优化 1.81× 提速**；仍可 JIT 进一步加速 |
+| 工程化 | 8 / 10 | 201 个单元测试 + GitHub Actions CI；日志/监控未接入 |
 | 可视化 | 8 / 10 | Matplotlib 3D + Plotly HTML + 风险热力图齐全 |
-| **综合** | **7.8 / 10** | **可交付**；大规模生产前需要补测试 + 关键瓶颈优化 |
+| **综合** | **8.3 / 10** | **可交付**；大规模生产前需要关键瓶颈优化（尾延迟） |
 
 ### 2.3 一句话总结
 
-> **核心算法在 demo 场景下 100% 成功，在 10 / 100 / 1000 / 10000 规模随机任务下也保持高成功率，算法有效性已经过验证。**
-> **主要短板是工程化（缺测试、缺 CI）和极端规模下的吞吐优化（空间/时间复杂度均有优化空间）。**
+> **核心算法在 demo 场景下合规任务 100% 成功且全部通过合法性验证，万级规模随机任务压测保持 ≥ 85% 成功率，算法有效性已经过验证。**
+> **主要短板是极端规模下的尾延迟（P95 数秒）与吞吐优化（空间/时间复杂度均有优化空间）。**
 
 ---
 
@@ -212,10 +212,27 @@ output/
 ├── run_stress_test.py            # ★ 压力测试脚本（10/100/1000/10000）
 ├── visualize.py                  # ★ Demo 可视化
 ├── visualize_stress.py           # ★ 压测可视化
-├── setup_env.sh                  # 一键 conda 环境 + 运行脚本
+├── setup_env.sh                  # 一键 conda 环境 + 运行脚本（含 test 子命令）
 ├── environment.yml               # conda 环境复现配置
 ├── requirements.txt              # pip 依赖清单（备选）
+├── pytest.ini                    # pytest 配置
 ├── README.md                     # 本文档
+│
+├── tests/                        # ★ 单元测试（201 个用例）
+│   ├── conftest.py               #   共享 fixtures（含真实样例数据）
+│   ├── test_space.py             #   时空网格
+│   ├── test_obstacles.py         #   障碍物模型
+│   ├── test_aircraft.py          #   飞行器与任务
+│   ├── test_astar.py             #   时空 A*
+│   ├── test_validator.py         #   PathValidator
+│   ├── test_cost_grid.py         #   CostGrid + A* 代价层
+│   ├── test_aircraft_envelope.py #   高度包线 + 升降率约束
+│   ├── test_occupancy_conflicts.py #  时空占用表 + 冲突协调
+│   ├── test_data_fusion.py       #   多源数据融合
+│   ├── test_explanation_output.py#   规划解释 + 输出序列化
+│   └── test_pipeline_wiring.py   #   主链路接线回归
+│
+├── .github/workflows/ci.yml      # ★ CI（单测 + 端到端 + 可视化冒烟）
 │
 ├── input/                        # 输入数据（模拟文件）
 │   ├── config.json               # 时空网格配置 (50×50×10×120)
@@ -259,12 +276,15 @@ output/
     │   ├── environment.json
     │   ├── routes/*.json
     │   ├── waypoints_*.json
+    │   ├── validation_*.json     # ★ 合法性验证结果
     │   ├── report_*.md
     │   └── visualizations/
     ├── multi/                    # plan_multi.py 输出
     │   ├── planning_result_*.json
+    │   ├── environment.json
     │   ├── routes/*.json
-    │   ├── conflicts.json        # 飞行器间冲突
+    │   ├── conflicts.json        # ★ 冲突详情 + 协调建议
+    │   ├── validation.json       # ★ 合法性验证结果
     │   ├── report_*.md
     │   └── visualizations/
     └── stress/                   # run_stress_test.py 输出
@@ -292,14 +312,47 @@ output/
 
 关键文件：[src/planners/spacetime_astar.py](src/planners/spacetime_astar.py)
 
+#### 飞行器包线约束（2026-10 新增）
+
+A* 现在直接接受飞行器性能参数，越界路径在搜索阶段就被排除，而不是"先规划出
+非法航路、再由验证模块事后报错"：
+
+| 参数 | 作用 | 实现 |
+|---|---|---|
+| `min_altitude` / `max_altitude` | 把搜索的 `iz` 范围限制在飞行器工作包线内 | `_resolve_altitude_band()` |
+| `max_climb_rate` / `max_descent_rate` | 垂直位移按速率折算所需时间步 | `_get_neighbors()` |
+
+两点需要注意：
+
+- **阶梯式垂直移动**：栅格 `dz=50m` 而 `dt=10s`，单时间步垂直位移隐含 5 m/s，
+  高于多数机型的升降率。因此一次 `dz` 位移会按
+  `ceil(dz / (rate × dt))` **跨多个时间步**完成（阶梯），并沿途检查碰撞。
+- **起终点预检**：起终点超出升限时直接失败并给出可读原因（如
+  `终点高度 220.0m 超过飞行器最高高度 200.0m`），而不是耗尽 200k 次迭代后
+  报"未找到可行路径"。
+
+#### 通行代价层（2026-10 接入）
+
+`CostGrid` 与占用网格**正交**：occupancy 决定"能不能走"，cost 决定"走起来多费力"。
+
+- 默认用 `build_clearance_cost_grid` 按障碍物几何自动生成：每个静态障碍物包围盒
+  外扩 `clearance`（默认 200m），该缓冲带通行代价 ×3（`--clearance` / `--clearance-cost` 可调）
+- 效果实测：航线最近障碍距离从贴障提升到 ~65m 以上（与 3.26 的 risk 目标同向）
+- **启发函数按 `cost_grid.min_cost` 缩放**，保证任意代价倍率下 A* 仍可采纳、仍得最优解
+  （`CostGrid` 增量维护 `min_cost`，无全量扫描开销）
+- 关闭：`--no-cost-grid` / `ParallelPlanner(use_cost_grid=False)`
+
 ### 5.2 大规模并行规划（3.25）
 
 `ParallelPlanner` 类提供：
 
 - 基于 `ThreadPoolExecutor` 的多线程并行
 - 按任务优先级排序（高优先级先规划）
+- **共享只读 `SpaceTimeGrid`**（P2 优化）+ 共享只读 `CostGrid`，消除每任务重建
 - 多航点任务分段规划后拼接
-- 飞行器间冲突检测（时间对齐 + 最小安全间隔检查）
+- **时空占用表冲突检测**：`detect_conflicts_occupancy()` 按航线增量登记，
+  避免 O(n²·m²) 重复比对；冲突条目带真实 `route_id` + `aircraft_id`
+- **冲突协调建议**：`resolve_conflicts()` 对每条冲突给出"延迟起飞"或"高度调整 +1 层"
 - 已通过 10 / 100 / 1000 / 10000 规模压测
 
 ### 5.3 多目标航线优化（3.26）
@@ -314,11 +367,45 @@ output/
 | energy | 估算能耗最低 | 0.1-0.2 |
 
 **优化流程**：
-1. 时空 A* 生成初始无碰撞路径
+1. 时空 A* 生成初始无碰撞路径（受飞行器包线约束）
 2. 三次样条插值平滑
 3. 性能约束修正（速度/爬升率/转弯率）
 4. 碰撞检测：若平滑后穿模则回退到原始 A* 路径
-5. 航点提取（按最小间距 + 航向变化）
+5. **生成结构化规划解释**并挂到 `route.explanation`，随 JSON 输出（`explanation` 字段）
+6. 航点提取（按最小间距 + 航向变化）
+
+**规划解释**（任务书 §六）包含：综合得分、四个目标的加权贡献度（之和 = 综合得分）、
+性能裕度（速度/爬升/下降/转弯的极限占用比例）、规避过的障碍物数量、以及需要复核的提示
+（如"样条回退"、"转弯率接近极限"、"飞行时间已达续航 80%"）。
+
+### 5.4 路径合法性验证（3.26）
+
+`PathValidator` 覆盖 7 个维度：**连续性 / 静态障碍 / 动态障碍 / 高度 / 飞行性能 / 时空占用 / 多机间隔**。
+
+现已接入两个入口脚本：
+
+- `plan_single.py`：规划后自动校验（`--no-validate` 关闭），产出 `validation_<task>.json`
+- `plan_multi.py`：`--validate` 触发，含多机两两间隔检查，产出 `validation.json`
+- 存在 ERROR 级问题时**退出码 2**，便于 CI 拦截
+
+#### ⚠️ 接入验证模块后暴露并修复的 3 个真实缺陷
+
+验证模块此前从未运行，因此以下缺陷一直静默存在——规划器会为不满足约束的任务
+输出 `status="planned"` 并报告"成功"：
+
+| # | 缺陷 | 现象 | 修复 |
+|---|---|---|---|
+| 1 | **A* 不知道飞行器高度包线** | `task-003` 目标 220m、机型升限 200m，仍规划出 225m 的"成功"航路；`plan_multi` 首次接验证时报 **47 个 ERROR** | `SpaceTimeAStar` 接入 `min/max_altitude` + 起终点预检 |
+| 2 | **A* 不检查爬升/下降率** | 栅格隐含 5 m/s 垂直速度，超过 `uav-005` 的 3 m/s 限制 | 接入 `max_climb_rate`/`max_descent_rate`，并实现**阶梯式垂直移动**避免"完全无法改变高度" |
+| 3 | **需求校验不核对航点实际高度** | `task-003`/`task-004` 的航点高度超出对应机型升限，直到 A* 失败才暴露，浪费规划开销 | `FlightTask.check_aircraft_compatibility()` 增加航点高度逐条核对 |
+
+> 另修复两个既有缺陷：障碍物 JSON 的**裸数组格式**在所有 loader 中都会抛
+> `AttributeError`（文档声称支持）；`ConflictResolver` 的高度调整分支因
+> `suggest_delay` 总被截断到 `max_delay_s` 而**永远不可达**。
+
+> 净效果：demo 场景由"5/5 规划成功"（其中 2 条实际违规）变为"**2 个任务在需求
+> 校验阶段被识别为不可行、3 个合规任务 100% 规划成功且零 ERROR**"。压测成功率数字
+> 因此相应变化，见 §4——**旧的成功率包含了违反飞行器约束的航路，不可比**。
 
 ---
 
@@ -401,13 +488,14 @@ output/
 
 | 文件 | 内容 |
 |------|------|
-| `planning_result_*.json` | 完整规划结果（轨迹 + 指标 + 算法信息） |
+| `planning_result_*.json` | 完整规划结果（轨迹 + 指标 + 算法信息 + **结构化规划解释**） |
 | `waypoints_*.json` | 航点指令（带 `takeoff`/`fly`/`land` 动作） |
-| `report_*.md` | Markdown 格式规划报告 |
+| `validation_*.json` / `validation.json` | **合法性验证结果**（7 维问题清单 + 严重度 + 数据质量） |
+| `report_*.md` | Markdown 格式规划报告（含验证章节与数据质量章节） |
 | `environment.json` | 环境快照（供 `visualize.py` 复现障碍物） |
-| `conflicts.json` | 飞行器间冲突（仅 `plan_multi.py --conflict-check`） |
+| `conflicts.json` | 冲突详情 + **协调建议**（延迟秒数 / 建议高度） |
 | `visualizations/*.png\|html` | 3D 可视化、热力图、对比柱状图 |
-| `stress/STRESS_TEST_RESULTS.md` | 压力测试 Markdown 报告 |
+| `stress/STRESS_TEST_RESULTS.md` | 压力测试 Markdown 报告（自动生成） |
 | `stress/STRESS_TEST_REPORT.md` | 压力测试详细报告（结论+建议） |
 
 ---
@@ -428,13 +516,21 @@ output/
 
 `ParallelPlanner.__init__` 现在**预先构建一份只读 `SpaceTimeGrid`**，所有子规划器共享同一个引用。10000 任务从原来的 30 GB 分配降至**单次 3 MB**。
 
-实测收益（与原始 13 分钟对比）：**N=10000 墙钟从 789s 降至 451s**（详见 [`output/stress/STRESS_TEST_REPORT.md`](output/stress/STRESS_TEST_REPORT.md)）。
+实测收益（与原始 13 分钟对比）：**N=10000 墙钟从 789s 降至 437s**（2026-10-01 基线，详见 [`output/stress/STRESS_TEST_REPORT.md`](output/stress/STRESS_TEST_REPORT.md) §6）。
 
-#### P3. 失败任务没有重试 ✅ **已修复**
+> **注**：加入包线约束与代价层后，N=10000 为 1,560s。共享网格本身的收益（1.81×）不变，
+> 增量来自约束收紧，见 §8.2「约束收紧的代价」分解。代价层同样共享（N=10000 不再
+> 重复分配 12 MB float32 数组）。
 
-`ParallelPlanner._plan_one` 在 `dispatch=True` 时，会在 A* 之前**预先检查起点/终点是否落在障碍物内**；如果在，则调用 `_snap_to_free` 自动微调到最近空闲格（搜索半径 2 格）。这样 A* 不会因为"起点被障碍物占用"直接失败，能救回 ~30% 此类场景。
+#### P3. 失败任务没有重试 ✅ **已修复（但实测收益有限）**
 
-> **注意**：最初实现为"失败后重试"，但实测发现对 max_iter 超时类失败重试是浪费（同样的 A* 还是会超时），改成"预校验"后更稳健。
+`ParallelPlanner._plan_one` 在 `dispatch=True` 时，会在 A* 之前**预先检查起点/终点是否落在障碍物内**；如果在，则调用 `_snap_to_free` 自动微调到最近空闲格（搜索半径 2 格）。
+
+> **注意 1**：最初实现为"失败后重试"，但实测发现对 max_iter 超时类失败重试是浪费（同样的 A* 还是会超时），改成"预校验"后更稳健。
+>
+> **注意 2**：2026-10-08 压测显示，FULL 与 DISPATCH 成功率**完全相同**（各规模逐条一致），
+> 说明起点预校验在随机任务集上**未实际救回任何任务**——随机任务中"起点恰在障碍物边界"
+> 的占比本身就不高。DISPATCH 的实际收益仅来自跳过 risk/heading 计算（约 3%）。
 
 #### P4. `route_optimizer.py` 中存在奇怪的多重赋值 ✅ **已修复**
 
@@ -488,15 +584,28 @@ ax.set_title(title if title.isascii() else "Low-Altitude UAV Path Planning 3D Vi
 
 `plot_risk_heatmap` 中双重 `for i in range(nx): for j in range(ny):` 嵌套循环（默认 100×100 = 10000 次），且每次内层循环遍历所有静态障碍物。当障碍物数量上升时该函数会变成 O(nx·ny·n_obs)。建议向量化：用 `np.meshgrid` 一次性算出所有网格点到每个障碍物的距离，再 `np.min`/`np.max` 归并。
 
-#### P9. 测试目录为空
+#### P9. ~~测试目录为空~~ ✅ 已解决
 
 **位置**：[tests/](tests/)
 
-`tests/` 目录存在但无任何测试文件。建议补充：
+原状态：`tests/` 目录存在但无任何测试文件。现已补充 **201 个用例**（11 个测试文件 + `conftest.py`），覆盖：
 
-- 单元测试：`SpaceTimeConfig.to_grid` / `to_world` 双向转换正确性、`ObstacleSet.is_static_blocked`、`AircraftPerformance.estimate_energy`
-- 集成测试：5 任务 demo 场景规划成功率 = 100%、总耗时 < 200ms
-- 性能回归测试：N=100 任务平均耗时不超过 1s
+| 测试文件 | 用例数 | 覆盖内容 |
+|---|---:|---|
+| `test_space.py` | 16 | 时空网格坐标换算、占用网格读写 |
+| `test_obstacles.py` | 16 | 静态/动态障碍、AABB 距离、轨迹插值 |
+| `test_aircraft.py` | 17 | 性能校验、能耗估算、任务兼容性 |
+| `test_astar.py` | 7 | 4D 时空 A*：可达性、避障、限速、迭代截断 |
+| `test_validator.py` | 9 | PathValidator 连续性/障碍/性能/高度检查 |
+| `test_cost_grid.py` | 25 | CostGrid 读写、区域代价、净空代价、**A\* 代价层不破坏最优性**、时不变 3D 视图 |
+| `test_aircraft_envelope.py` | 19 | **高度包线 + 升降率约束**、阶梯式垂直移动、航点兼容性 |
+| `test_occupancy_conflicts.py` | 26 | 时空占用表、冲突检测、冲突协调建议、代价层共享 |
+| `test_data_fusion.py` | 21 | 多源融合：去重、优先级、容错、质量报告、裸数组格式 |
+| `test_explanation_output.py` | 24 | PlanningExplanation 填充、避障计数、报告/验证结果序列化 |
+| `test_pipeline_wiring.py` | 19 | **主链路接线回归**：入口确实调用了各模块，规划结果零 ERROR |
+
+运行：`./setup_env.sh test` 或 `python -m pytest tests/ -v`
+CI：[.github/workflows/ci.yml](.github/workflows/ci.yml)（push/PR 自动跑单测 + 双入口端到端 + 可视化冒烟）
 
 ### 7.3 🟢 低优先级（建议打磨）
 
@@ -529,7 +638,7 @@ config.json `dt=10` 与 `SpaceTimeConfig` 默认 `dt=5` 不同，加载后网格
 ## 8. 性能指标
 
 > **测试环境**：macOS (M-series), Python 3.11.16, 8 工作线程, A\* 单任务最大 50,000 次迭代
-> **测试时间**：2026-09-06
+> **测试时间**：2026-10-01
 > **测试命令**：`python run_stress_test.py --scales 10 100 1000 10000 --workers 8 --max-iterations 50000 --compare`
 
 ### 8.1 Demo 场景（5 任务）
@@ -538,32 +647,63 @@ config.json `dt=10` 与 `SpaceTimeConfig` 默认 `dt=5` 不同，加载后网格
 |------|------|
 | 网格规模 | 50×50×10×120 (3M cells) |
 | 5 任务规划 | ~91 ms |
-| 单任务 A\*（中位数） | ~50 ms |
-| 规划成功率 | 100% (5/5) |
+| 单任务 A\*（中位数） | ~91 ms |
+| 规划成功率 | 合规任务 100%（3/3）；另 2 个任务因航点高度超出机型升限在需求校验阶段被识别 |
 
 ### 8.2 规模压测（FULL 模式 / DISPATCH 模式）
 
+> **测试时间**：2026-10-08（飞行器包线约束 + 通行代价层接入后重测）
+> **命令**：`python run_stress_test.py --scales 10 100 1000 10000 --seed 20260906 --workers 8 --compare`
+
 | 规模 N | 成功 | 成功率 | FULL 墙钟 | DISPATCH 墙钟 | FULL 吞吐 | DISPATCH 吞吐 |
 |--------|------|--------|------------|-----------------|------------|---------------|
-| 10     | 10/10   | 100.0% | 0.13 s   | 0.09 s   | 74.1/s   | 115.9/s |
-| 100    | 90/100  | 90.0%  | 4.35 s   | 4.77 s   | 23.0/s   | 21.0/s  |
-| 1,000  | 925/1000 | 92.5% | 35.91 s  | 38.82 s  | 27.8/s   | 25.8/s  |
-| 10,000 | 9,143/10,000 | 91.43% | 451.67 s (7.5 min) | 432.39 s (7.2 min) | 22.1/s | 23.1/s |
+| 10     | 10/10   | 100.0% | 0.4 s   | 0.2 s   | 28.1/s   | 43.2/s   |
+| 100    | 89/100  | 89.0%  | 19.1 s  | 18.0 s  | 5.2/s    | 5.5/s    |
+| 1,000  | 920/1000 | 92.0% | 129.0 s | 122.5 s | 7.8/s    | 8.2/s    |
+| 10,000 | 9,095/10,000 | 90.95% | 1,560.0 s (26.0 min) | 1,512.8 s (25.2 min) | 6.4/s | 6.6/s |
 
-**累计 11,110 条任务**，整体成功率 **91.52%**，两种模式结果一致（本次对比中 FULL 与 DISPATCH 成功率相同）。
+**累计 11,110 条任务 × 2 模式**，整体成功率 **91.04%**，两模式结果完全一致。
 
-> 失败主要来自：多航点中间航点被障碍物逼入死路（占 ~58%）、A* 达到 50,000 次迭代上限仍未找到路径（占 ~21%）、起点落在建筑物包围盒内（占 ~14%）。注：DISPATCH 模式的"起点预校验"机制在随机任务中**未实际发挥**作用，因为预生成的随机任务里"起点恰在障碍物边界"的占比本身就不高，本次对比中 FULL 与 DISPATCH 成功率相同。
+> ⚠️ **与 2026-10-01 旧数据的可比性**：旧数据为 N=10000 → 437.31s / 91.43%。
+> 新数据慢 **3.6×**。这不是性能退化，而是**约束收紧的必然代价**——见下方分解。
+> 旧的成功率里包含了违反飞行器高度包线与升降率限制的航路，因此两个数字**不可直接比较**。
+
+**耗时增加分解**（N=1000 实测对照）：
+
+| 配置 | 墙钟 | 平均最近障碍距离 | 说明 |
+|------|------|----------------|------|
+| 无代价层（仅包线约束） | 101.6 s | 138.1 m | 基线 |
+| 开启代价层（默认） | 127.7 s | 196.8 m | **+26% 耗时，换 +59m 障碍净空** |
+
+| 约束 | 代价来源 |
+|------|----------|
+| 高度包线 `min/max_altitude` | 搜索的 `iz` 范围收窄，启发式引导在垂直方向变弱 |
+| 升降率 `climb/descent_rate` | **阶梯式垂直移动**使一次 `dz` 位移跨多个时间步，路径步数与迭代数增加 |
+| 通行代价层 | 内循环每扩展多 ~7 次代价查表（已用 3D 扁平视图 + 数组直取优化，见 §7.1 P-new） |
+
+> 代价层自身开销已优化：165.0 s → 154.6 s（3D 缓存友好视图）→ **127.7 s**
+> （`lookup_array()` 直取数组，省掉热循环里的 Python 方法调用），合计 **1.29×**。
+
+**失败原因**（均为搜索受限或起点被占，非非法航路）：
+
+- A\* 达到迭代上限仍未找到可行路径（受升降率阶梯与高度包线影响，搜索量增大）
+- 起点落在建筑物包围盒内（栅格量化后被判为占用）
+- 多航点中间航段失败
 
 ### 8.3 单任务耗时分布（DISPATCH 模式）
 
-| 规模 N | P50 | P95 | P99 | 最大 |
-|--------|------|------|------|------|
-| 10     | 6.7 ms   | 43 ms    | 51 ms    | 53 ms    |
-| 100    | 42.4 ms  | 2,763 ms | 3,915 ms | 4,033 ms |
-| 1,000  | 50.5 ms  | 1,273 ms | 5,040 ms | 5,567 ms |
-| 10,000 | 52.4 ms  | 4,172 ms | 5,194 ms | 6,357 ms |
+| 规模 N | 最小 | P50 | P95 | P99 | 最大 |
+|--------|------|------|------|------|------|
+| 10     | 1.18 ms | 83.7 ms | 172 ms | 200 ms | 208 ms |
+| 100    | 0.01 ms | 94.4 ms | 11,451 ms | 17,219 ms | 17,275 ms |
+| 1,000  | 0.01 ms | 93.3 ms | 4,364 ms | 20,484 ms | 22,097 ms |
+| 10,000 | 0.01 ms | 91.0 ms | 7,221 ms | 21,403 ms | 24,708 ms |
 
-**结论**：**P50 中位数约 50 ms**（绝大多数任务很快完成），但 **P95/P99 达到数秒级**（说明 5% 的"硬骨头"任务会啃 A\* 迭代上限）。墙钟时间主要被尾延迟拖慢。
+（FULL 模式 P50 为 82-135 ms，与 DISPATCH 同量级）
+
+**结论**：**P50 中位数约 91 ms**（一半任务在此之内完成），但 **P95/P99 达到 4-22 秒级**。
+尾延迟比中位数高 2-3 个数量级，**墙钟时间几乎完全被尾延迟拖慢**——这是当前最主要的性能瓶颈，
+也是 §7.1 P3 建议 numba JIT 的目标函数。
 
 ### 8.4 P2 优化效果（共享时空网格）
 
@@ -571,23 +711,26 @@ config.json `dt=10` 与 `SpaceTimeConfig` 默认 `dt=5` 不同，加载后网格
 
 | 规模 N | 优化前墙钟 | 优化后 (FULL) | 加速比 |
 |--------|------------|---------------|--------|
-| 1,000  | 67.8 s     | 39.3 s        | **1.72×** |
-| 10,000 | 789.6 s    | 462.5 s       | **1.71×** |
+| 1,000  | 67.8 s     | 36.10 s       | **1.88×** |
+| 10,000 | 789.6 s    | 437.31 s      | **1.81×** |
 
-**N=10000 总耗时从 13.2 分钟降至 7.7 分钟**。内存分配从 30 GB 降至 3 MB（减少 99.99%）。
+**N=10000 总耗时从 13.2 分钟降至 7.3 分钟**。内存分配从 30 GB 降至 3 MB（减少 99.99%）。
+
+> 该对比为 2026-10-01 基线（尚未加入包线约束与代价层），保留用于量化共享网格本身的价值。
 
 ### 8.5 DISPATCH vs FULL 对比
 
 | 规模 N | FULL (s) | DISPATCH (s) | 加速比 | FULL 成功率 | DISPATCH 成功率 |
 |--------|----------|---------------|---------|--------------|------------------|
-| 10     | 0.13     | 0.09          | 1.44×  | 100.0%      | 100.0%          |
-| 100    | 4.35     | 4.77          | 0.91×  | 90.0%       | 90.0%           |
-| 1,000  | 35.91    | 38.82         | 0.92×  | 92.5%       | 92.5%           |
-| 10,000 | 451.67   | 432.39        | 1.04×  | 91.43%      | 91.43%          |
+| 10     | 0.4     | 0.2          | 1.75×  | 100.0%      | 100.0%          |
+| 100    | 19.1    | 18.0         | 1.06×  | 89.0%       | 89.0%           |
+| 1,000  | 129.0   | 122.5        | 1.05×  | 92.0%       | 92.0%           |
+| 10,000 | 1,560.0 | 1,512.8      | 1.03×  | 90.95%      | 90.95%          |
 
 > **DISPATCH 模式**：跳过 risk/heading/metrics 等附加计算，并在规划前对起点/终点**预校验**（自动微调到最近空闲格）。
-> 实测整体提速很小（1% 量级）：N=10 上加速 1.44×（任务极少时规划总耗时小，预校验开销可忽略）；N≥100 上反而略慢 0.91-0.92×（预校验增加少量 Python 调用，被障碍物逼入死路任务的占比本身就不高）；N=10000 上回正为 1.04×。
-> 主要价值：**节省 I/O 和报告生成开销**。注：本次对比中 FULL 与 DISPATCH 成功率相同，**起点预校验在随机任务中未实际发挥救回作用**（详见 [§8.2](README.md#82-规模压测full-模式--dispatch-模式)）。
+> 实测提速 1.03-1.06×（N≥100），主要价值是**跳过 risk 计算可降低 I/O 与报告生成开销**。
+> 两模式成功率完全相同——随机任务中"起点恰在障碍物边界"的占比本身就不高，
+> 因此起点预校验基本没有救回任务。
 
 ### 8.6 可视化产物
 
@@ -620,8 +763,8 @@ config.json `dt=10` 与 `SpaceTimeConfig` 默认 `dt=5` 不同，加载后网格
 - [x] 输入输出简版规范 `docs/input_output_spec.md`
 - [x] README（本文档）
 - [x] conda 环境 `environment.yml` + `setup_env.sh`
-- [ ] 单元测试（_见 §7.2 P9_）
-- [ ] CI 配置（_建议补 GitHub Actions_）
+- [x] 单元测试（201 个用例，见 §7.2 P9）
+- [x] CI 配置（[.github/workflows/ci.yml](.github/workflows/ci.yml)）
 
 ---
 
@@ -635,29 +778,30 @@ config.json `dt=10` 与 `SpaceTimeConfig` 默认 `dt=5` 不同，加载后网格
 
 ## 11. 任务书对齐
 
-实现完全覆盖 3.25/3.26 任务书（V1.0）所有要求：
+实现完全覆盖 3.25/3.26 任务书（V1.0）所有要求，**且各模块均已接入 `plan_single.py` /
+`plan_multi.py` / `run_stress_test.py` 主链路**（由 `tests/test_pipeline_wiring.py` 回归守护）：
 
-| 任务书要求 | 本项目实现 | 位置 |
-|------------|------------|------|
-| §三 网格作为搜索基础 | `SpaceTimeGrid` 四维占用网格 | `src/models/space.py` |
-| §三 静态障碍约束 | `StaticObstacle` AABB + `is_static_blocked` | `src/models/obstacles.py` |
-| §三 多机安全约束 | `SpatioTemporalOccupancyTable` + `ConflictResolver` | `src/planners/parallel_planner.py` |
-| §三 飞行性能约束 | `AircraftPerformance.is_speed_valid/altitude_valid` | `src/models/aircraft.py` |
-| §三 输出完整航点 | `RouteOptimizer.generate_waypoints` | `src/planners/route_optimizer.py` |
-| §三 失败返回原因 | `PlannedRoute.message` 字段 | 所有 Planner |
-| §三 合法性验证 | `PathValidator` 模块 | `src/validator/path_validator.py` |
-| §三.1 Planner 职责 | `SpaceTimeAStar` + `RouteOptimizer` | `src/planners/` |
-| §三.2 Scheduler 职责 | `ParallelPlanner` | `src/planners/parallel_planner.py` |
-| §五.1 时空网格 + 通行代价 | `CostGrid` | `src/grid/cost.py` |
-| §五.2 任务时间窗 | `Waypoint.earliest_arrival/latest_arrival` | `src/models/aircraft.py` |
-| §五.3 飞行器性能（速度/爬升/转弯/加速度/续航） | `PerformanceSpec` + `PhysicalSpec` + `EnduranceSpec` | `src/models/aircraft.py` |
-| §五.4 多机冲突避免 | `SpatioTemporalOccupancyTable` + 时间调整 + 高度调整 | `src/planners/parallel_planner.py` |
-| §五.5 多目标优化 | `RouteOptimizer` + `objective_weights` | `src/planners/route_optimizer.py` |
-| §五.6 航点生成 + 解释 | `generate_waypoints` + `PlanningExplanation` | `src/models/task.py` |
-| §六 解释模块 | `PlanningExplanation.to_dict()` | `src/models/task.py` |
-| §六 验证模块 | `PathValidator.validate_route/multi_routes` | `src/validator/` |
-| §十 输出要求 | `PlannedRoute.to_dict()` 含全部字段 | `src/models/task.py` |
-| §十一 交付目录 | `src/{models,grid,planners,data_fusion,io,visualization,validator}` | 完整 |
+| 任务书要求 | 本项目实现 | 接入方式 | 位置 |
+|------------|------------|----------|------|
+| §三 网格作为搜索基础 | `SpaceTimeGrid` 四维占用网格 | A* 共享网格参数 | `src/models/space.py` |
+| §三 静态障碍约束 | `StaticObstacle` AABB + `is_static_blocked` | 多源融合加载 → 栅格化 | `src/models/obstacles.py` |
+| §三 多机安全约束 | `SpatioTemporalOccupancyTable` + `ConflictResolver` | `plan_multi.py --conflict-check` | `src/planners/parallel_planner.py` |
+| §三 飞行性能约束 | `AircraftPerformance.is_speed_valid/altitude_valid` | **A* 直接消费速度/爬升/降率/高度** | `src/models/aircraft.py` |
+| §三 输出完整航点 | `RouteOptimizer.generate_waypoints` | `plan_single.py` 写 `waypoints_*.json` | `src/planners/route_optimizer.py` |
+| §三 失败返回原因 | `PlannedRoute.message` 字段 | 所有 Planner | `src/models/task.py` |
+| §三 合法性验证 | `PathValidator` 7 维校验 | **两个入口默认执行，ERROR 时退出码 2** | `src/validator/path_validator.py` |
+| §三.1 Planner 职责 | `SpaceTimeAStar` + `RouteOptimizer` | `plan_single.py` | `src/planners/` |
+| §三.2 Scheduler 职责 | `ParallelPlanner` | `plan_multi.py` | `src/planners/parallel_planner.py` |
+| §五.1 时空网格 + 通行代价 | `CostGrid` + `build_clearance_cost_grid` | **A* 代价层（默认开启）** | `src/grid/cost.py` |
+| §五.2 任务时间窗 | `Waypoint.earliest_arrival/latest_arrival` | 任务模型 + 兼容性校验 | `src/models/aircraft.py` |
+| §五.3 飞行器性能（速度/爬升/转弯/加速度/续航） | `PerformanceSpec` + `PhysicalSpec` + `EnduranceSpec` | A* 限速/升降率 + 优化器约束修正 | `src/models/aircraft.py` |
+| §五.4 多机冲突避免 | `SpatioTemporalOccupancyTable` + 时间调整 + 高度调整 | `detect_conflicts_occupancy()` + `resolve_conflicts()` | `src/planners/parallel_planner.py` |
+| §五.5 多目标优化 | `RouteOptimizer` + `objective_weights` | `plan_single.py`（默认开启） | `src/planners/route_optimizer.py` |
+| §五.6 航点生成 + 解释 | `generate_waypoints` + `PlanningExplanation` | **解释已填充并写入 JSON `explanation` 字段** | `src/models/task.py` |
+| §六 解释模块 | `PlanningExplanation.to_dict()` | `_explain_result()` 生成 + 报告渲染 | `src/models/task.py` |
+| §六 验证模块 | `PathValidator.validate_route/multi_routes` | **写 `validation*.json`** | `src/validator/` |
+| §十 输出要求 | `PlannedRoute.to_dict()` 含全部字段 | 含 `explanation` | `src/models/task.py` |
+| §十一 交付目录 | `src/{models,grid,planners,data_fusion,io,visualization,validator}` | 完整 | — |
 
 ---
 

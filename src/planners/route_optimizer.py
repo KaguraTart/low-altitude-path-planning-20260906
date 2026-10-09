@@ -25,7 +25,8 @@ from scipy.interpolate import CubicSpline
 from ..models.space import SpaceTimeConfig
 from ..models.obstacles import ObstacleSet
 from ..models.aircraft import AircraftPerformance, FlightTask, Waypoint
-from ..models.task import TrajectoryPoint, PlannedRoute
+from ..models.task import TrajectoryPoint, PlannedRoute, PlanningExplanation
+from ..grid.cost import CostGrid
 from .spacetime_astar import SpaceTimeAStar
 
 
@@ -42,14 +43,21 @@ class RouteOptimizer:
         config: SpaceTimeConfig,
         obstacle_set: ObstacleSet,
         performance: AircraftPerformance,
+        cost_grid: Optional[CostGrid] = None,
     ):
         self.config = config
         self.obstacle_set = obstacle_set
         self.performance = performance
+        self.cost_grid = cost_grid
         self.astar = SpaceTimeAStar(
             config=config,
             obstacle_set=obstacle_set,
             max_speed=performance.max_speed,
+            cost_grid=cost_grid,
+            min_altitude=performance.get_min_altitude(),
+            max_altitude=performance.get_max_altitude(),
+            max_climb_rate=performance.get_max_climb_rate(),
+            max_descent_rate=performance.get_max_descent_rate(),
         )
 
     def optimize(
@@ -368,9 +376,11 @@ class RouteOptimizer:
 
     def _explain_result(self, route: PlannedRoute, task: FlightTask) -> str:
         """
-        生成结果解释（3.26 模块四: 航点生成与结果解释）
+        生成结果解释 (3.26 模块四: 航点生成与结果解释)
 
-        分析各优化目标的贡献度，给出人类可读的规划说明。
+        分析各优化目标的贡献度，给出人类可读的规划说明，
+        同时把结构化解释挂到 ``route.explanation``（任务书 §十 输出要求
+        "规划解释"字段），供下游服务直接消费。
         """
         weights = task.objective_weights
 
@@ -387,6 +397,40 @@ class RouteOptimizer:
             + weights.get("energy", 0.25) * norm_energy
         )
 
+        # ---- 结构化解释（PlanningExplanation）----
+        breakdown = {
+            "distance": weights.get("distance", 0.25) * norm_distance,
+            "time": weights.get("time", 0.25) * norm_time,
+            "risk": weights.get("risk", 0.25) * norm_risk,
+            "energy": weights.get("energy", 0.25) * norm_energy,
+        }
+        margin = self._compute_performance_margin(route.trajectory)
+
+        notes = []
+        if route.algorithm.endswith("raw-fallback"):
+            notes.append("样条平滑后与静态障碍物冲突，已回退为原始 A* 路径")
+        if route.max_risk > 0.5:
+            notes.append(f"存在贴近障碍物的航段（最大风险 {route.max_risk:.2f}），建议复核")
+        if margin.get("turn_rate_ratio", 0) > 0.9:
+            notes.append("转弯率接近飞行器极限，建议降低航点密度或放宽权重")
+        if route.total_time > self.performance.get_max_flight_time() * 0.8:
+            notes.append(
+                f"飞行时间 {route.total_time:.0f}s 已达续航 "
+                f"{self.performance.get_max_flight_time():.0f}s 的 80%，余量偏小"
+            )
+
+        route.explanation = PlanningExplanation(
+            summary=(
+                f"四维时空 A* 生成 {len(route.trajectory)} 点初始航路，经多目标平滑与"
+                f"性能约束修正后，综合得分 {weighted_score:.4f}（越低越优）"
+            ),
+            score=weighted_score,
+            objective_breakdown=breakdown,
+            avoidance_count=self._count_avoidances(route.trajectory),
+            performance_margin=margin,
+            notes=notes,
+        )
+
         explanation = (
             f"规划完成 | 综合得分: {weighted_score:.4f} (越低越优) | "
             f"航程: {route.total_distance:.1f}m (权重{weights.get('distance', 0):.0%}) | "
@@ -398,6 +442,69 @@ class RouteOptimizer:
         )
 
         return explanation
+
+    def _compute_performance_margin(self, trajectory: List[TrajectoryPoint]) -> dict:
+        """计算各性能指标的极限占用比例（1.0 = 打满极限，>1 = 超限）"""
+        max_speed = self.performance.get_max_speed()
+        max_climb = self.performance.get_max_climb_rate()
+        max_desc = self.performance.get_max_descent_rate()
+        max_turn = self.performance.performance.max_turn_rate_dps
+
+        max_v_h = 0.0
+        max_climb_used = 0.0
+        max_desc_used = 0.0
+        max_turn_used = 0.0
+
+        for i in range(1, len(trajectory)):
+            p0, p1 = trajectory[i - 1], trajectory[i]
+            dt = p1.t - p0.t
+            if dt <= 0:
+                continue
+            vx = (p1.x - p0.x) / dt
+            vy = (p1.y - p0.y) / dt
+            vz = (p1.z - p0.z) / dt
+            max_v_h = max(max_v_h, float(np.hypot(vx, vy)))
+            max_climb_used = max(max_climb_used, vz)
+            max_desc_used = max(max_desc_used, -vz)
+            if i >= 2:
+                p_prev = trajectory[i - 2]
+                h0 = np.degrees(np.arctan2(p0.y - p_prev.y, p0.x - p_prev.x))
+                h1 = np.degrees(np.arctan2(p1.y - p0.y, p1.x - p0.x))
+                d_h = ((h1 - h0 + 180) % 360) - 180
+                max_turn_used = max(max_turn_used, abs(d_h) / dt)
+
+        def ratio(used: float, limit: float) -> float:
+            return float(used / limit) if limit > 0 else 0.0
+
+        return {
+            "speed_ratio": ratio(max_v_h, max_speed),
+            "climb_ratio": ratio(max_climb_used, max_climb),
+            "descent_ratio": ratio(max_desc_used, max_desc),
+            "turn_rate_ratio": ratio(max_turn_used, max_turn),
+        }
+
+    def _count_avoidances(self, trajectory: List[TrajectoryPoint], radius: float = 50.0) -> int:
+        """统计航线贴近（< radius 米）的障碍物数量，即实际规避过的障碍物数"""
+        if not trajectory or not self.obstacle_set:
+            return 0
+        avoided = set()
+        for p in trajectory:
+            for obs in self.obstacle_set.static_obstacles:
+                dx = max(abs(p.x - obs.x) - obs.width, 0.0)
+                dy = max(abs(p.y - obs.y) - obs.depth, 0.0)
+                dz = max(max(p.z - (obs.z + obs.height), 0.0), max(obs.z - p.z, 0.0))
+                if np.sqrt(dx * dx + dy * dy + dz * dz) < radius:
+                    avoided.add(obs.obstacle_id)
+            for obs in self.obstacle_set.dynamic_obstacles:
+                pos = obs.position_at(p.t)
+                if pos is None:
+                    continue
+                d = np.sqrt(
+                    (p.x - pos[0]) ** 2 + (p.y - pos[1]) ** 2 + (p.z - pos[2]) ** 2
+                )
+                if d - obs.safety_radius < radius:
+                    avoided.add(obs.obstacle_id)
+        return len(avoided)
 
     def generate_waypoints(
         self,
