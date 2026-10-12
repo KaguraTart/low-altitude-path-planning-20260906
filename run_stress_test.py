@@ -190,11 +190,28 @@ class ScaleResult:
     wall_clock_time_s: float = 0.0
     throughput_tasks_per_s: float = 0.0
     conflict_count: int = 0
+    residual_conflict_count: int = 0
+    unsafe_route_count: int = 0
     workers_used: int = 0
 
     @property
     def success_rate(self) -> float:
         return round(self.success_count / self.scale * 100, 2) if self.scale else 0.0
+
+    @property
+    def safety_rate(self) -> float:
+        """规划成功的航线中，**不涉及任何残余冲突**的比例。
+
+        与 success_rate 正交：成功率只回答"有没有算出来"，安全率才回答
+        "算出来的航线能不能安全飞"。两者必须同时报，否则 91% 成功率
+        会掩盖 46% 航线存在碰撞风险的事实。
+        """
+        if not self.success_count:
+            return 100.0
+        return round(
+            (self.success_count - self.unsafe_route_count)
+            / self.success_count * 100, 2
+        )
 
 
 def _percentile(values: List[float], p: float) -> float:
@@ -284,12 +301,16 @@ def run_scale(
         workers_used=max_workers,
     )
 
-    planned_routes = [r for r in result.routes if r.status == "planned"]
-    sample_size = min(len(planned_routes), 200)
-    if sample_size >= 2:
-        sample = planned_routes[:sample_size]
-        conflicts = planner.detect_conflicts(sample, min_separation=10.0)
-        sr.conflict_count = len(conflicts)
+    # 残余冲突 = plan_batch 完成避让后重新检测的真实冲突（全量，非采样）。
+    # 旧实现取"前 200 条航线"做 O(n²) 比对：既是前缀不是随机样本，
+    # 用的 min_separation(10m) 也与规划时(30m)不一致，报告出来会误导。
+    sr.residual_conflict_count = len(result.conflicts)
+    sr.conflict_count = sr.residual_conflict_count
+    unsafe: set = set()
+    for c in result.conflicts:
+        unsafe.add(c.get("route_a"))
+        unsafe.add(c.get("route_b"))
+    sr.unsafe_route_count = len(unsafe)
 
     if verbose:
         print(f"\n  规划完成: {sr.success_count}/{n} 成功 ({sr.success_rate}%)", flush=True)
@@ -305,6 +326,9 @@ def run_scale(
             print(f"  平均航程: {sr.avg_distance_m:.1f} m, "
                   f"平均飞行时间: {sr.avg_time_s:.1f} s, "
                   f"平均最近障碍距离: {sr.avg_min_obstacle_dist_m:.1f} m", flush=True)
+        print(f"  残余冲突: {sr.residual_conflict_count} 对, "
+              f"不安全航线: {sr.unsafe_route_count} 条, "
+              f"安全率: {sr.safety_rate}%", flush=True)
         if sr.failed_count > 0:
             failed_msgs: Dict[str, int] = {}
             for r in result.routes:
@@ -411,7 +435,9 @@ def main():
                             "avg_min_obstacle_dist_m": round(r.avg_min_obstacle_dist_m, 2),
                             "wall_clock_time_s": round(r.wall_clock_time_s, 2),
                             "throughput_tasks_per_s": round(r.throughput_tasks_per_s, 2),
-                            "conflict_count_sample200": r.conflict_count,
+                            "residual_conflict_count": r.residual_conflict_count,
+                            "unsafe_route_count": r.unsafe_route_count,
+                            "safety_rate": r.safety_rate,
                             "workers_used": r.workers_used,
                         } for r in results
                     ], f, ensure_ascii=False, indent=2)
@@ -452,7 +478,9 @@ def main():
                 "avg_min_obstacle_dist_m": round(r.avg_min_obstacle_dist_m, 2),
                 "wall_clock_time_s": round(r.wall_clock_time_s, 2),
                 "throughput_tasks_per_s": round(r.throughput_tasks_per_s, 2),
-                "conflict_count_sample200": r.conflict_count,
+                "residual_conflict_count": r.residual_conflict_count,
+                "unsafe_route_count": r.unsafe_route_count,
+                "safety_rate": r.safety_rate,
                 "workers_used": r.workers_used,
             }
             for r in results
@@ -560,15 +588,16 @@ def _write_markdown_report(
             f"{r.p99_task_time_ms:.2f} | {r.max_task_time_ms:.2f} |"
         )
     lines.append("")
-    lines.append(f"## {4 + section_offset}. 路径质量指标 (规划成功的航线)")
+    lines.append(f"## {4 + section_offset}. 路径质量与安全指标 (规划成功的航线)")
     lines.append("")
-    lines.append("| 规模 N | 平均航程 (m) | 平均飞行时间 (s) | 平均最近障碍距离 (m) | 冲突对数 (200 条采样) |")
-    lines.append("|--------|--------------|-------------------|------------------------|------------------------|")
+    lines.append("| 规模 N | 平均航程 (m) | 平均飞行时间 (s) | 平均最近障碍距离 (m) | 残余冲突对 | 不安全航线 | **安全率** |")
+    lines.append("|--------|--------------|-------------------|------------------------|------------|------------|------------|")
     for r in results:
         lines.append(
             f"| {r.scale} | {r.avg_distance_m:.1f} | "
             f"{r.avg_time_s:.1f} | {r.avg_min_obstacle_dist_m:.1f} | "
-            f"{r.conflict_count} |"
+            f"{r.residual_conflict_count} | {r.unsafe_route_count} | "
+            f"**{r.safety_rate}%** |"
         )
     lines.append("")
     lines.append(f"## {5 + section_offset}. 算法有效性验证结论")
@@ -576,18 +605,35 @@ def _write_markdown_report(
     overall_success = sum(r.success_count for r in results)
     overall_total = sum(r.scale for r in results)
     overall_rate = overall_success / overall_total * 100 if overall_total else 0.0
+    overall_unsafe = sum(r.unsafe_route_count for r in results)
+    overall_safety = (
+        round((overall_success - overall_unsafe) / overall_success * 100, 2)
+        if overall_success else 100.0
+    )
     lines.append(f"- **累计规划任务**: {overall_total} 条")
     lines.append(f"- **累计成功**: {overall_success} 条 ({overall_rate:.2f}%)")
+    lines.append(f"- **累计安全航线**: {overall_success - overall_unsafe} 条 "
+                 f"(**安全率 {overall_safety}%**)")
     lines.append("")
-    if overall_rate >= 95:
-        verdict = "**算法在大规模随机场景下表现稳定、有效性得到验证。**"
-    elif overall_rate >= 80:
-        verdict = "**算法在大部分场景下有效，少数极端起点/终点组合失败（属正常随机退化）。**"
+    lines.append("> **成功率 ≠ 安全率**：成功率只回答「能不能算出路径」，")
+    lines.append("> 安全率才回答「算出的路径能不能无碰撞飞行」。")
+    lines.append("> 两者必须同时给出，否则高成功率会掩盖碰撞风险。")
+    lines.append("")
+    if overall_safety >= 99.5:
+        if overall_rate >= 95:
+            verdict = (f"**算法在大规模随机场景下表现稳定：成功率 {overall_rate:.2f}%、"
+                       f"安全率 {overall_safety}%，有效性得到验证。**")
+        else:
+            verdict = (f"**规划成功的航线安全率 {overall_safety}%（零残余冲突）；"
+                       f"成功率 {overall_rate:.2f}% 的缺口来自极端起点/终点组合的 "
+                       "A\\* 搜索失败，属正常随机退化，与多机冲突无关。**")
     else:
-        verdict = "**算法在大规模场景下成功率显著下降，需要进一步优化。**"
+        verdict = (f"**规划成功率 {overall_rate:.2f}%，但规划成功的航线中仍有 "
+                   f"{overall_unsafe} 条涉及残余冲突（安全率 {overall_safety}%），"
+                   "多机冲突避免尚未完全生效，需继续优化。**")
     lines.append(verdict)
     lines.append("")
-    lines.append("### 5.1 性能瓶颈分析")
+    lines.append(f"### {5 + section_offset}.1 性能瓶颈分析")
     lines.append("")
     if results:
         biggest = results[-1]

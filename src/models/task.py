@@ -174,6 +174,13 @@ class PlanningResult:
     total_planning_time_ms: float = 0.0
     success_count: int = 0
     failed_count: int = 0
+    # 冲突避免结束后仍未消解的飞行器间冲突（任务书 §五.4）。
+    # 非空说明该批次航线**不满足**多机安全间隔，调用方应据此返回非零退出码。
+    conflicts: List[dict] = field(default_factory=list)
+
+    @property
+    def has_conflicts(self) -> bool:
+        return bool(self.conflicts)
 
     def summary(self) -> dict:
         """序列化为 dict（用于 JSON 输出）"""
@@ -183,5 +190,6 @@ class PlanningResult:
             "success_count": self.success_count,
             "failed_count": self.failed_count,
             "total_planning_time_ms": round(self.total_planning_time_ms, 2),
+            "conflict_count": len(self.conflicts),
             "routes": [r.to_dict() for r in self.routes],
         }

@@ -64,6 +64,7 @@ class SpaceTimeAStar:
         max_altitude: Optional[float] = None,
         max_climb_rate: Optional[float] = None,
         max_descent_rate: Optional[float] = None,
+        occupancy_mask: Optional[np.ndarray] = None,
     ):
         self.config = config
         self.obstacle_set = obstacle_set
@@ -80,6 +81,10 @@ class SpaceTimeAStar:
         self.max_altitude = max_altitude
         self.max_climb_rate = max_climb_rate
         self.max_descent_rate = max_descent_rate
+        # 多机冲突【避免】：其它已规划航线的禁飞时空掩码（与 SpaceTimeGrid
+        # 同构的 bool 数组）。为 None 时退化为单机规划，行为与原来完全一致。
+        # 与 obstacle 障碍网格是「并集」关系：两者都必须为空闲才能进入。
+        self.occupancy_mask = occupancy_mask
         self._iz_min, self._iz_max = self._resolve_altitude_band()
 
         if neighbor_mode == "26":
@@ -174,6 +179,8 @@ class SpaceTimeAStar:
         # （每次扩展要查 6 个空间邻居 + 1 个等待动作）
         cmul = self.cost_grid.lookup_array() if self.cost_grid is not None else None
         cmul_3d = cmul is not None and cmul.ndim == 3
+        # 多机禁飞掩码（同理：热循环里只做一次数组取用）
+        occ = self.occupancy_mask
 
         # 空间移动（6/26 邻域）
         for dx, dy, dz in self.neighbors:
@@ -216,11 +223,16 @@ class SpaceTimeAStar:
                     if not self.grid.is_free(nix, niy, mid_z, it + k):
                         blocked = True
                         break
+                    if occ is not None and occ[nix, niy, mid_z, it + k]:
+                        blocked = True
+                        break
                 if blocked:
                     continue
 
-            # 碰撞检查
+            # 碰撞检查（环境障碍 ∪ 其它飞行器占用）
             if not self.grid.is_free(nix, niy, niz, nit):
+                continue
+            if occ is not None and occ[nix, niy, niz, nit]:
                 continue
 
             # 代价 = 时间步长（每次移动消耗 dt 时间）+ 微小距离惩罚（打破平局，偏好短路径）
@@ -233,7 +245,11 @@ class SpaceTimeAStar:
         # 等待动作（原地停留，时间推进）
         if self.wait_enabled:
             nit = it + 1
-            if nit < self.config.nt and self.grid.is_free(ix, iy, iz, nit):
+            if (
+                nit < self.config.nt
+                and self.grid.is_free(ix, iy, iz, nit)
+                and not (occ is not None and occ[ix, iy, iz, nit])
+            ):
                 cost = self.config.dt * 1.05  # 等待略贵于移动，鼓励前进
                 if cmul is not None:
                     cost *= cmul[ix, iy, iz] if cmul_3d else cmul[ix, iy, iz, nit]
@@ -303,6 +319,39 @@ class SpaceTimeAStar:
                 algorithm="SpaceTimeAStar",
                 planning_time_ms=(time.time() - t0) * 1000,
             )
+        # 起点在其它飞行器的占用格里（多机冲突）——
+        # 这种情况搜索无解（第一步就出不去），提前给出可读原因，
+        # 让 ParallelPlanner.avoid_conflicts 能改用「延迟起飞」重试。
+        if (
+            self.occupancy_mask is not None
+            and self.occupancy_mask[six, siy, siz, sit]
+        ):
+            return PlannedRoute(
+                route_id=route_id,
+                task_id=task_id,
+                aircraft_id=aircraft_id,
+                status="failed",
+                message=(
+                    f"起点在 t={sit * self.config.dt:.0f}s 被其它飞行器占用"
+                    "（多机冲突，建议延迟起飞）"
+                ),
+                algorithm="SpaceTimeAStar",
+                planning_time_ms=(time.time() - t0) * 1000,
+            )
+
+        # 终点若被其它飞行器在整个时间轴上占满，搜索必然失败——
+        # 提前判定，避免白烧 max_iterations 次迭代（万级任务下是主要的尾延迟来源）。
+        if self.occupancy_mask is not None and 0 <= gix < self.config.nx and 0 <= giy < self.config.ny and 0 <= giz < self.config.nz:
+            if bool(self.occupancy_mask[gix, giy, giz, :].all()):
+                return PlannedRoute(
+                    route_id=route_id,
+                    task_id=task_id,
+                    aircraft_id=aircraft_id,
+                    status="failed",
+                    message="终点在整个时间轴上被其它飞行器占用（多机冲突，无法抵达）",
+                    algorithm="SpaceTimeAStar",
+                    planning_time_ms=(time.time() - t0) * 1000,
+                )
 
         # A* 搜索
         open_set: List[Tuple[float, int, Tuple[int, int, int, int]]] = []

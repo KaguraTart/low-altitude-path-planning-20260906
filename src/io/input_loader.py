@@ -42,57 +42,69 @@ def load_config(filepath: str) -> SpaceTimeConfig:
     return SpaceTimeConfig(**data)
 
 
-def _extract_items(data) -> list:
-    """兼容两种 JSON 顶层格式：{"obstacles": [...]} 或裸数组 [...]"""
+def _extract_items(data, key: str = "obstacles") -> list:
+    """
+    兼容两种 JSON 顶层格式：``{"<key>": [...]}`` 或裸数组 ``[...]``
+
+    key 随数据类型而变：障碍物用 "obstacles"、飞行器用 "aircraft"、任务用 "tasks"。
+    """
     if isinstance(data, list):
         return data
     if isinstance(data, dict):
-        return data.get("obstacles", [])
+        return data.get(key, [])
     return []
+
+
+def parse_static_obstacle_from_dict(item: dict) -> StaticObstacle:
+    """
+    由单条 JSON 记录构造 StaticObstacle
+
+    字段映射的唯一权威实现：文件加载与 SDK/HTTP 调用共用，改一处两边生效。
+    """
+    return StaticObstacle(
+        obstacle_id=item.get("id", item.get("obstacle_id", "unknown")),
+        name=item.get("name", "unnamed"),
+        obstacle_type=item.get("type", item.get("obstacle_type", "other")),
+        x=float(item["x"]),
+        y=float(item["y"]),
+        z=float(item.get("z", 0)),
+        width=float(item.get("width", 20.0)),
+        depth=float(item.get("depth", 20.0)),
+        height=float(item.get("height", 50.0)),
+        source=item.get("source", "file"),
+    )
+
+
+def parse_dynamic_obstacle_from_dict(item: dict) -> DynamicObstacle:
+    """由单条 JSON 记录构造 DynamicObstacle（轨迹点线性插值）"""
+    trajectory = []
+    for point in item.get("trajectory", []):
+        trajectory.append((
+            float(point["x"]),
+            float(point["y"]),
+            float(point["z"]),
+            float(point["t"]),
+        ))
+    return DynamicObstacle(
+        obstacle_id=item.get("id", item.get("obstacle_id", "unknown")),
+        name=item.get("name", "unnamed"),
+        obstacle_type=item.get("type", item.get("obstacle_type", "other")),
+        trajectory=trajectory,
+        safety_radius=float(item.get("safety_radius", 10.0)),
+        source=item.get("source", "file"),
+    )
 
 
 def load_static_obstacles(filepath: str) -> List[StaticObstacle]:
     """加载静态障碍物"""
     data = load_json(filepath)
-    obstacles = []
-    for item in _extract_items(data):
-        obstacles.append(StaticObstacle(
-            obstacle_id=item.get("id", item.get("obstacle_id", "unknown")),
-            name=item.get("name", "unnamed"),
-            obstacle_type=item.get("type", item.get("obstacle_type", "other")),
-            x=float(item["x"]),
-            y=float(item["y"]),
-            z=float(item.get("z", 0)),
-            width=float(item.get("width", 20.0)),
-            depth=float(item.get("depth", 20.0)),
-            height=float(item.get("height", 50.0)),
-            source=item.get("source", "file"),
-        ))
-    return obstacles
+    return [parse_static_obstacle_from_dict(i) for i in _extract_items(data)]
 
 
 def load_dynamic_obstacles(filepath: str) -> List[DynamicObstacle]:
     """加载动态障碍物"""
     data = load_json(filepath)
-    obstacles = []
-    for item in _extract_items(data):
-        trajectory = []
-        for point in item.get("trajectory", []):
-            trajectory.append((
-                float(point["x"]),
-                float(point["y"]),
-                float(point["z"]),
-                float(point["t"]),
-            ))
-        obstacles.append(DynamicObstacle(
-            obstacle_id=item.get("id", item.get("obstacle_id", "unknown")),
-            name=item.get("name", "unnamed"),
-            obstacle_type=item.get("type", item.get("obstacle_type", "other")),
-            trajectory=trajectory,
-            safety_radius=float(item.get("safety_radius", 10.0)),
-            source=item.get("source", "file"),
-        ))
-    return obstacles
+    return [parse_dynamic_obstacle_from_dict(i) for i in _extract_items(data)]
 
 
 def load_obstacle_set(static_file: str, dynamic_file: Optional[str] = None) -> ObstacleSet:
@@ -225,55 +237,65 @@ def _parse_safety(d: dict) -> SafetySpec:
     )
 
 
+def parse_aircraft_from_dict(item: dict) -> AircraftPerformance:
+    """
+    由单条 JSON 记录构造 AircraftPerformance（支持扩展动力学字段）
+
+    同时兼容旧版扁平字段（max_speed / max_climb_rate 等）作为 fallback。
+    """
+    aircraft_id = item.get("id", item.get("aircraft_id", "unknown"))
+
+    # 嵌套子对象
+    physical = _parse_physical(item.get("physical", {}))
+    performance = _parse_performance(item.get("performance", {}))
+    endurance = _parse_endurance(item.get("endurance", {}))
+    operational = _parse_operational(item.get("operational", {}))
+    safety = _parse_safety(item.get("safety", {}))
+
+    # 旧字段（向后兼容）
+    max_speed = float(item.get("max_speed", performance.max_speed_mps))
+    max_climb = float(item.get("max_climb_rate", performance.max_climb_rate_mps))
+    max_desc = float(item.get("max_descent_rate", performance.max_descent_rate_mps))
+    max_turn = float(item.get("max_turn_rate", performance.max_turn_rate_dps))
+    max_acc = float(item.get("max_acceleration", performance.max_acceleration_mps2))
+    max_time = float(item.get("max_flight_time", endurance.max_flight_time_s))
+    max_range = float(item.get("max_range", endurance.max_range_m))
+    min_alt = float(item.get("min_altitude", operational.min_altitude_m))
+    max_alt = float(item.get("max_altitude", operational.max_altitude_m))
+    rotor_r = float(item.get("rotor_radius", safety.rotor_radius_m))
+    safety_m = float(item.get("safety_margin", safety.safety_margin_m))
+
+    return AircraftPerformance(
+        aircraft_id=aircraft_id,
+        model=item.get("model", "generic-quadcopter"),
+        category=item.get("category", "general"),
+        manufacturer=item.get("manufacturer", "Unknown"),
+        physical=physical,
+        performance=performance,
+        endurance=endurance,
+        operational=operational,
+        safety=safety,
+        max_speed=max_speed,
+        max_climb_rate=max_climb,
+        max_descent_rate=max_desc,
+        max_turn_rate=max_turn,
+        max_acceleration=max_acc,
+        max_flight_time=max_time,
+        max_range=max_range,
+        min_altitude=min_alt,
+        max_altitude=max_alt,
+        rotor_radius=rotor_r,
+        safety_margin=safety_m,
+    )
+
+
 def load_aircraft_performances(filepath: str) -> Dict[str, AircraftPerformance]:
     """加载飞行器性能配置（支持扩展动力学字段）"""
     data = load_json(filepath)
     performances = {}
-    for item in data.get("aircraft", data if isinstance(data, list) else []):
-        aircraft_id = item.get("id", item.get("aircraft_id", "unknown"))
-
-        # 嵌套子对象
-        physical = _parse_physical(item.get("physical", {}))
-        performance = _parse_performance(item.get("performance", {}))
-        endurance = _parse_endurance(item.get("endurance", {}))
-        operational = _parse_operational(item.get("operational", {}))
-        safety = _parse_safety(item.get("safety", {}))
-
-        # 旧字段（向后兼容）
-        max_speed = float(item.get("max_speed", performance.max_speed_mps))
-        max_climb = float(item.get("max_climb_rate", performance.max_climb_rate_mps))
-        max_desc = float(item.get("max_descent_rate", performance.max_descent_rate_mps))
-        max_turn = float(item.get("max_turn_rate", performance.max_turn_rate_dps))
-        max_acc = float(item.get("max_acceleration", performance.max_acceleration_mps2))
-        max_time = float(item.get("max_flight_time", endurance.max_flight_time_s))
-        max_range = float(item.get("max_range", endurance.max_range_m))
-        min_alt = float(item.get("min_altitude", operational.min_altitude_m))
-        max_alt = float(item.get("max_altitude", operational.max_altitude_m))
-        rotor_r = float(item.get("rotor_radius", safety.rotor_radius_m))
-        safety_m = float(item.get("safety_margin", safety.safety_margin_m))
-
-        performances[aircraft_id] = AircraftPerformance(
-            aircraft_id=aircraft_id,
-            model=item.get("model", "generic-quadcopter"),
-            category=item.get("category", "general"),
-            manufacturer=item.get("manufacturer", "Unknown"),
-            physical=physical,
-            performance=performance,
-            endurance=endurance,
-            operational=operational,
-            safety=safety,
-            max_speed=max_speed,
-            max_climb_rate=max_climb,
-            max_descent_rate=max_desc,
-            max_turn_rate=max_turn,
-            max_acceleration=max_acc,
-            max_flight_time=max_time,
-            max_range=max_range,
-            min_altitude=min_alt,
-            max_altitude=max_alt,
-            rotor_radius=rotor_r,
-            safety_margin=safety_m,
-        )
+    for item in _extract_items(data, "aircraft"):
+        perf = parse_aircraft_from_dict(item)
+        performances[perf.aircraft_id] = perf
     return performances
 
 
@@ -293,36 +315,44 @@ def _parse_requirements(d: dict) -> TaskRequirements:
     )
 
 
+def parse_waypoint_from_dict(wp_data: dict, index: int = 0) -> Waypoint:
+    """由单条航点 JSON 记录构造 Waypoint"""
+    return Waypoint(
+        wp_id=wp_data.get("id", wp_data.get("wp_id", f"wp-{index}")),
+        x=float(wp_data["x"]),
+        y=float(wp_data["y"]),
+        z=float(wp_data["z"]),
+        earliest_arrival=wp_data.get("earliest_arrival"),
+        latest_arrival=wp_data.get("latest_arrival"),
+        hover_time=float(wp_data.get("hover_time", 0.0)),
+        wp_type=wp_data.get("type", wp_data.get("wp_type", "via")),
+        task_description=wp_data.get("task_description", ""),
+    )
+
+
+def parse_task_from_dict(item: dict) -> FlightTask:
+    """由单条 JSON 记录构造 FlightTask（含扩展需求约束）"""
+    waypoints = [
+        parse_waypoint_from_dict(wp, i)
+        for i, wp in enumerate(item.get("waypoints", []))
+    ]
+
+    return FlightTask(
+        task_id=item.get("id", item.get("task_id", "unknown")),
+        task_name=item.get("name", item.get("task_name", "unnamed")),
+        aircraft_id=item.get("aircraft_id", "unknown"),
+        waypoints=waypoints,
+        priority=int(item.get("priority", 5)),
+        task_type=item.get("type", item.get("task_type", "other")),
+        departure_time=float(item.get("departure_time", 0.0)),
+        objective_weights=item.get("objective_weights", {
+            "distance": 0.3, "time": 0.3, "risk": 0.2, "energy": 0.2
+        }),
+        requirements=_parse_requirements(item.get("requirements", {})),
+    )
+
+
 def load_tasks(filepath: str) -> List[FlightTask]:
     """加载飞行任务（含扩展需求约束）"""
     data = load_json(filepath)
-    tasks = []
-    for item in data.get("tasks", data if isinstance(data, list) else []):
-        waypoints = []
-        for wp_data in item.get("waypoints", []):
-            waypoints.append(Waypoint(
-                wp_id=wp_data.get("id", wp_data.get("wp_id", f"wp-{len(waypoints)}")),
-                x=float(wp_data["x"]),
-                y=float(wp_data["y"]),
-                z=float(wp_data["z"]),
-                earliest_arrival=wp_data.get("earliest_arrival"),
-                latest_arrival=wp_data.get("latest_arrival"),
-                hover_time=float(wp_data.get("hover_time", 0.0)),
-                wp_type=wp_data.get("type", wp_data.get("wp_type", "via")),
-                task_description=wp_data.get("task_description", ""),
-            ))
-
-        tasks.append(FlightTask(
-            task_id=item.get("id", item.get("task_id", "unknown")),
-            task_name=item.get("name", item.get("task_name", "unnamed")),
-            aircraft_id=item.get("aircraft_id", "unknown"),
-            waypoints=waypoints,
-            priority=int(item.get("priority", 5)),
-            task_type=item.get("type", item.get("task_type", "other")),
-            departure_time=float(item.get("departure_time", 0.0)),
-            objective_weights=item.get("objective_weights", {
-                "distance": 0.3, "time": 0.3, "risk": 0.2, "energy": 0.2
-            }),
-            requirements=_parse_requirements(item.get("requirements", {})),
-        ))
-    return tasks
+    return [parse_task_from_dict(i) for i in _extract_items(data, "tasks")]

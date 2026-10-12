@@ -1,3 +1,18 @@
+> ⚠️ **本文档已归档（2026-10-12）**
+>
+> **算法设计章节本身仍然有效**——多维时空 A\*、并行规划、多目标优化、
+> 冲突避免的原理说明没有过时，仍是理解算法的主要参考。
+>
+> 失效的只是其中**涉及输入输出格式与调用方式**的部分：项目对外形态已改为
+> 可调用的接口（Python SDK + REST 服务），字段契约以
+> [`docs/API_INTERFACE.md`](../API_INTERFACE.md) 为准，
+> 联调步骤见 [`docs/API_QUICKSTART.md`](../API_QUICKSTART.md)。
+>
+> 归档而非废弃的原因：避免同一份文档里「仍有效」与「已失效」的内容混在
+> 一起，让人误判整篇作废。
+
+---
+
 # 算法设计说明
 
 ## 3.25 多维时空大规模并行规划算法
@@ -59,12 +74,20 @@
 - 按任务优先级排序，高优先级先规划
 - **共享只读 `SpaceTimeGrid` + 共享只读 `CostGrid`**（P2 优化，消除每任务重建）
 - 多航点任务分段规划后拼接
-- **时空占用表** `SpatioTemporalOccupancyTable`：`(ix,iy,iz,it) → {aircraft_id: {route_id}}`，
-  支持占用登记/回滚/查询/冲突溯源
+- **时空占用表** `SpatioTemporalOccupancyTable`（现位于 `src/planners/occupancy.py`）：
+  `(ix,iy,iz,it) → {aircraft_id: {route_id}}`，支持占用登记/回滚/查询/冲突溯源，
+  并可通过 `to_dense_mask()` 导出与 `SpaceTimeGrid` 同构的 4D 禁飞 bool 数组
 - **冲突检测** `detect_conflicts_occupancy()`：按航线增量登记（查冲突 → 登记占用），
   每条航线只与已登记航线比较，避免 O(n²·m²) 重复比对
-- **冲突协调** `resolve_conflicts()`：对每条冲突给出"延迟起飞"或"高度调整 +1 层"建议
-- 规模验证：支持万级任务批量规划
+- **冲突避免（任务书 §五.4，`plan_batch()` 默认开启）**：
+  检测 → 每对选优先级低者 → `to_dense_mask(exclude_route_id=...)` 生成掩码 →
+  `SpaceTimeAStar` 在 `_get_neighbors` 中跳过禁飞格 → 串行 `mark_route` 更新占用表，
+  最多 `max_conflict_rounds=3` 轮。关闭时仍**如实返回**检出的 `result.conflicts`。
+  `clearance_cells()` 把 `min_separation` 换算成每轴膨胀格数（floor），
+  保证"未被膨胀标记 ⇒ 某轴格距 > r ⇒ 世界距离 > min_separation"。
+- **冲突协调** `resolve_conflicts()`：对每条冲突给出"延迟起飞"或"高度调整 +1 层"建议，
+  延迟秒数按**对方航线真实通过冲突点的时间区间**反推，而非固定步长
+- 规模验证：支持万级任务批量规划，**10/100/1000/10000 各规模残余冲突均为 0**
 
 ### 核心算法：多维时空 A*
 
