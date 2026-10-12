@@ -93,20 +93,32 @@ def plan_batch(
     workers: int = 4,
     max_iterations: int = 200_000,
     use_cost_grid: bool = False,
+    conflict_avoidance: bool = True,
+    min_separation: float = 10.0,
+    clearance: float = 200.0,
+    clearance_cost: float = 3.0,
 ) -> tuple[PlanningResult, ParallelPlanner]:
     """批量并行规划，返回 (结果, 规划器实例)
 
     规划器实例保留下来，供后续冲突检测复用其共享占用网格，
     避免重复构建 3MB 网格。
+
+    conflict_avoidance=True（默认）时，规划结果已经过 §五.4 冲突避免；
+    关闭后 `result.conflicts` 仍会如实报告检测到的冲突，不会把
+    "没检查"包装成"无冲突"。
     """
     planner = ParallelPlanner(
         config=config, obstacle_set=obstacle_set,
         max_workers=workers,
         max_iterations=max_iterations,
         use_cost_grid=use_cost_grid,
+        clearance=clearance,
+        clearance_cost=clearance_cost,
     )
     result = planner.plan_batch(tasks, performances, request_id=f"multi-{len(tasks)}",
-                                dispatch=dispatch)
+                                dispatch=dispatch,
+                                conflict_avoidance=conflict_avoidance,
+                                min_separation=min_separation)
     return result, planner
 
 
@@ -121,8 +133,11 @@ def main():
                         help="A* 单任务最大迭代次数")
     parser.add_argument("--no-validation", action="store_true",
                         help="跳过飞行器需求校验")
+    parser.add_argument("--no-avoid-conflicts", action="store_true",
+                        help="关闭多机冲突避免（任务书 §五.4 默认开启；"
+                             "仅用于性能基准对比，结果可能出现同格同时重叠）")
     parser.add_argument("--conflict-check", action="store_true",
-                        help="用时空占用表执行飞行器间冲突检测")
+                        help="额外输出残余冲突详情 + 协调建议到 conflicts.json")
     parser.add_argument("--validate", action="store_true",
                         help="执行路径合法性验证（含多机间隔检查）")
     parser.add_argument("--no-cost-grid", action="store_true",
@@ -133,8 +148,9 @@ def main():
                         help="净空区内通行代价倍率")
     parser.add_argument("--min-separation", type=float, default=10.0,
                         help="多机最小安全间隔（米）")
-    parser.add_argument("--conflict-sample", type=int, default=200,
-                        help="冲突检测最多检查多少条航线（控制 O(n²) 开销）")
+    parser.add_argument("--conflict-sample", type=int, default=0,
+                        help="冲突检测最多检查多少条航线（0 = 全量；"
+                             "超限时随机抽样，抽样不能用于安全放行判定）")
     args = parser.parse_args()
 
     print("=" * 60)
@@ -193,14 +209,18 @@ def main():
     # 3. 执行规划
     mode = "DISPATCH" if args.dispatch else "FULL"
     use_cost_grid = not args.no_cost_grid
+    avoidance = not args.no_avoid_conflicts
     print(f"\n[3/5] 并行规划 ({mode}, workers={args.workers}, "
-          f"代价层={'on' if use_cost_grid else 'off'})...")
+          f"代价层={'on' if use_cost_grid else 'off'}, "
+          f"冲突避免={'on' if avoidance else 'OFF'})...")
     t0 = time.time()
     result, planner = plan_batch(
         tasks, performances, config, obstacle_set,
         dispatch=args.dispatch, workers=args.workers,
         max_iterations=args.max_iterations,
         use_cost_grid=use_cost_grid,
+        conflict_avoidance=avoidance,
+        min_separation=args.min_separation,
     )
     elapsed = time.time() - t0
     print(f"  成功 {result.success_count}/{len(tasks)}  ({result.success_count/len(tasks)*100:.1f}%)")
@@ -219,38 +239,57 @@ def main():
         for reason, count in reasons.most_common():
             print(f"    {count}× {reason}")
 
-    # 4. 冲突检测 + 路径合法性验证
+    # 4. 多机冲突状态（规划阶段已做避免；这里如实报告残余冲突）
     validation = None
     planned = [r for r in result.routes if r.status == "planned"]
+    conflicts = list(result.conflicts)
 
-    if args.conflict_check:
-        print("\n[4/5] 时空占用表冲突检测...")
+    print(f"\n[4/5] 多机冲突状态（安全间隔 {args.min_separation}m）...")
+    if avoidance:
+        print(f"  冲突避免: 已开启（规划闭环内消化）"
+              if not conflicts else
+              f"  ⚠ 冲突避免后仍有 {len(conflicts)} 对冲突未消解")
+    else:
+        print(f"  冲突避免: 已关闭（--no-avoid-conflicts）")
+
+    if args.conflict_sample and len(planned) > args.conflict_sample:
+        # 显式要求抽样时才抽；抽样结果不能用于安全放行
         conflicts = planner.detect_conflicts_occupancy(
-            planned,
-            min_separation=args.min_separation,
+            planned, min_separation=args.min_separation,
             max_routes=args.conflict_sample,
         )
-        print(f"  采样 {min(len(planned), args.conflict_sample)} 条规划航线，"
-              f"发现 {len(conflicts)} 对冲突")
+        print(f"  （抽样检查 {args.conflict_sample} 条航线）")
+
+    if args.conflict_check or conflicts:
         if conflicts:
             resolved = planner.resolve_conflicts(conflicts, planned)
-            conflict_log = os.path.join(args.output_dir, "conflicts.json")
-            with open(conflict_log, "w", encoding="utf-8") as f:
-                json.dump(resolved, f, ensure_ascii=False, indent=2)
-            print(f"  冲突详情 + 协调建议: {conflict_log}")
-            by_resolution = {}
+            by_resolution: Dict[str, int] = {}
             for c in resolved:
                 by_resolution[c["resolution"]] = by_resolution.get(c["resolution"], 0) + 1
             for kind, count in by_resolution.items():
                 print(f"    建议{kind}: {count} 条")
-    else:
-        print("\n[4/5] 跳过冲突检测")
+        else:
+            resolved = []
+            print("  ✓ 无残余冲突")
+        conflict_log = os.path.join(args.output_dir, "conflicts.json")
+        with open(conflict_log, "w", encoding="utf-8") as f:
+            json.dump({
+                "min_separation_m": args.min_separation,
+                "avoidance_enabled": avoidance,
+                "n_planned_routes": len(planned),
+                "n_residual_conflicts": len(resolved),
+                "conflicts": resolved,
+            }, f, ensure_ascii=False, indent=2)
+        print(f"  冲突详情 + 协调建议: {conflict_log}")
+    elif not conflicts:
+        print("  ✓ 无残余冲突")
 
     if args.validate:
         print("\n      路径合法性验证...")
         validator = PathValidator(
             obstacle_set=obstacle_set,
             min_separation=args.min_separation,
+            config=config,  # → 多机间隔校验走线性复杂度的占用表路径
         )
         validation = validator.validate_multi_routes(planned)
         # 单机性能/高度/连续性检查（按 aircraft 找对应性能）
@@ -263,7 +302,7 @@ def main():
             print(f"    [{issue.severity.value}] {issue.code}: {issue.message}")
         if len(validation.issues) > 5:
             print(f"    ...（共 {len(validation.issues)} 条）")
-    elif not args.conflict_check:
+    else:
         print("      跳过路径合法性验证（--validate 开启）")
 
     # 5. 保存结果
@@ -314,9 +353,22 @@ def main():
     print(f"  完成! 规划 {result.success_count}/{len(tasks)} 成功")
     if validation is not None:
         print(f"  合法性: {validation.summary_text()}")
+    if conflicts:
+        print(f"  ✗ 多机冲突: 仍有 {len(conflicts)} 对未消解"
+              f"（间隔要求 {args.min_separation}m）")
+    else:
+        print(f"  ✓ 多机冲突: 0 对（间隔要求 {args.min_separation}m）")
     print(f"  输出: {os.path.abspath(args.output_dir)}")
     print(f"  可视化: python visualize.py --input {args.output_dir}")
     print("=" * 60)
+
+    # 退出码约定：
+    #   0 = 全部成功且无冲突、无验证错误
+    #   2 = 存在残余多机冲突，或合法性验证报 ERROR
+    # 残余冲突即使没开 --validate 也必须让调用方感知——否则 CI 会把
+    # "两机在同一格同一秒重叠" 当成成功。
+    if conflicts:
+        sys.exit(2)
     if validation is not None and validation.has_errors():
         sys.exit(2)
 

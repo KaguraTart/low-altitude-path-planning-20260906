@@ -48,6 +48,17 @@ class ValidationIssue:
     time: float = 0.0           # 相关时间（秒）
     position: Tuple[float, float, float] = (0.0, 0.0, 0.0)  # 相关位置
 
+    def to_dict(self) -> dict:
+        """序列化为 JSON 可序列化 dict（CLI 输出与 API 响应共用一种形状）"""
+        return {
+            "severity": self.severity.value,
+            "code": self.code,
+            "message": self.message,
+            "trajectory_index": self.trajectory_index,
+            "time": round(self.time, 2),
+            "position": [round(v, 2) for v in self.position],
+        }
+
 
 @dataclass
 class ValidationResult:
@@ -77,6 +88,16 @@ class ValidationResult:
         status = "✓ 合法" if self.is_valid else "✗ 不合法"
         return f"{status}：共 {n} 个问题（{n_err} 错误, {n_warn} 警告, {n_info} 提示）"
 
+    def to_dict(self) -> dict:
+        """序列化为 JSON 可序列化 dict（CLI 输出与 API 响应共用一种形状）"""
+        return {
+            "is_valid": self.is_valid,
+            "summary_text": self.summary_text(),
+            "summary": self.summary,
+            "issue_count": len(self.issues),
+            "issues": [i.to_dict() for i in self.issues],
+        }
+
 
 class PathValidator:
     """
@@ -104,11 +125,20 @@ class PathValidator:
         grid: Optional[SpaceTimeGrid] = None,
         min_separation: float = MULTI_UAV_MIN_SEPARATION,
         time_window: float = MULTI_UAV_TIME_WINDOW,
+        config=None,
     ):
         self.obstacle_set = obstacle_set
         self.grid = grid
         self.min_separation = min_separation
         self.time_window = time_window
+        # 时空网格配置：用于多机间隔校验走线性复杂度的占用表路径。
+        # 显式传入优先，其次从 grid 推断；都没有则回退到朴素两两比对。
+        if config is not None:
+            self.config = config
+        elif grid is not None:
+            self.config = grid.config
+        else:
+            self.config = None
 
     def validate_route(
         self,
@@ -177,6 +207,18 @@ class PathValidator:
         """
         校验多机航线集：两两检查时间和空间间隔
 
+        有两种实现，按是否拿得到时空网格配置自动选择：
+
+        - **占用表路径**（`self.config` 可用时）：先建时空占用表，再对每条
+          航线只查它 r 邻域 + 时间窗内的占用格。复杂度
+          O(|routes| × |traj| × 时间窗 × (2r+1)³)，与航线数**线性相关**。
+          这是万级航线下的唯一可行路径——朴素两两比对是 O(n²·T²)，
+          N=10000 外推需 20+ 分钟。
+        - **朴素路径**（拿不到 config，例如 `PathValidator()` 裸构造）：
+          两两比对，保留不变以兼容既有用法。
+
+        两条路径都返回**全部**冲突（不做抽样），安全判定不允许采样放行。
+
         Args:
             routes: 航线列表（只校验 status="planned" 的）
             time_window: 时间对齐窗口（秒），默认使用构造时的设置
@@ -184,10 +226,45 @@ class PathValidator:
         Returns:
             ValidationResult: 所有两两冲突的列表
         """
-        result = ValidationResult(is_valid=True)
         planned = [r for r in routes if r.status == "planned"]
         tw = time_window if time_window is not None else self.time_window
 
+        if self.config is None:
+            return self._validate_multi_naive(planned, tw)
+        return self._validate_multi_occupancy(planned, tw)
+
+    def _validate_multi_occupancy(
+        self, planned: List[PlannedRoute], tw: float
+    ) -> ValidationResult:
+        """基于时空占用表的线性复杂度多机间隔校验"""
+        from ..planners.occupancy import SpatioTemporalOccupancyTable
+
+        result = ValidationResult(is_valid=True)
+        table = SpatioTemporalOccupancyTable(
+            self.config, min_separation=self.min_separation
+        )
+        seen: set = set()
+        for route in planned:
+            for c in table.find_conflicts(
+                route, min_separation=self.min_separation, time_window=tw
+            ):
+                # 双向查询会产生 (a,b) 与 (b,a) 两条，按无序对 + 时刻去重
+                key = (tuple(sorted((c["route_a"], c["route_b"]))), c["time"])
+                if key in seen:
+                    continue
+                seen.add(key)
+                self._add_separation_issue(result, c["route_a"], c["route_b"],
+                                           c["distance"], c["time"], c["position_a"])
+            table.mark_route(route)
+
+        self._finalize_multi(result, planned)
+        return result
+
+    def _validate_multi_naive(
+        self, planned: List[PlannedRoute], tw: float
+    ) -> ValidationResult:
+        """朴素两两比对（拿不到网格配置时的回退实现）"""
+        result = ValidationResult(is_valid=True)
         n = len(planned)
         for i in range(n):
             for j in range(i + 1, n):
@@ -195,11 +272,9 @@ class PathValidator:
                 if ri.aircraft_id == rj.aircraft_id:
                     continue  # 同一架飞机不算冲突（多段航线）
 
-                # 时间对齐检查：对每对时刻找同时刻最近距离
                 min_dist = float("inf")
                 min_time = 0.0
                 min_pos = None
-                # 为效率，先二分对齐轨迹
                 for pa in ri.trajectory:
                     for pb in rj.trajectory:
                         if abs(pa.t - pb.t) > tw:
@@ -215,26 +290,41 @@ class PathValidator:
                             min_pos = ((pa.x, pa.y, pa.z), (pb.x, pb.y, pb.z))
 
                 if min_dist < self.min_separation:
-                    severity = Severity.ERROR if min_dist < self.min_separation / 2 else Severity.WARNING
-                    code = "MULTI_UAV_COLLISION" if severity == Severity.ERROR else "MULTI_UAV_PROXIMITY"
-                    result.add(ValidationIssue(
-                        severity=severity, code=code,
-                        message=(
-                            f"航线 {ri.route_id} 与 {rj.route_id} 在 t={min_time:.1f}s 时"
-                            f"距离仅 {min_dist:.1f}m（最小要求 {self.min_separation}m）"
-                        ),
-                        time=min_time,
-                        position=min_pos[0] if min_pos else (0.0, 0.0, 0.0),
-                    ))
+                    self._add_separation_issue(
+                        result, ri.route_id, rj.route_id, min_dist, min_time,
+                        min_pos[0] if min_pos else (0.0, 0.0, 0.0),
+                    )
 
+        self._finalize_multi(result, planned)
+        return result
+
+    def _add_separation_issue(
+        self, result, route_a: str, route_b: str,
+        dist: float, time: float, position,
+    ):
+        severity = Severity.ERROR if dist < self.min_separation / 2 else Severity.WARNING
+        code = "MULTI_UAV_COLLISION" if severity == Severity.ERROR else "MULTI_UAV_PROXIMITY"
+        result.add(ValidationIssue(
+            severity=severity, code=code,
+            message=(
+                f"航线 {route_a} 与 {route_b} 在 t={time:.1f}s 时"
+                f"距离仅 {dist:.1f}m（最小要求 {self.min_separation}m）"
+            ),
+            time=time,
+            position=position,
+        ))
+
+    def _finalize_multi(self, result: ValidationResult, planned: List[PlannedRoute]):
+        n = len(planned)
         result.summary = {
-            "n_routes": len(planned),
+            "n_routes": n,
+            # 占用表路径按空间/时间局部性剪枝，实际比较的航线对少于此数；
+            # 这里统一报数据集蕴含的**候选对上界**，便于跨实现对比。
             "n_pairs_checked": n * (n - 1) // 2,
             "n_conflicts": sum(1 for i in result.issues if i.severity == Severity.ERROR),
         }
         if result.has_errors():
             result.is_valid = False
-        return result
 
     # ============================================================
     # 单项检查实现

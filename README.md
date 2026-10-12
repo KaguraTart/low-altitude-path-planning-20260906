@@ -42,17 +42,18 @@
 
 | 维度 | 评分 | 说明 |
 |------|------|------|
-| 功能完整性 | 9 / 10 | 全部需求模块实现并接入主链路，无关键缺失 |
+| 功能完整性 | 9 / 10 | 全部需求模块实现并接入主链路；§五.4 多机冲突避免已进入规划主循环（见 §7.1 P0）。剩余：代价层只读静态障碍、`ConflictResolver.suggest_delay` 之外的协调策略 |
 | 代码可读性 | 8 / 10 | 结构清晰，命名规范；存在少量死代码（已识别待清理） |
-| 算法正确性 | 8 / 10 | Demo 合规任务 100% 成功且全部通过 7 维合法性验证；万级规模压测见 §4 |
+| 算法正确性 | 8 / 10 | Demo 合规任务 100% 成功且通过 7 维合法性验证；**多机航线残余冲突 0、安全率 100%**；成功率与安全率是两个维度，见 §8.2 |
 | 性能 | 8 / 10 | **P2 共享网格优化 1.81× 提速**；仍可 JIT 进一步加速 |
-| 工程化 | 8 / 10 | 201 个单元测试 + GitHub Actions CI；日志/监控未接入 |
+| 工程化 | 8 / 10 | 217 个单元测试 + GitHub Actions CI；日志/监控未接入 |
 | 可视化 | 8 / 10 | Matplotlib 3D + Plotly HTML + 风险热力图齐全 |
 | **综合** | **8.3 / 10** | **可交付**；大规模生产前需要关键瓶颈优化（尾延迟） |
 
 ### 2.3 一句话总结
 
-> **核心算法在 demo 场景下合规任务 100% 成功且全部通过合法性验证，万级规模随机任务压测保持 ≥ 85% 成功率，算法有效性已经过验证。**
+> **核心算法在 demo 场景下合规任务 100% 成功且全部通过合法性验证；万级规模随机任务压测保持 ≥ 85% 成功率，且规划成功的航线残余冲突为 0（安全率 100%）。**
+> **成功率与安全率是正交指标：前者回答"能不能算出路径"，后者回答"算出的路径能不能无碰撞飞行"，§8.2 两个数字同时给出。**
 > **主要短板是极端规模下的尾延迟（P95 数秒）与吞吐优化（空间/时间复杂度均有优化空间）。**
 
 ---
@@ -95,14 +96,16 @@ python -c "import numpy, scipy, matplotlib, plotly, pydantic; print('OK', plotly
 
 ### 3.3 运行（**规划与可视化分离**）
 
-> 📘 **输入输出字段详细手册**：[`docs/INPUT_OUTPUT_GUIDE.md`](docs/INPUT_OUTPUT_GUIDE.md)（608 行，含 5 个输入文件完整字段表 + 7 个输出文件结构 + 校验规则详解）
+> 📘 **接口与字段手册**：[`docs/API_INTERFACE.md`](docs/API_INTERFACE.md)（函数名、参数、返回结构、错误码、内部变量）
+> ｜ 联调对接：[`docs/API_QUICKSTART.md`](docs/API_QUICKSTART.md)
+> ｜ 命令行输出文件字段：[`docs/deprecated/INPUT_OUTPUT_GUIDE.md`](docs/deprecated/INPUT_OUTPUT_GUIDE.md)
 
 本项目把**规划代码**和**可视化代码**完全分离：
 
 | 步骤 | 脚本 | 作用 | 输出 |
 |------|------|------|------|
 | ① 单机规划 | `plan_single.py` | 选最高优先级任务 + 飞行器需求校验 + A\* + 优化 + 写 JSON/MD | `output/single/*.json` `output/single/*.md` |
-| ② 多机批量 | `plan_multi.py` | 多线程并行 + 需求校验 + 冲突检测 + 写 JSON/MD | `output/multi/*.json` |
+| ② 多机批量 | `plan_multi.py` | 多线程并行 + 需求校验 + **多机冲突避免** + 写 JSON/MD | `output/multi/*.json` |
 | ③ 可视化（demo） | `visualize.py` | 读 JSON + 渲染 3D/热力图/对比柱状图 | `output/{single\|multi}/visualizations/*.png\|html` |
 | ④ 压力测试 | `run_stress_test.py` | 随机任务批量规划 + 统计 | `output/stress/*.json` |
 | ⑤ 压测可视化 | `visualize_stress.py` | 读 JSON + 渲染对比图 | `output/stress/visualizations/` |
@@ -120,8 +123,9 @@ python plan_single.py --no-optimize  # 跳过 3.26 多目标优化
 # 第 2 步：可视化
 python visualize.py --input ./output/single
 
-# 多机批量规划（含需求校验 + 冲突检测）
+# 多机批量规划（含需求校验 + 多机冲突避免，残余冲突时退出码 2）
 python plan_multi.py --output-dir ./output/multi --conflict-check
+python plan_multi.py --no-avoid-conflicts   # 只检测不避让（对照用，仍会报冲突）
 python plan_multi.py --dispatch       # 调度模式（更快）
 ```
 
@@ -180,7 +184,7 @@ output/
 ├── multi/                           # plan_multi.py 输出
 │   ├── planning_result_*.json
 │   ├── routes/*.json
-│   ├── conflicts.json               # 飞行器间冲突（仅 --conflict-check）
+│   ├── conflicts.json               # 残余冲突 + 协调建议（--conflict-check 或有冲突时）
 │   ├── environment.json
 │   ├── report_*.md
 │   └── visualizations/
@@ -203,22 +207,79 @@ output/
 
 ---
 
+### 3.6 作为接口调用（供其他系统集成）
+
+除命令行脚本外，算法还以**两层接口**对外提供，供其他系统直接调用：
+
+| 层 | 入口 | 适用场景 |
+|----|------|----------|
+| Python SDK | `import uav_planner` | 对方是 Python 项目 |
+| REST HTTP | `python serve.py` | 对方是 Java / Go / 前端 / 其他语言 |
+
+**方式 A：Python SDK**
+
+```python
+from uav_planner import plan_single
+
+result = plan_single(
+    start={"x": 500, "y": 500, "z": 100},
+    goal={"x": 2500, "y": 2500, "z": 150},
+)
+print(result["status"])                       # planned
+print(result["route"]["metrics"])             # 里程 / 时间 / 风险
+print(result["validation"]["summary_text"])   # ✓ 合法：共 0 个问题...
+```
+
+**方式 B：REST 服务（局域网联调）**
+
+```bash
+python serve.py --host 0.0.0.0 --port 8000
+```
+
+启动后会打印可直接发给对接方的地址，对方浏览器打开 `http://<IP>:8000/docs`
+即可在 Swagger 页面上直接试调用，无需写代码。
+
+| 端点 | 说明 |
+|------|------|
+| `POST /api/v1/plan/single` | 单任务规划 |
+| `POST /api/v1/plan/batch` | 多机批量规划（同步，建议 ≤500 任务） |
+| `POST /api/v1/validate` | 校验外部给出的航线合法性 |
+| `POST /api/v1/jobs` + `GET /api/v1/jobs/{id}` | 大批量异步作业 |
+| `GET /docs` | Swagger 交互文档 |
+
+> 完整契约（函数名 / 参数 / 返回结构 / 错误码 / 内部变量）见
+> [`docs/API_INTERFACE.md`](docs/API_INTERFACE.md)；
+> 联调步骤与常见问题见 [`docs/API_QUICKSTART.md`](docs/API_QUICKSTART.md)。
+
+---
+
 ## 4. 项目结构
 
 ```
 .
+├── serve.py                      # ★ REST 服务启动脚本（打印局域网地址）
+├── uav_planner/                  # ★ Python SDK 包（对外接口）
+│   ├── api.py                    #   plan_single / plan_batch / plan_from_dir / validate_route
+│   ├── adapters.py               #   dict <-> dataclass 转换 + 入参校验
+│   ├── serializer.py             #   dataclass -> 纯 JSON（含 numpy 标量降级）
+│   └── errors.py                 #   PlanningError + 错误码
+├── server/                       # ★ REST 服务（FastAPI）
+│   ├── app.py                    #   路由 + 统一错误信封
+│   ├── schemas.py                #   Pydantic 请求/响应模型
+│   └── jobs.py                   #   异步作业注册表
 ├── plan_single.py                # ★ 单机规划（含 3.26 多目标优化）
-├── plan_multi.py                 # ★ 多机批量规划（含冲突检测 + 需求校验）
+├── plan_multi.py                 # ★ 多机批量规划（含冲突避免 + 需求校验）
 ├── run_stress_test.py            # ★ 压力测试脚本（10/100/1000/10000）
 ├── visualize.py                  # ★ Demo 可视化
 ├── visualize_stress.py           # ★ 压测可视化
 ├── setup_env.sh                  # 一键 conda 环境 + 运行脚本（含 test 子命令）
 ├── environment.yml               # conda 环境复现配置
 ├── requirements.txt              # pip 依赖清单（备选）
+├── pyproject.toml                # ★ 打包配置（pip install -e ".[server]"）
 ├── pytest.ini                    # pytest 配置
 ├── README.md                     # 本文档
 │
-├── tests/                        # ★ 单元测试（201 个用例）
+├── tests/                        # ★ 单元测试（272 个用例）
 │   ├── conftest.py               #   共享 fixtures（含真实样例数据）
 │   ├── test_space.py             #   时空网格
 │   ├── test_obstacles.py         #   障碍物模型
@@ -230,7 +291,9 @@ output/
 │   ├── test_occupancy_conflicts.py #  时空占用表 + 冲突协调
 │   ├── test_data_fusion.py       #   多源数据融合
 │   ├── test_explanation_output.py#   规划解释 + 输出序列化
-│   └── test_pipeline_wiring.py   #   主链路接线回归
+│   ├── test_pipeline_wiring.py   #   主链路接线回归
+│   ├── test_sdk.py               # ★ Python SDK 契约（JSON 纯净性/错误码/多航点）
+│   └── test_api.py               # ★ REST 端点（含异步作业与错误信封）
 │
 ├── .github/workflows/ci.yml      # ★ CI（单测 + 端到端 + 可视化冒烟）
 │
@@ -266,9 +329,12 @@ output/
 │       └── viewer.py             # 3D 可视化 + 风险热力图
 │
 ├── docs/
-│   ├── algorithm_design.md       # 算法设计 + 实测性能
-│   ├── input_output_spec.md      # 输入输出格式规范
-│   └── INPUT_OUTPUT_GUIDE.md     # ★ 详细 I/O 字段说明
+│   ├── API_INTERFACE.md          # ★ 接口契约（函数/参数/返回/错误码/内部变量）
+│   ├── API_QUICKSTART.md         # ★ 联调对接说明（起服务 + 调用示例 + FAQ）
+│   └── deprecated/               # 已废弃/归档文档（仅作历史参考）
+│       ├── algorithm_design.md       # 算法原理（★ 内容仍有效，仅 I/O 部分失效）
+│       ├── input_output_spec.md      # 输入输出格式规范（已废弃）
+│       └── INPUT_OUTPUT_GUIDE.md     # 命令行 I/O 字段说明（已废弃）
 │
 └── output/                       # 规划输出
     ├── single/                   # plan_single.py 输出
@@ -350,10 +416,15 @@ A* 现在直接接受飞行器性能参数，越界路径在搜索阶段就被�
 - 按任务优先级排序（高优先级先规划）
 - **共享只读 `SpaceTimeGrid`**（P2 优化）+ 共享只读 `CostGrid`，消除每任务重建
 - 多航点任务分段规划后拼接
+- **多机冲突避免（§五.4）**：`plan_batch()` 默认 `conflict_avoidance=True`，
+  流程 = `detect_conflicts_occupancy()` 检测 → 每对选优先级低者 →
+  `to_dense_mask()` 生成禁飞掩码 → `SpaceTimeAStar` 带掩码重规划 → 串行更新占用表，
+  最多 3 轮；关闭时（`--no-avoid-conflicts`）仍**如实报告**检出的冲突
 - **时空占用表冲突检测**：`detect_conflicts_occupancy()` 按航线增量登记，
   避免 O(n²·m²) 重复比对；冲突条目带真实 `route_id` + `aircraft_id`
 - **冲突协调建议**：`resolve_conflicts()` 对每条冲突给出"延迟起飞"或"高度调整 +1 层"
-- 已通过 10 / 100 / 1000 / 10000 规模压测
+  （按对方航线真实通过时刻反推，而非固定步长）
+- 已通过 10 / 100 / 1000 / 10000 规模压测，**各规模残余冲突均为 0**
 
 ### 5.3 多目标航线优化（3.26）
 
@@ -481,8 +552,9 @@ A* 现在直接接受飞行器性能参数，越界路径在搜索阶段就被�
 **`plan_multi.py` 启动时自动校验**：每个任务的飞行器性能是否满足 `requirements`（载荷 ≤ 容量、续航 ≤ 上限、速度 ≤ 上限、高度 ≤ 上限）。
 
 **详细字段定义**：
-- 📘 **完整字段手册**：[`docs/INPUT_OUTPUT_GUIDE.md`](docs/INPUT_OUTPUT_GUIDE.md)（608 行，含 5 个输入文件完整字段表 + 7 个输出文件结构）
-- 简版规范：[`docs/input_output_spec.md`](docs/input_output_spec.md)
+- 📘 **接口权威契约**：[`docs/API_INTERFACE.md`](docs/API_INTERFACE.md)（函数名、参数、返回结构、错误码、内部变量）
+- 🚀 **联调对接步骤**：[`docs/API_QUICKSTART.md`](docs/API_QUICKSTART.md)
+- 📦 命令行写盘文件的字段：[`docs/deprecated/INPUT_OUTPUT_GUIDE.md`](docs/deprecated/INPUT_OUTPUT_GUIDE.md)（已废弃，仅作历史参考）
 
 ### 6.2 输出（`output/` 目录）
 
@@ -493,7 +565,7 @@ A* 现在直接接受飞行器性能参数，越界路径在搜索阶段就被�
 | `validation_*.json` / `validation.json` | **合法性验证结果**（7 维问题清单 + 严重度 + 数据质量） |
 | `report_*.md` | Markdown 格式规划报告（含验证章节与数据质量章节） |
 | `environment.json` | 环境快照（供 `visualize.py` 复现障碍物） |
-| `conflicts.json` | 冲突详情 + **协调建议**（延迟秒数 / 建议高度） |
+| `conflicts.json` | **残余冲突** + **协调建议**（`delay` / `altitude_shift`）；传 `--conflict-check` 或存在残余冲突时生成 |
 | `visualizations/*.png\|html` | 3D 可视化、热力图、对比柱状图 |
 | `stress/STRESS_TEST_RESULTS.md` | 压力测试 Markdown 报告（自动生成） |
 | `stress/STRESS_TEST_REPORT.md` | 压力测试详细报告（结论+建议） |
@@ -503,6 +575,61 @@ A* 现在直接接受飞行器性能参数，越界路径在搜索阶段就被�
 ## 7. 当前问题与改进建议（按优先级）
 
 ### 7.1 🔴 高优先级（影响正确性或大规模性能）
+
+#### P0. 多机冲突避免只做"事后检测"，规划时不避让 ✅ **已修复**
+
+**位置**：[src/planners/occupancy.py](src/planners/occupancy.py) + [src/planners/parallel_planner.py](src/planners/parallel_planner.py) + [src/planners/spacetime_astar.py](src/planners/spacetime_astar.py)
+
+**修复前**（任务书 §五.4 未真正实现）：
+
+- A\* 从不消费 `SpatioTemporalOccupancyTable`，规划阶段完全不知道别的飞机在哪；
+- `detect_conflicts` 只做事后检查，检出冲突仍返回 `planned`、`plan_multi.py` 仍 `exit 0`；
+- 实测对向两机在同一点同一时刻**距离 0.0 m**（要求 30 m）；随机任务安全率
+  N=100 → 82.8%、N=400 → **53.2%**（46.8% 航线涉碰撞），而这些航线在报告里
+  全都记作"成功"。
+
+**修复内容**：
+
+1. `SpatioTemporalOccupancyTable` 抽到 [src/planners/occupancy.py](src/planners/occupancy.py)（避免 A\* ↔ planner 循环导入），
+   新增 `to_dense_mask()` / `clearance_cells()`，把占用表变成与 `SpaceTimeGrid` 同构的
+   4D bool 数组；
+2. `SpaceTimeAStar` 消费 `occupancy_mask`：`_get_neighbors` 里对阶梯中间格、碰撞格、
+   等待动作三处做禁飞检查；起点被占提前失败并给出"建议延迟起飞"原因；
+3. `ParallelPlanner.plan_batch()` 默认 `conflict_avoidance=True`：
+   检测 → 每对选优先级低者 → 带掩码重规划 → 串行更新占用表 → 最多 3 轮；
+4. 关闭避让时**仍然如实检测并报告** `result.conflicts`（"未检查" ≠ "无冲突"）；
+5. `plan_multi.py` 残余冲突 → `sys.exit(2)`；`--conflict-check` 报告 `result.conflicts` 全量
+   （旧的 `--conflict-sample` 前缀切片 `planned[:200]` 改为默认全量）；
+6. `PathValidator.validate_multi_routes` 在有 `config` 时改走线性复杂度的占用表路径，
+   检测口径与规划侧一致（同一 `time_window=5s`、同一 `min_separation`）。
+
+**实测**（`min_separation=30m`，`ParallelPlanner` 默认 `max_iterations=2,000,000`、
+`workers=8`；**每一行的"开启/关闭"两列使用完全相同的任务集**，是严格的 A/B 对照。
+残余冲突 / 安全率）：
+
+| 规模 | 开启避让 | 关闭避让 |
+|------|----------|----------|
+| 对向穿越（4~6 条车道） | **0 对 / 100%** | 0.0 m 重叠 / 0% |
+| N=40 | 0 对 / 100% | 1 对 / 94.4% |
+| N=100 | 0 对 / 100% | 13 对 / 84.2% |
+| N=200 | 0 对 / 100% | 85 对 / 68.5% |
+| N=400 | 0 对 / 100% | 264 对 / 50.1% |
+| N=1000 | 0 对 / 100% | 1,431 对 / 28.7% |
+
+墙钟开销可忽略（同配置 A/B：N=400 → 158.1s vs 163.0s，N=1000 → 488.8s vs 459.3s，
+约 +6%）。§8.2 的正式压测另用 `--max-iterations 200000` 与 `seed + N`，两处数字
+**不可直接互相比较**，但结论一致：安全率 100%，墙钟开销个位数百分比。
+
+**顺带修掉的真 bug**（曾导致避让空转）：`find_conflicts` 的时间步区间没按
+`step_to_time(it) = t_min + (it+0.5)*dt`（**步中心**）反解，把窗外一整步纳入，
+报出 `distance=0` 的假冲突；避让循环反复重规划却"路径未变"（那格本来就没被占用）。
+现改为先按闭区间反解出**超集**，再用 `abs(pa.t - step_to_time(it)) <= time_window`
+显式裁剪，与 `PathValidator` 朴素路径的口径一致。回归用例见
+`tests/test_conflict_avoidance_e2e.py::TestTimeWindowSemantics`。
+
+**已知剩余缺口**：`min_separation` 通过 `clearance_cells()` 折算成膨胀格数，
+`cell_size > min_separation` 时折算为 0（当前 dx=dy=100、dz=50、间隔 30m → 0），
+真正起作用的是"同格同刻禁飞"；若未来把间隔要求提到 > 50m，需要同时验证膨胀层数。
 
 #### P1. A* 起点/终点超出时间窗口被静默钳制
 
@@ -588,7 +715,7 @@ ax.set_title(title if title.isascii() else "Low-Altitude UAV Path Planning 3D Vi
 
 **位置**：[tests/](tests/)
 
-原状态：`tests/` 目录存在但无任何测试文件。现已补充 **201 个用例**（11 个测试文件 + `conftest.py`），覆盖：
+原状态：`tests/` 目录存在但无任何测试文件。现已补充 **272 个用例**（13 个测试文件 + `conftest.py`），覆盖：
 
 | 测试文件 | 用例数 | 覆盖内容 |
 |---|---:|---|
@@ -600,9 +727,13 @@ ax.set_title(title if title.isascii() else "Low-Altitude UAV Path Planning 3D Vi
 | `test_cost_grid.py` | 25 | CostGrid 读写、区域代价、净空代价、**A\* 代价层不破坏最优性**、时不变 3D 视图 |
 | `test_aircraft_envelope.py` | 19 | **高度包线 + 升降率约束**、阶梯式垂直移动、航点兼容性 |
 | `test_occupancy_conflicts.py` | 26 | 时空占用表、冲突检测、冲突协调建议、代价层共享 |
+| `test_conflict_avoidance_e2e.py` | 16 | **端到端多机冲突避免**：对向穿越残余冲突为 0、关掉避让仍如实报冲突、时间窗语义回归、独立交叉验证、**进程级退出码 0/2** |
 | `test_data_fusion.py` | 21 | 多源融合：去重、优先级、容错、质量报告、裸数组格式 |
 | `test_explanation_output.py` | 24 | PlanningExplanation 填充、避障计数、报告/验证结果序列化 |
-| `test_pipeline_wiring.py` | 19 | **主链路接线回归**：入口确实调用了各模块，规划结果零 ERROR |
+| `test_pipeline_wiring.py` | 21 | **主链路接线回归**：入口确实调用了各模块，规划结果零 ERROR |
+| `test_sdk.py` | 35 | **Python SDK 契约**：返回值为纯 JSON（无 numpy 标量 / NaN）、错误码稳定、多航点真正生效、外部航线校验 |
+| `test_api.py` | 20 | **REST 端点**：全部接口、统一错误信封与状态码映射、异步作业提交轮询、OpenAPI 可生成 |
+| **合计** | **272** | |
 
 运行：`./setup_env.sh test` 或 `python -m pytest tests/ -v`
 CI：[.github/workflows/ci.yml](.github/workflows/ci.yml)（push/PR 自动跑单测 + 双入口端到端 + 可视化冒烟）
@@ -611,7 +742,7 @@ CI：[.github/workflows/ci.yml](.github/workflows/ci.yml)（push/PR 自动跑单
 
 #### P10. 文档同步问题
 
-`generate_waypoints` 默认 `min_spacing=50.0`，但 [docs/algorithm_design.md](docs/algorithm_design.md) 和 [README 历史版本](README.md) 都写 80m。建议要么把代码默认改为 80m，要么更新文档。
+`generate_waypoints` 默认 `min_spacing=50.0`，但 [docs/deprecated/algorithm_design.md](docs/deprecated/algorithm_design.md) 和 [README 历史版本](README.md) 都写 80m。建议要么把代码默认改为 80m，要么更新文档。
 
 #### P11. 日志与监控缺失
 
@@ -623,15 +754,33 @@ logger = logging.getLogger(__name__)
 logger.info("task_planned", extra={"task_id": ..., "time_ms": ...})
 ```
 
-#### P12. 飞行器间冲突检测是 O(n²·m²)
+#### P12. 飞行器间冲突检测是 O(n²·m²) ✅ **已修复**
 
-**位置**：[src/planners/parallel_planner.py:316-342](src/planners/parallel_planner.py#L316)
+**位置**：[src/planners/occupancy.py:125](src/planners/occupancy.py#L125)（主路径）+ [src/planners/parallel_planner.py:411](src/planners/parallel_planner.py#L411)（保留的朴素实现）
 
-`detect_conflicts` 对所有航线对做嵌套循环，并对每对的轨迹点做两两比较。N=10000 时 10⁸ 次浮点比较。建议：先按时间窗口做时间分桶（bucket），只比较同时刻落入同桶的航线对。
+主路径 `find_conflicts` 原先对**每个轨迹点遍历全表**（O(|occupancy|)），万级航线下退化成 O(n²·m²)。现改为：按"中心距 < `min_separation` 的格必落在 `r = floor(min_separation / 最小格长) + 1` 邻域内"只查局部，复杂度降到 **O(|轨迹点| × 时间窗步数 × (2r+1)³)**，与全表扫描结果一致（由 `test_occupancy_conflicts.py` 对照断言守护）。
+
+> 仍保留 O(n²) 的 `detect_conflicts` 两两比对，用作小规模参考实现与交叉验证；
+> `plan_multi.py` / `run_stress_test.py` 均已不再调用它。
 
 #### P13. README 缺 3D 网格规模计算说明
 
 config.json `dt=10` 与 `SpaceTimeConfig` 默认 `dt=5` 不同，加载后网格时间维是 120 而非 240。建议在 README 明确说明当前默认网格是 `50×50×10×120 = 3M cells`。
+
+#### P14. 通行代价层只读静态障碍，不含动态障碍
+
+**位置**：[src/grid/cost.py](src/grid/cost.py) `build_clearance_cost_grid()`
+
+代价层只遍历 `obstacle_set.static_obstacles` 做净空惩罚；动态障碍**不进代价层**。
+
+> **不是正确性问题**：A\* 的碰撞判定走 `SpaceTimeGrid`，动态障碍按时间戳参与
+> `is_blocked()`，飞机不会撞上它们。缺的只是"绕开动态障碍更划算"的**路径质量**偏好
+> ——当前 A\* 会在代价相同的前提下径直穿过动态障碍的时间窗（只保证不相撞，不保证好看）。
+>
+> **没有顺手修的原因**：代价层刻意做成**时不变 3D 数组**（`lookup_array()` 直取 +
+> 缓存友好），这是 §8.2「代价层自身开销已优化」里 154.6s → 127.7s 那次优化的基础。改成 4D 时变代价
+> 会直接摧毁该优化。可行的折中是"把动态障碍的扫掠包络（全时段最大范围）并入 3D
+> 静态代价"，会略微保守但保持 3D 结构。
 
 ---
 
@@ -679,7 +828,7 @@ config.json `dt=10` 与 `SpaceTimeConfig` 默认 `dt=5` 不同，加载后网格
 |------|----------|
 | 高度包线 `min/max_altitude` | 搜索的 `iz` 范围收窄，启发式引导在垂直方向变弱 |
 | 升降率 `climb/descent_rate` | **阶梯式垂直移动**使一次 `dz` 位移跨多个时间步，路径步数与迭代数增加 |
-| 通行代价层 | 内循环每扩展多 ~7 次代价查表（已用 3D 扁平视图 + 数组直取优化，见 §7.1 P-new） |
+| 通行代价层 | 内循环每扩展多 ~7 次代价查表（已用 3D 扁平视图 + 数组直取优化，见下方「代价层自身开销已优化」） |
 
 > 代价层自身开销已优化：165.0 s → 154.6 s（3D 缓存友好视图）→ **127.7 s**
 > （`lookup_array()` 直取数组，省掉热循环里的 Python 方法调用），合计 **1.29×**。
@@ -758,12 +907,15 @@ config.json `dt=10` 与 `SpaceTimeConfig` 默认 `dt=5` 不同，加载后网格
 - [x] 多机批量脚本 `plan_multi.py`
 - [x] 压力测试脚本 `run_stress_test.py`
 - [x] 可视化脚本 `visualize.py` / `visualize_stress.py`
-- [x] 算法设计文档 `docs/algorithm_design.md`
-- [x] 输入输出详细手册 `docs/INPUT_OUTPUT_GUIDE.md`（608 行）
-- [x] 输入输出简版规范 `docs/input_output_spec.md`
+- [x] 算法设计文档 `docs/deprecated/algorithm_design.md`（算法原理仍有效，仅 I/O 部分被接口文档取代）
+- [x] **接口契约** [`docs/API_INTERFACE.md`](docs/API_INTERFACE.md)（函数/参数/返回结构/错误码/内部变量）
+- [x] **联调对接说明** [`docs/API_QUICKSTART.md`](docs/API_QUICKSTART.md)（起服务 + 调用示例 + FAQ）
+- [x] **Python SDK** `uav_planner/`（`plan_single` / `plan_batch` / `plan_from_dir` / `validate_route`）
+- [x] **REST 服务** `server/` + `serve.py`（Swagger 文档、统一错误信封、异步作业）
+- [x] 命令行 I/O 字段说明 `docs/deprecated/INPUT_OUTPUT_GUIDE.md`（已废弃）
 - [x] README（本文档）
 - [x] conda 环境 `environment.yml` + `setup_env.sh`
-- [x] 单元测试（201 个用例，见 §7.2 P9）
+- [x] 单元测试（见 §7.2 P9）
 - [x] CI 配置（[.github/workflows/ci.yml](.github/workflows/ci.yml)）
 
 ---
@@ -785,7 +937,7 @@ config.json `dt=10` 与 `SpaceTimeConfig` 默认 `dt=5` 不同，加载后网格
 |------------|------------|----------|------|
 | §三 网格作为搜索基础 | `SpaceTimeGrid` 四维占用网格 | A* 共享网格参数 | `src/models/space.py` |
 | §三 静态障碍约束 | `StaticObstacle` AABB + `is_static_blocked` | 多源融合加载 → 栅格化 | `src/models/obstacles.py` |
-| §三 多机安全约束 | `SpatioTemporalOccupancyTable` + `ConflictResolver` | `plan_multi.py --conflict-check` | `src/planners/parallel_planner.py` |
+| §三 多机安全约束 | `SpatioTemporalOccupancyTable` + `ConflictResolver` | **`plan_batch()` 默认开启避让；`plan_multi.py --conflict-check` 复核；残余冲突 exit 2** | `src/planners/occupancy.py` |
 | §三 飞行性能约束 | `AircraftPerformance.is_speed_valid/altitude_valid` | **A* 直接消费速度/爬升/降率/高度** | `src/models/aircraft.py` |
 | §三 输出完整航点 | `RouteOptimizer.generate_waypoints` | `plan_single.py` 写 `waypoints_*.json` | `src/planners/route_optimizer.py` |
 | §三 失败返回原因 | `PlannedRoute.message` 字段 | 所有 Planner | `src/models/task.py` |
@@ -795,7 +947,7 @@ config.json `dt=10` 与 `SpaceTimeConfig` 默认 `dt=5` 不同，加载后网格
 | §五.1 时空网格 + 通行代价 | `CostGrid` + `build_clearance_cost_grid` | **A* 代价层（默认开启）** | `src/grid/cost.py` |
 | §五.2 任务时间窗 | `Waypoint.earliest_arrival/latest_arrival` | 任务模型 + 兼容性校验 | `src/models/aircraft.py` |
 | §五.3 飞行器性能（速度/爬升/转弯/加速度/续航） | `PerformanceSpec` + `PhysicalSpec` + `EnduranceSpec` | A* 限速/升降率 + 优化器约束修正 | `src/models/aircraft.py` |
-| §五.4 多机冲突避免 | `SpatioTemporalOccupancyTable` + 时间调整 + 高度调整 | `detect_conflicts_occupancy()` + `resolve_conflicts()` | `src/planners/parallel_planner.py` |
+| §五.4 多机冲突避免 | `to_dense_mask()` 占用掩码 + `SpaceTimeAStar` 禁飞检查 + 时间/高度调整 | **`plan_batch(conflict_avoidance=True)` 检测→带掩码重规划→串行更新占用表（默认开启，残余冲突 exit 2）** | `src/planners/occupancy.py` + `src/planners/spacetime_astar.py` |
 | §五.5 多目标优化 | `RouteOptimizer` + `objective_weights` | `plan_single.py`（默认开启） | `src/planners/route_optimizer.py` |
 | §五.6 航点生成 + 解释 | `generate_waypoints` + `PlanningExplanation` | **解释已填充并写入 JSON `explanation` 字段** | `src/models/task.py` |
 | §六 解释模块 | `PlanningExplanation.to_dict()` | `_explain_result()` 生成 + 报告渲染 | `src/models/task.py` |

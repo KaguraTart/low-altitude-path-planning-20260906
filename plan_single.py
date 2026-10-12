@@ -64,9 +64,14 @@ def plan_single_task(
     optimize: bool = True,
     max_iterations: int = 2_000_000,
     cost_grid=None,
+    verbose: bool = True,
 ) -> tuple[PlannedRoute, list[PlannedRoute], list[str]]:
     """
     对单个任务执行完整规划。
+
+    Args:
+        verbose: 是否打印进度。SDK/HTTP 调用时传 False，避免污染服务日志与被
+                 调用的 stdout；CLI 传 True 保持既有交互输出。
 
     Returns:
         (final_route, all_routes, warnings)
@@ -76,6 +81,10 @@ def plan_single_task(
     """
     warnings = []
 
+    def _log(msg: str = ""):
+        if verbose:
+            print(msg)
+
     # 1. 任务 + 飞行器兼容性校验
     valid, msg = task.validate()
     if not valid:
@@ -83,12 +92,12 @@ def plan_single_task(
     compatible, problems = task.check_aircraft_compatibility(perf)
     if not compatible:
         warnings.extend(problems)
-        print(f"[!] 飞行器 {perf.aircraft_id} 与任务 {task.task_id} 不兼容:")
+        _log(f"[!] 飞行器 {perf.aircraft_id} 与任务 {task.task_id} 不兼容:")
         for p in problems:
-            print(f"    - {p}")
+            _log(f"    - {p}")
 
     # 2. A* 规划
-    print(f"\n[1/2] 时空 A* 规划 ({task.task_id})...")
+    _log(f"\n[1/2] 时空 A* 规划 ({task.task_id})...")
     planner = SpaceTimeAStar(
         config=config,
         obstacle_set=obstacle_set,
@@ -122,7 +131,7 @@ def plan_single_task(
             )
             if seg_route.status != "planned":
                 success = False
-                print(f"    航段 {seg_idx} 失败: {seg_route.message}")
+                _log(f"    航段 {seg_idx} 失败: {seg_route.message}")
                 break
             if traj:
                 traj.extend(seg_route.trajectory[1:])
@@ -141,8 +150,8 @@ def plan_single_task(
             )
             route.compute_metrics(perf)
             all_routes.append(route)
-            print(f"    成功: {route.total_distance:.1f}m, {route.total_time:.1f}s, "
-                  f"{len(traj)}点")
+            _log(f"    成功: {route.total_distance:.1f}m, {route.total_time:.1f}s, "
+                 f"{len(traj)}点")
         else:
             failed = PlannedRoute(
                 route_id=f"astar-{task.task_id}",
@@ -163,28 +172,28 @@ def plan_single_task(
         )
         all_routes.append(route)
         if route.status == "planned":
-            print(f"    成功: {route.total_distance:.1f}m, {route.total_time:.1f}s")
+            _log(f"    成功: {route.total_distance:.1f}m, {route.total_time:.1f}s")
         else:
-            print(f"    失败: {route.message}")
+            _log(f"    失败: {route.message}")
 
     final_route = all_routes[-1]
 
     # 3. 多目标优化
     if optimize and final_route.status == "planned":
-        print(f"\n[2/2] 多目标航线优化 ({task.task_id})...")
+        _log(f"\n[2/2] 多目标航线优化 ({task.task_id})...")
         optimizer = RouteOptimizer(config, obstacle_set, perf, cost_grid=cost_grid)
         optimized = optimizer.optimize(task, route_id=f"opt-{task.task_id}")
         all_routes.append(optimized)
         final_route = optimized
-        print(f"    优化完成: {final_route.total_distance:.1f}m, "
-              f"{final_route.total_time:.1f}s")
-        print(f"      风险: max={final_route.max_risk:.4f}, "
-              f"avg={final_route.avg_risk:.4f}, "
-              f"最近障碍={final_route.min_obstacle_distance:.1f}m")
+        _log(f"    优化完成: {final_route.total_distance:.1f}m, "
+             f"{final_route.total_time:.1f}s")
+        _log(f"      风险: max={final_route.max_risk:.4f}, "
+             f"avg={final_route.avg_risk:.4f}, "
+             f"最近障碍={final_route.min_obstacle_distance:.1f}m")
     else:
-        print(f"\n[2/2] 跳过优化")
+        _log(f"\n[2/2] 跳过优化")
 
-    print(f"\n  规划耗时: {(time.time()-t0)*1000:.1f} ms")
+    _log(f"\n  规划耗时: {(time.time()-t0)*1000:.1f} ms")
     return final_route, all_routes, warnings
 
 

@@ -26,6 +26,7 @@
 
 from __future__ import annotations
 
+import random
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Dict, List, Optional, Tuple
@@ -40,173 +41,13 @@ from ..grid.cost import CostGrid, build_clearance_cost_grid
 from .spacetime_astar import SpaceTimeAStar
 
 
-class SpatioTemporalOccupancyTable:
-    """
-    时空占用表（任务书 §三.2 时空资源管理 + §四 步骤4）
+# 占用表与冲突协调器独立成模块：SpaceTimeAStar 需要消费占用表来做
+# 多机冲突【避免】，而本模块又依赖 A*，放在同一文件会循环导入。
+# 对外仍从本模块 re-export，保持 `from ...parallel_planner import
+# SpatioTemporalOccupancyTable` 这一既有写法可用。
+from .occupancy import ConflictResolver, SpatioTemporalOccupancyTable
 
-    记录所有已规划航线的 (x, y, z, t) 占用情况，供后续规划参考和冲突检测。
-
-    实现细节：
-    - 用 hash set 存储离散化的占用格 (ix, iy, iz, it)
-    - 每个格记录"被哪些飞机、哪些航线占用"，支持冲突溯源
-    - 占用格在路线插入时计算，路线回滚时清除
-
-    API：
-    - mark_route(route): 标记整条航线占用
-    - unmark_route(route): 清除航线占用
-    - is_occupied(x, y, z, t, exclude_aircraft): 查询占用（可排除自身）
-    - find_conflicts(route, min_separation): 找出与新航线的所有冲突
-    """
-
-    def __init__(self, config: SpaceTimeConfig, min_separation: float = 10.0):
-        """
-        Args:
-            config: 时空网格配置（用于坐标→网格索引转换）
-            min_separation: 多机最小安全间隔（米）
-        """
-        self.config = config
-        self.min_separation = min_separation
-        # {(ix, iy, iz, it): {aircraft_id: {route_id, ...}}} 占用记录
-        self._occupancy: Dict[Tuple[int, int, int, int], Dict[str, set]] = {}
-
-    def _world_to_grid_with_radius(
-        self, x: float, y: float, z: float, t: float, radius: float
-    ) -> List[Tuple[int, int, int, int]]:
-        """世界坐标 + 半径 → 受影响的网格列表"""
-        ix, iy, iz = self.config.to_grid(x, y, z)
-        it = self.config.time_to_step(t)
-        r_cells = max(0, int(np.ceil(radius / min(self.config.dx, self.config.dy))))
-        cells = []
-        for dx in range(-r_cells, r_cells + 1):
-            for dy in range(-r_cells, r_cells + 1):
-                for dz in range(-r_cells, r_cells + 1):
-                    nx_, ny_, nz_ = ix + dx, iy + dy, iz + dz
-                    if 0 <= nx_ < self.config.nx and 0 <= ny_ < self.config.ny and 0 <= nz_ < self.config.nz:
-                        cells.append((nx_, ny_, nz_, it))
-        return cells
-
-    def mark_route(self, route: PlannedRoute, safety_radius: float = 0.0):
-        """将整条航线的占用格标记为 route.aircraft_id
-
-        Args:
-            route: 已规划航线
-            safety_radius: 占用半径（米，飞机周围的额外安全圈）
-        """
-        for p in route.trajectory:
-            cells = self._world_to_grid_with_radius(p.x, p.y, p.z, p.t, safety_radius)
-            for cell in cells:
-                by_aircraft = self._occupancy.get(cell)
-                if by_aircraft is None:
-                    by_aircraft = {}
-                    self._occupancy[cell] = by_aircraft
-                by_aircraft.setdefault(route.aircraft_id, set()).add(route.route_id)
-
-    def unmark_route(self, route: PlannedRoute, safety_radius: float = 0.0):
-        """从占用表中移除航线的占用格"""
-        for p in route.trajectory:
-            cells = self._world_to_grid_with_radius(p.x, p.y, p.z, p.t, safety_radius)
-            for cell in cells:
-                by_aircraft = self._occupancy.get(cell)
-                if by_aircraft is None:
-                    continue
-                routes_of_aircraft = by_aircraft.get(route.aircraft_id)
-                if routes_of_aircraft is not None:
-                    routes_of_aircraft.discard(route.route_id)
-                    if not routes_of_aircraft:
-                        del by_aircraft[route.aircraft_id]
-                if not by_aircraft:
-                    del self._occupancy[cell]
-
-    def is_occupied(
-        self, x: float, y: float, z: float, t: float,
-        exclude_aircraft: Optional[str] = None,
-        safety_radius: float = 0.0,
-    ) -> bool:
-        """查询 (x, y, z, t) 是否被占用（可排除自身飞机）"""
-        cells = self._world_to_grid_with_radius(x, y, z, t, safety_radius)
-        for cell in cells:
-            by_aircraft = self._occupancy.get(cell)
-            if by_aircraft is None:
-                continue
-            if exclude_aircraft is None:
-                if by_aircraft:
-                    return True
-            else:
-                # 排除自身飞机的占用
-                if any(a != exclude_aircraft for a in by_aircraft):
-                    return True
-        return False
-
-    def find_conflicts(
-        self, route: PlannedRoute, min_separation: float = 10.0,
-        time_window: float = 5.0,
-    ) -> List[dict]:
-        """找出新航线与已登记航线之间的所有冲突
-
-        Returns:
-            [{"route_a", "route_b", "aircraft_b", "time", "position_a",
-              "position_b", "distance"}, ...]
-        """
-        conflicts = []
-        for pa in route.trajectory:
-            for cell, by_aircraft in self._occupancy.items():
-                ix_a, iy_a, iz_a, it_a = cell
-                if abs(pa.t - self.config.step_to_time(it_a)) > time_window:
-                    continue
-                # 距离检查（把网格索引转回世界坐标中心）
-                wx, wy, wz = self.config.to_world(ix_a, iy_a, iz_a)
-                dx = pa.x - wx
-                dy = pa.y - wy
-                dz = pa.z - wz
-                d = float(np.sqrt(dx * dx + dy * dy + dz * dz))
-                if d >= min_separation:
-                    continue
-                for aircraft_id, route_ids in by_aircraft.items():
-                    if aircraft_id == route.aircraft_id:
-                        continue  # 自身不算冲突
-                    for other_route_id in route_ids:
-                        conflicts.append({
-                            "route_a": route.route_id,
-                            "route_b": other_route_id,
-                            "aircraft_b": aircraft_id,
-                            "time": round(pa.t, 2),
-                            "position_a": (round(pa.x, 1), round(pa.y, 1), round(pa.z, 1)),
-                            "position_b": (round(wx, 1), round(wy, 1), round(wz, 1)),
-                            "distance": round(d, 2),
-                        })
-        return conflicts
-
-    def clear(self):
-        """清空占用表"""
-        self._occupancy.clear()
-
-
-class ConflictResolver:
-    """
-    冲突协调器（任务书 §三.2 冲突协调）
-
-    发现冲突后触发重规划：
-    - 策略 A：延迟起飞时间（等占用方飞过）
-    - 策略 B：高度调整（+1 层）
-    - 策略 C：完全重规划（带禁用格）
-    """
-
-    def __init__(self, config: SpaceTimeConfig, min_separation: float = 10.0):
-        self.config = config
-        self.min_separation = min_separation
-
-    def suggest_delay(self, conflict: dict, max_delay_s: float = 60.0) -> Optional[float]:
-        """根据冲突时间和对方位置，估算需要延迟的秒数"""
-        # 简化策略：延迟直到对方已飞离最近距离点
-        return min(conflict["time"] + max_delay_s / 4, max_delay_s)
-
-    def suggest_altitude_shift(self, current_z: float) -> float:
-        """建议增加的高度（一个网格层）"""
-        new_z = current_z + self.config.dz
-        if new_z <= self.config.z_max:
-            return new_z
-        return current_z  # 已到顶，无法升
-
+__all__ = ["ParallelPlanner", "SpatioTemporalOccupancyTable", "ConflictResolver"]
 
 class ParallelPlanner:
     """
@@ -270,6 +111,9 @@ class ParallelPlanner:
         performances: Dict[str, AircraftPerformance],
         request_id: str = "batch-001",
         dispatch: bool = False,
+        conflict_avoidance: bool = True,
+        min_separation: float = 10.0,
+        max_conflict_rounds: int = 3,
     ) -> PlanningResult:
         """
         批量并行规划
@@ -281,6 +125,12 @@ class ParallelPlanner:
             dispatch: 调度模式开关。True 时只跑 A* 不计算 risk/heading 等附加字段，
                       并对失败任务自动微调起点/终点到最近空闲格后重试一次。
                       生产调度推荐 True；demo/报告用 False。
+            conflict_avoidance: 是否做多机冲突避免（任务书 §五.4）。
+                      默认开启：并行初规划 → 检测冲突 → 用占用表掩码重规划
+                      受影响航线，直到无冲突。关闭后退化为"只规划不避让"，
+                      各飞行器可能在同一格同一秒重叠（仅用于性能基准对比）。
+            min_separation: 多机最小安全间隔（米）
+            max_conflict_rounds: 冲突修复最大轮数
 
         Returns:
             PlanningResult: 批量规划结果
@@ -297,6 +147,19 @@ class ParallelPlanner:
         # 多线程并行（共享内存，适合共享只读障碍物数据）
         routes = self._plan_multithread(sorted_tasks, performances, dispatch=dispatch)
 
+        conflicts: List[dict]
+        if conflict_avoidance:
+            routes, conflicts, _replanned = self.avoid_conflicts(
+                routes, sorted_tasks, performances,
+                dispatch=dispatch, min_separation=min_separation,
+                max_rounds=max_conflict_rounds,
+            )
+        else:
+            # 不避让也必须如实报告冲突，否则调用方会把"未检查"误当成"无冲突"
+            conflicts = self.detect_conflicts_occupancy(
+                routes, min_separation=min_separation
+            )
+
         for route in routes:
             if route.status == "planned":
                 success_count += 1
@@ -311,6 +174,7 @@ class ParallelPlanner:
             total_planning_time_ms=total_time,
             success_count=success_count,
             failed_count=failed_count,
+            conflicts=conflicts,
         )
 
         return result
@@ -359,8 +223,16 @@ class ParallelPlanner:
         performance: AircraftPerformance,
         idx: int,
         dispatch: bool = False,
+        occupancy_mask: Optional[np.ndarray] = None,
+        start_time: Optional[float] = None,
     ) -> PlannedRoute:
-        """单任务规划（线程安全：共享只读 grid，dispatch 模式跳过附加计算）"""
+        """单任务规划（线程安全：共享只读 grid，dispatch 模式跳过附加计算）
+
+        Args:
+            occupancy_mask: 其它已规划航线的禁飞时空掩码（多机冲突避免）。
+                None 表示不考虑其它飞行器，行为与单机规划一致。
+            start_time: 覆盖起飞时刻（冲突协调的"延迟起飞"策略用）
+        """
         # ★ 使用共享的 SpaceTimeGrid（不重建 3MB 数组）
         planner = SpaceTimeAStar(
             config=self.config,
@@ -373,7 +245,9 @@ class ParallelPlanner:
             max_altitude=performance.get_max_altitude(),
             max_climb_rate=performance.get_max_climb_rate(),
             max_descent_rate=performance.get_max_descent_rate(),
+            occupancy_mask=occupancy_mask,
         )
+        departure = task.departure_time if start_time is None else start_time
 
         start_wp = task.start
         end_wp = task.end
@@ -405,12 +279,13 @@ class ParallelPlanner:
         # 如果有多个途经点，分段规划
         if len(task.waypoints) > 2:
             return self._plan_multi_waypoint(task, performance, idx, planner, dispatch=dispatch,
-                                              start_wp=start_wp, end_wp=end_wp)
+                                              start_wp=start_wp, end_wp=end_wp,
+                                              start_time=departure)
 
         route = planner.plan(
             start=(start_wp.x, start_wp.y, start_wp.z),
             goal=(end_wp.x, end_wp.y, end_wp.z),
-            start_time=task.departure_time,
+            start_time=departure,
             task_id=task.task_id,
             aircraft_id=task.aircraft_id,
             route_id=f"route-{idx:03d}",
@@ -449,6 +324,7 @@ class ParallelPlanner:
         dispatch: bool = False,
         start_wp=None,
         end_wp=None,
+        start_time: Optional[float] = None,
     ) -> PlannedRoute:
         """多航点分段规划"""
         from ..models.task import TrajectoryPoint
@@ -459,7 +335,7 @@ class ParallelPlanner:
             end_wp = task.end
 
         all_trajectory = []
-        current_time = task.departure_time
+        current_time = task.departure_time if start_time is None else start_time
         total_planning_time = 0.0
 
         # 多航点：起点 / 终点 / 每个 via 都做一次预微调
@@ -621,14 +497,19 @@ class ParallelPlanner:
             min_separation: 最小安全间隔（米）
             time_window: 时间对齐窗口（秒）
             safety_radius: 占用半径（米）
-            max_routes: 最多检查多少条航线（超大规模时限制采样量）
+            max_routes: 最多检查多少条航线（超大规模时限制开销）。
+                超限时**随机抽样**而不是取前 N 条——前缀切片会系统性地
+                只检查高优先级/靠前的任务，抽样才是无偏的估计。
+                注意：抽样只覆盖"抽中的航线两两之间"的冲突，
+                与未抽中航线的冲突不会被发现，因此该参数仅用于
+                估算冲突规模，**不能**用于安全放行判定。
 
         Returns:
             去重后的冲突列表
         """
         planned = [r for r in routes if r.status == "planned"]
-        if max_routes is not None:
-            planned = planned[:max_routes]
+        if max_routes is not None and len(planned) > max_routes:
+            planned = random.Random(0).sample(planned, max_routes)
 
         table = SpatioTemporalOccupancyTable(self.config, min_separation=min_separation)
         seen = set()
@@ -642,6 +523,156 @@ class ParallelPlanner:
                 conflicts.append(c)
             table.mark_route(route, safety_radius=safety_radius)
         return conflicts
+
+    def _route_index(self, route_id: str) -> Optional[int]:
+        """route-{idx:03d} → idx（即 sorted_tasks 中的下标）"""
+        try:
+            return int(route_id.split("-")[1])
+        except (IndexError, ValueError):
+            return None
+
+    def avoid_conflicts(
+        self,
+        routes: List[PlannedRoute],
+        sorted_tasks: List[FlightTask],
+        performances: Dict[str, AircraftPerformance],
+        dispatch: bool = False,
+        min_separation: float = 10.0,
+        max_rounds: int = 3,
+        max_delay_steps: int = 6,
+        time_window: float = 5.0,
+    ) -> Tuple[List[PlannedRoute], List[dict], int]:
+        """
+        多机航线冲突【避免】（任务书 §五.4 / §三.2 冲突协调）
+
+        这是把 `SpatioTemporalOccupancyTable` 真正接进规划闭环的一步——
+        没有它，各飞行器只是"各自规划完再事后比对"，结果会出现两机
+        在同一格同一秒重叠（实测 0.0m）却被标记为 planned。
+
+        流程（任务书 §三.2「发现航线冲突后触发重新规划」）：
+          1. 用全部已规划航线建时空占用表
+          2. 检测冲突；对每对冲突，选**优先级较低**的一方
+          3. 把占用表转成稠密禁飞掩码（排除该航线自身），喂给 A* 重规划。
+             A* 自带等待动作，因此"时间调整"（延迟出发）与"空间绕行"
+             由搜索自动二选一，无需人工分支
+          4. 若起点本身被占（搜索第一步就出不去），按 dt 逐格延迟重试——
+             这是任务书 §三.2 的"时间调整"策略
+          5. 循环直到无冲突或达到轮次上限
+
+        每轮内**串行**重规划：新掩码必须包含本轮刚更新的航线，
+        否则两条同时重规划的航线可能撞在一起。
+
+        Args:
+            routes: plan_batch 产出的航线（与 sorted_tasks 下标一一对应）
+            sorted_tasks: 按优先级降序排列的任务
+            performances: 飞行器性能字典
+            dispatch: 调度模式
+            min_separation: 多机最小安全间隔（米）
+            max_rounds: 最多修复轮数
+            max_delay_steps: 起点被占时最多延迟几个时间步
+            time_window: 冲突检测的时间对齐窗口（秒）
+
+        Returns:
+            (new_routes, remaining_conflicts, replanned_count)
+        """
+        table = SpatioTemporalOccupancyTable(self.config, min_separation=min_separation)
+        for r in routes:
+            if r.status == "planned":
+                table.mark_route(r)
+
+        current = list(routes)
+        replanned = 0
+
+        for _ in range(max_rounds):
+            conflicts = self.detect_conflicts_occupancy(
+                current, min_separation=min_separation, time_window=time_window
+            )
+            if not conflicts:
+                return current, [], replanned
+
+            # 每对冲突选优先级低的一方重规划（sorted_tasks 已按优先级降序，
+            # 因此下标越大优先级越低）
+            targets: set = set()
+            for c in conflicts:
+                ia = self._route_index(c.get("route_a", ""))
+                ib = self._route_index(c.get("route_b", ""))
+                if ia is None or ib is None:
+                    continue
+                if max(ia, ib) < len(sorted_tasks):
+                    targets.add(max(ia, ib))
+            if not targets:
+                break
+
+            improved = False
+            for idx in sorted(targets):
+                if idx >= len(current):
+                    continue
+                old = current[idx]
+                if old.status != "planned":
+                    continue
+                new = self._replan_avoiding(
+                    task=sorted_tasks[idx],
+                    performance=performances.get(
+                        sorted_tasks[idx].aircraft_id,
+                        AircraftPerformance(aircraft_id=sorted_tasks[idx].aircraft_id),
+                    ),
+                    idx=idx,
+                    dispatch=dispatch,
+                    table=table,
+                    old_route=old,
+                    max_delay_steps=max_delay_steps,
+                )
+                if new.status != "planned":
+                    continue
+                table.unmark_route(old)
+                table.mark_route(new)
+                current[idx] = new
+                improved = True
+                replanned += 1
+
+            if not improved:
+                break  # 一轮都改不动，继续跑也是白跑
+
+        remaining = self.detect_conflicts_occupancy(
+            current, min_separation=min_separation, time_window=time_window
+        )
+        return current, remaining, replanned
+
+    def _replan_avoiding(
+        self,
+        task: FlightTask,
+        performance: AircraftPerformance,
+        idx: int,
+        dispatch: bool,
+        table: SpatioTemporalOccupancyTable,
+        old_route: Optional[PlannedRoute] = None,
+        max_delay_steps: int = 6,
+    ) -> PlannedRoute:
+        """带禁飞掩码重规划一条航线；起点被占则逐格延迟重试
+
+        Args:
+            old_route: 占用表里登记的**同一条**旧航线。掩码要把它自己的
+                占用排除掉，否则起点永远被自己挡住。这里必须传航线对象
+                （而不是 route_id）——排除要按它自己的轨迹逐格修正，
+                是 O(|该航线|)，而不是按 id 扫全表 O(|occupancy|)。
+        """
+        mask = table.to_dense_mask(exclude_route=old_route)
+        route = self._plan_one(
+            task, performance, idx, dispatch, occupancy_mask=mask
+        )
+        if route.status == "planned":
+            return route
+
+        # 起点/终点在其它飞行器占用格里 → 时间调整（延迟起飞）
+        for k in range(1, max_delay_steps + 1):
+            route = self._plan_one(
+                task, performance, idx, dispatch,
+                occupancy_mask=mask,
+                start_time=task.departure_time + k * self.config.dt,
+            )
+            if route.status == "planned":
+                return route
+        return route
 
     def resolve_conflicts(
         self,
@@ -673,13 +704,18 @@ class ParallelPlanner:
             r.route_id: (r.trajectory[len(r.trajectory) // 2].z if r.trajectory else 0.0)
             for r in routes
         }
+        route_by_id = {r.route_id: r for r in routes}
         resolved = []
         for c in conflicts:
             item = dict(c)
             if c.get("time", 0.0) <= max_delay_s:
                 item["resolution"] = "delay"
+                # 传入对方航线 → 按对方实际通过冲突点的时间区间计算延迟量
                 item["suggested_delay_s"] = round(
-                    resolver.suggest_delay(c, max_delay_s) or 0.0, 1
+                    resolver.suggest_delay(
+                        c, max_delay_s, other_route=route_by_id.get(c.get("route_b", ""))
+                    ) or 0.0,
+                    1,
                 )
             else:
                 current_z = z_by_route.get(c["route_a"], 0.0)

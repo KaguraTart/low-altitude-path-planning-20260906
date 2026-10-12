@@ -84,15 +84,12 @@ def write_waypoints(waypoints: List[dict], output_dir: str, filename: str) -> st
 
 
 def _issue_to_dict(issue) -> dict:
-    """ValidationIssue → JSON 可序列化 dict"""
-    return {
-        "severity": issue.severity.value,
-        "code": issue.code,
-        "message": issue.message,
-        "trajectory_index": issue.trajectory_index,
-        "time": round(issue.time, 2),
-        "position": [round(v, 2) for v in issue.position],
-    }
+    """ValidationIssue → JSON 可序列化 dict
+
+    实际实现委托给 ``ValidationIssue.to_dict()``，保证 CLI 写文件的字段
+    与 API 返回的字段永远是同一套，不会各写一份后逐渐跑偏。
+    """
+    return issue.to_dict()
 
 
 def write_validation(

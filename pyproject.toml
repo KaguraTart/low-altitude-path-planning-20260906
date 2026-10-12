@@ -1,0 +1,52 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "uav-path-planning"
+version = "1.0.0"
+description = "低空无人机多维时空 A* 路径规划算法（Python SDK + REST 服务）"
+readme = "README.md"
+requires-python = ">=3.11"
+
+# 核心算法依赖。接口服务（fastapi/uvicorn）放在 extra 里，
+# 只用 SDK 的调用方不必被迫装一整套 Web 框架。
+dependencies = [
+    "numpy>=1.24.0",
+    "scipy>=1.10.0",
+    "pydantic>=2.0.0",
+]
+
+[project.optional-dependencies]
+# 起 REST 服务：pip install "uav-path-planning[server]"
+server = [
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.27",
+]
+# 可视化脚本：pip install "uav-path-planning[viz]"
+viz = [
+    "matplotlib>=3.7.0",
+    "plotly>=5.15.0",
+]
+# 跑测试：pip install "uav-path-planning[test]"
+test = [
+    "pytest>=8.0",
+    "httpx>=0.27",
+]
+all = [
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.27",
+    "matplotlib>=3.7.0",
+    "plotly>=5.15.0",
+    "pytest>=8.0",
+    "httpx>=0.27",
+]
+
+[tool.setuptools.packages.find]
+include = ["uav_planner*", "src*", "server*"]
+
+# 命令行入口脚本以模块形式一并安装：uav_planner 的实现复用了
+# plan_single.plan_single_task / plan_multi.plan_batch，缺了它们
+# SDK 会 import 失败。
+[tool.setuptools]
+py-modules = ["plan_single", "plan_multi", "run_stress_test", "visualize", "visualize_stress", "serve"]

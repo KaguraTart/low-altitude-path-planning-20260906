@@ -26,7 +26,7 @@ jobs:
           pip install -r requirements.txt pytest
 
       - name: 导入冒烟测试
-        run: python -c "import numpy, scipy, matplotlib, plotly; print('imports OK')"
+        run: python -c "import numpy, scipy, matplotlib, plotly, fastapi, uvicorn; print('imports OK')"
 
       - name: 单元测试
         run: python -m pytest tests/ -v
@@ -39,6 +39,33 @@ jobs:
 
       - name: 小规模压测
         run: python run_stress_test.py --scales 10 50 --seed 20260906 --workers 2 --output /tmp/ci-stress
+
+      - name: REST 服务冒烟（真起服务 + curl，不走 TestClient）
+        run: |
+          python serve.py --host 127.0.0.1 --port 8000 &
+          SERVER_PID=$!
+          # 最多等 30 秒就绪
+          for i in $(seq 1 30); do
+            curl -sf http://127.0.0.1:8000/api/v1/health > /dev/null && break
+            sleep 1
+          done
+          echo "--- health ---"
+          curl -sf http://127.0.0.1:8000/api/v1/health && echo
+          echo "--- OpenAPI 可生成 ---"
+          curl -sf http://127.0.0.1:8000/openapi.json -o /dev/null
+          echo "--- 用示例请求体打 /plan/single ---"
+          curl -sf http://127.0.0.1:8000/api/v1/examples/single -o /tmp/ex_single.json
+          curl -sf -X POST http://127.0.0.1:8000/api/v1/plan/single \
+            -H 'Content-Type: application/json' \
+            -d @/tmp/ex_single.json -o /tmp/res_single.json
+          python -c "
+          import json
+          r = json.load(open('/tmp/res_single.json'))
+          assert r['status'] == 'planned', r
+          assert r['route']['metrics']['total_distance_m'] > 0
+          print('REST smoke OK:', r['route']['metrics'])
+          "
+          kill $SERVER_PID
 
   stress:
     # 万级规模压测手动触发（耗时约 10 分钟）

@@ -1,3 +1,15 @@
+> ⚠️ **本文档已废弃（2026-10-12）**
+>
+> 项目的对外形态已从「跑命令行脚本 + 读输出目录」改为**可调用的接口**
+> （Python SDK + REST 服务）。输入输出的权威契约见
+> [`docs/API_INTERFACE.md`](../API_INTERFACE.md)，联调步骤见
+> [`docs/API_QUICKSTART.md`](../API_QUICKSTART.md)。
+>
+> 本文档仅作历史参考，不再维护。其中「输出文件」部分仍大致描述了
+> 命令行脚本写盘的字段，但接口返回结构以 `API_INTERFACE.md` 为准。
+
+---
+
 # 输入输出格式指南
 
 > 本文档详细描述本项目所有输入/输出文件的字段、类型、单位、约束和示例。
@@ -497,21 +509,42 @@ if min_ceiling_m > aircraft.operational.max_altitude_m: 错误
 
 **任务书依据**：§五.4 多机航线冲突避免
 
-**作用**：仅当 `plan_multi.py --conflict-check` 时生成
+**生成条件**：传了 `--conflict-check`，或存在**残余冲突**（避让完成后仍未消解）时生成。
+两者都没有则不生成该文件；`--conflict-check` 且 0 对时会写出
+`"n_residual_conflicts": 0` 的空报告。
 
-**结构**：
+**与退出码的关系**：有残余冲突时 `plan_multi.py` 退出码为 **2**——
+"未检查" 不等于 "无冲突"，CI 必须能感知。
+
+**默认行为**：`plan_multi.py` 默认 `conflict_avoidance=True`（规划阶段主动避让），
+`--no-avoid-conflicts` 可关闭避让做对照；关闭后检出的冲突会原样写进本文件。
+
+**字段**：
 ```json
-[
-  {
-    "route_a": "route-001",
-    "route_b": "aircraft:uav-002",
-    "time": 152.5,
-    "position_a": [550.0, 1500.0, 80.0],
-    "position_b": [560.0, 1505.0, 82.0],
-    "distance": 11.2
-  }
-]
+{
+  "min_separation_m": 30.0,
+  "avoidance_enabled": true,
+  "n_planned_routes": 100,
+  "n_residual_conflicts": 1,
+  "conflicts": [
+    {
+      "route_a": "route-001",
+      "route_b": "route-017",
+      "aircraft_b": "uav-002",
+      "time": 152.5,
+      "position_a": [550.0, 1500.0, 80.0],
+      "position_b": [550.0, 1500.0, 80.0],
+      "distance": 0.0,
+      "resolution": "delay",
+      "suggested_delay_s": 30.0
+    }
+  ]
+}
 ```
+
+> `resolution` 取 `delay`（延迟起飞，冲突时刻在 `max_delay_s` 之内）或
+> `altitude_shift`（高度调整 +1 层）；`suggested_delay_s` 按**对方航线真实通过
+> 冲突点的时间区间**反推，不是固定步长。
 
 ---
 

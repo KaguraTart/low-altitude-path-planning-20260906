@@ -1,3 +1,13 @@
+> ⚠️ **本文档已废弃（2026-10-12）**
+>
+> 内容与 [`INPUT_OUTPUT_GUIDE.md`](INPUT_OUTPUT_GUIDE.md) 高度重复，且两者都已
+> 被 [`docs/API_INTERFACE.md`](../API_INTERFACE.md) 取代。保留仅为追溯历史。
+>
+> 新接入请直接看 `API_INTERFACE.md`（字段契约）与
+> `API_QUICKSTART.md`（联调步骤）。
+
+---
+
 # 输入输出数据格式规范
 
 > 对应需求：3.25 & 3.26 — "需提供基础障碍物数据（静态的、动态的）；输入数据格式及样例；输出格式及样例"
