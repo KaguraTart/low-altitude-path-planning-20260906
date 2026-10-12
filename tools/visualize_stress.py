@@ -26,7 +26,7 @@ import os
 import sys
 from typing import Dict, List, Tuple
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
 def _load_results(input_dir: str) -> Dict[str, List[dict]]:

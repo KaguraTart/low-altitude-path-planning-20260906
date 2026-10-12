@@ -33,6 +33,19 @@ MIN_SEP = 30.0
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
+# 入口脚本已从仓库根移入 tools/（根目录只保留交付物）；统一从这里解析路径
+TOOLS = os.path.join(ROOT, "tools")
+
+# 测试复用 run_stress_test.py 里的随机任务生成器；该脚本现在位于 tools/，
+# 因此把 tools/ 加入模块搜索路径，保证 `import run_stress_test` 可用。
+if TOOLS not in sys.path:
+    sys.path.insert(0, TOOLS)
+
+
+def _tool_path(name):
+    """返回 tools/ 下入口脚本的绝对路径"""
+    return os.path.join(TOOLS, name)
+
 
 # ---------------------------------------------------------------------------
 # 场景构造
@@ -293,14 +306,14 @@ def _load_obstacles():
 # ---------------------------------------------------------------------------
 class TestEntryPointExitCode:
     def test_plan_multi_exits_2_on_residual_conflicts(self):
-        with open(os.path.join(ROOT, "plan_multi.py"), encoding="utf-8") as f:
+        with open(_tool_path("plan_multi.py"), encoding="utf-8") as f:
             src = f.read()
         assert "if conflicts:" in src
         assert "sys.exit(2)" in src
         assert "--no-avoid-conflicts" in src
 
     def test_plan_multi_reports_residual_conflicts_not_prefix_sample(self):
-        with open(os.path.join(ROOT, "plan_multi.py"), encoding="utf-8") as f:
+        with open(_tool_path("plan_multi.py"), encoding="utf-8") as f:
             src = f.read()
         # 报告的是 plan_batch 返回的全量残余冲突，而非前缀切片
         assert "result.conflicts" in src
@@ -308,7 +321,7 @@ class TestEntryPointExitCode:
 
     def test_stress_test_reports_safety_rate(self):
         """压测必须同时报成功率与安全率——两者正交"""
-        with open(os.path.join(ROOT, "run_stress_test.py"), encoding="utf-8") as f:
+        with open(_tool_path("run_stress_test.py"), encoding="utf-8") as f:
             src = f.read()
         assert "def safety_rate" in src
         assert "residual_conflict_count" in src
@@ -363,7 +376,7 @@ def _run_plan_multi(tmp_path, *extra):
 
     out_dir = tmp_path / "out"
     cmd = [
-        sys.executable, os.path.join(ROOT, "plan_multi.py"),
+        sys.executable, _tool_path("plan_multi.py"),
         "--input-dir", str(in_dir), "--output-dir", str(out_dir),
         "--conflict-check", "--min-separation", "30", *extra,
     ]

@@ -21,8 +21,17 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
 def _src(name):
-    with open(os.path.join(ROOT, name), encoding="utf-8") as f:
-        return f.read()
+    """读取入口脚本源码。
+
+    入口脚本已从仓库根移入 ``tools/``（根目录只保留交付物），
+    这里对两个位置都做查找，避免测试与目录结构强耦合。
+    """
+    for base in (ROOT, os.path.join(ROOT, "tools")):
+        path = os.path.join(base, name)
+        if os.path.exists(path):
+            with open(path, encoding="utf-8") as f:
+                return f.read()
+    raise FileNotFoundError(f"找不到入口脚本: {name}")
 
 
 class TestEntryPointWiring:
@@ -57,10 +66,18 @@ class TestEntryPointWiring:
         assert "cost_grid=cost_grid" in src
 
     def test_plan_multi_delegates_cost_grid_to_parallel_planner(self):
-        """多机侧由 ParallelPlanner 构建共享代价层（跨线程只读复用）"""
-        src = _src("plan_multi.py")
-        assert "use_cost_grid" in src
-        assert "ParallelPlanner(" in src
+        """多机侧由 ParallelPlanner 构建共享代价层（跨线程只读复用）
+
+        编排逻辑（含 ParallelPlanner 的构造）已从 plan_multi.py 下沉到
+        uav_planner/pipeline.py，因此构造点检查 pipeline；
+        CLI 侧仍须把代价层开关透传下去。
+        """
+        cli_src = _src("plan_multi.py")
+        assert "use_cost_grid" in cli_src, "CLI 应把代价层开关透传给编排层"
+
+        pipeline_src = _src(os.path.join("uav_planner", "pipeline.py"))
+        assert "ParallelPlanner(" in pipeline_src
+        assert "use_cost_grid" in pipeline_src
 
     def test_plan_single_exposes_cost_grid_flags(self):
         src = _src("plan_single.py")
@@ -86,7 +103,8 @@ class TestValidatorIsWiredInRuntime:
         """端到端跑一次单机规划，验证结果应为合法且产出验证文件"""
         env = dict(os.environ)
         proc = subprocess.run(
-            [sys.executable, "plan_single.py", "--output-dir", str(tmp_path)],
+            [sys.executable, os.path.join("tools", "plan_single.py"),
+             "--output-dir", str(tmp_path)],
             cwd=ROOT, capture_output=True, text=True, env=env, timeout=600,
         )
         out = proc.stdout
@@ -98,7 +116,8 @@ class TestValidatorIsWiredInRuntime:
     def test_plan_multi_end_to_end_validates(self, tmp_path):
         env = dict(os.environ)
         proc = subprocess.run(
-            [sys.executable, "plan_multi.py", "--output-dir", str(tmp_path),
+            [sys.executable, os.path.join("tools", "plan_multi.py"),
+             "--output-dir", str(tmp_path),
              "--conflict-check", "--validate", "--workers", "2"],
             cwd=ROOT, capture_output=True, text=True, env=env, timeout=900,
         )

@@ -34,7 +34,7 @@ import sys
 import time
 from typing import Dict, List, Tuple
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from src.models.space import SpaceTimeConfig
 from src.models.obstacles import ObstacleSet
@@ -56,70 +56,11 @@ from src.io.output_writer import (
 from src.planners.parallel_planner import ParallelPlanner
 from src.validator import PathValidator
 
-
-def validate_tasks_with_aircraft(
-    tasks: List[FlightTask],
-    performances: Dict[str, AircraftPerformance],
-) -> Tuple[List[FlightTask], List[Tuple[str, List[str]]]]:
-    """
-    验证每个任务的飞行器需求兼容性。
-
-    Returns:
-        (compatible_tasks, incompatible_pairs)
-        - compatible_tasks: 通过校验的任务列表
-        - incompatible_pairs: [(task_id, [问题]), ...]
-    """
-    compatible = []
-    incompatible = []
-    for task in tasks:
-        perf = performances.get(task.aircraft_id)
-        if perf is None:
-            incompatible.append((task.task_id, [f"未找到飞机 {task.aircraft_id}"]))
-            continue
-        ok, problems = task.check_aircraft_compatibility(perf)
-        if ok:
-            compatible.append(task)
-        else:
-            incompatible.append((task.task_id, problems))
-    return compatible, incompatible
-
-
-def plan_batch(
-    tasks: List[FlightTask],
-    performances: Dict[str, AircraftPerformance],
-    config: SpaceTimeConfig,
-    obstacle_set: ObstacleSet,
-    dispatch: bool = False,
-    workers: int = 4,
-    max_iterations: int = 200_000,
-    use_cost_grid: bool = False,
-    conflict_avoidance: bool = True,
-    min_separation: float = 10.0,
-    clearance: float = 200.0,
-    clearance_cost: float = 3.0,
-) -> tuple[PlanningResult, ParallelPlanner]:
-    """批量并行规划，返回 (结果, 规划器实例)
-
-    规划器实例保留下来，供后续冲突检测复用其共享占用网格，
-    避免重复构建 3MB 网格。
-
-    conflict_avoidance=True（默认）时，规划结果已经过 §五.4 冲突避免；
-    关闭后 `result.conflicts` 仍会如实报告检测到的冲突，不会把
-    "没检查"包装成"无冲突"。
-    """
-    planner = ParallelPlanner(
-        config=config, obstacle_set=obstacle_set,
-        max_workers=workers,
-        max_iterations=max_iterations,
-        use_cost_grid=use_cost_grid,
-        clearance=clearance,
-        clearance_cost=clearance_cost,
-    )
-    result = planner.plan_batch(tasks, performances, request_id=f"multi-{len(tasks)}",
-                                dispatch=dispatch,
-                                conflict_avoidance=conflict_avoidance,
-                                min_separation=min_separation)
-    return result, planner
+# 编排逻辑已下沉到 SDK（原先定义在本脚本里，造成 uav_planner 反向依赖命令行脚本）
+from uav_planner.pipeline import (
+    run_batch as plan_batch,
+    validate_tasks_with_aircraft,
+)
 
 
 def main():
