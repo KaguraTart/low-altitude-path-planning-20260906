@@ -57,6 +57,14 @@ _ERROR_STATUS: Dict[str, int] = {
 _STARTED_AT = time.time()
 _jobs = JobRegistry(max_workers=2)
 
+# ---------------------------------------------------------------- 安全说明
+
+# 服务**不做认证**。暴露范围请自行控制：
+# - 本地开发：绑 127.0.0.1
+# - 内网联调：绑 0.0.0.0，但确保在可信网段内
+# - 公网：务必在前面加一层边缘鉴权（Cloudflare Access / 反向代理 Basic Auth 等），
+#         并限制可用资源。详见 internal/docs/DEPLOYMENT.md
+
 app = FastAPI(
     title="低空无人机路径规划算法接口",
     version="1.0.0",
@@ -66,13 +74,12 @@ app = FastAPI(
         "- 多机批量规划：`POST /api/v1/plan/batch`\n"
         "- 航线合法性校验：`POST /api/v1/validate`\n"
         "- 大批量异步作业：`POST /api/v1/jobs` + `GET /api/v1/jobs/{job_id}`\n\n"
-        "字段含义与单位见仓库 `docs/API_INTERFACE.md`；"
-        "对接步骤见 `docs/API_QUICKSTART.md`。"
+        "字段含义、单位与调用示例见仓库 `docs/API.md`。"
     ),
 )
 
-# 联调期放开跨域，方便对接方前端直接调。生产部署请收紧为具体来源——
-# 本服务没有任何认证，暴露在公网等于把算力开放给所有人。
+# 联调期放开跨域，方便对接方前端直接调。生产部署请收紧为具体来源。
+# 本服务不做认证与限流，暴露范围请自行控制，见文件顶部的安全说明。
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -80,7 +87,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
 
 # ---------------------------------------------------------------- 异常处理
 

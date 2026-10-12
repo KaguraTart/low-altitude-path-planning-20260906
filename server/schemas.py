@@ -9,7 +9,7 @@ HTTP 请求/响应模型（Pydantic v2）
 ``PlanningError``。两处各写一份校验必然会随版本漂移，最终以哪一处为准
 都说不清；所以这里只保证「能被解析成对象」，其余交给唯一的事实来源。
 
-字段含义与单位见 ``docs/API_INTERFACE.md``。
+字段含义与单位见 ``docs/API.md``。
 """
 
 from __future__ import annotations

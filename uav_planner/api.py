@@ -12,7 +12,7 @@
 ``plan_multi.plan_batch``），而不是另写一套编排逻辑——这样「命令行跑出来的」
 和「接口调用出来的」结果天然一致，不会随版本漂移。
 
-字段级说明见 ``docs/API_INTERFACE.md``。
+字段级说明见 ``docs/API.md``。
 """
 
 from __future__ import annotations
@@ -129,7 +129,7 @@ def plan_single(
     Args:
         start: 起点，``{"x":..,"y":..,"z":..}`` 或 ``[x, y, z]``，单位米
         goal: 终点，格式同 ``start``
-        waypoints: 完整航点序列，每项见 ``docs/API_INTERFACE.md`` §2.6；
+        waypoints: 完整航点序列，每项见 ``docs/API.md`` §2.6；
                    与 ``start``/``goal`` 互斥
         config: 时空网格配置；``None`` 用 :data:`~uav_planner.adapters.DEFAULT_CONFIG`
         static_obstacles: 静态障碍物列表（AABB 包围盒）
@@ -147,7 +147,7 @@ def plan_single(
         task_id: 任务标识，会回填到返回结构里
 
     Returns:
-        见 ``docs/API_INTERFACE.md`` §3.1。关键字段：
+        见 ``docs/API.md`` §3.1。关键字段：
         - ``status``: ``"planned"`` / ``"failed"``
         - ``route``: 航线详情（指标 + 轨迹点 + 规划解释）
         - ``validation``: 验证结果；``validate=False`` 或规划失败时为 ``None``
@@ -274,7 +274,7 @@ def plan_batch(
         validate_tasks: 是否先做飞行器需求兼容性校验并剔除不兼容任务
 
     Returns:
-        见 ``docs/API_INTERFACE.md`` §3.2
+        见 ``docs/API.md`` §3.2
     """
     cfg = parse_config(config)
     obstacle_set = build_obstacle_set(static_obstacles, dynamic_obstacles)
@@ -516,7 +516,7 @@ def validate_route(
         min_separation: 多机最小间隔（仅多航线校验时生效）
 
     Returns:
-        见 ``docs/API_INTERFACE.md`` §3.3
+        见 ``docs/API.md`` §3.4（验证结果）
     """
     if not isinstance(route, dict):
         raise PlanningError(

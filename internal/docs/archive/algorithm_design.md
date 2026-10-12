@@ -5,8 +5,8 @@
 >
 > 失效的只是其中**涉及输入输出格式与调用方式**的部分：项目对外形态已改为
 > 可调用的接口（Python SDK + REST 服务），字段契约以
-> [`docs/API_INTERFACE.md`](../API_INTERFACE.md) 为准，
-> 联调步骤见 [`docs/API_QUICKSTART.md`](../API_QUICKSTART.md)。
+> [`docs/API_INTERFACE.md`](../../../docs/API.md) 为准，
+> 联调步骤见 [`docs/API_QUICKSTART.md`](../../../docs/API.md)。
 >
 > 归档而非废弃的原因：避免同一份文档里「仍有效」与「已失效」的内容混在
 > 一起，让人误判整篇作废。

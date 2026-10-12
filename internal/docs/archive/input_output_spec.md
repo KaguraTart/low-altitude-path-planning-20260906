@@ -1,7 +1,7 @@
 > ⚠️ **本文档已废弃（2026-10-12）**
 >
 > 内容与 [`INPUT_OUTPUT_GUIDE.md`](INPUT_OUTPUT_GUIDE.md) 高度重复，且两者都已
-> 被 [`docs/API_INTERFACE.md`](../API_INTERFACE.md) 取代。保留仅为追溯历史。
+> 被 [`docs/API_INTERFACE.md`](../../../docs/API.md) 取代。保留仅为追溯历史。
 >
 > 新接入请直接看 `API_INTERFACE.md`（字段契约）与
 > `API_QUICKSTART.md`（联调步骤）。

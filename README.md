@@ -12,11 +12,12 @@
 
 | 你是 | 看这里 |
 |------|--------|
-| **对接方**（要调用算法） | [`docs/API_QUICKSTART.md`](docs/API_QUICKSTART.md) → 起服务 → 打开 `/docs` |
-| **要查字段**（参数 / 返回 / 错误码） | [`docs/API_INTERFACE.md`](docs/API_INTERFACE.md) |
-| **要交付**（交什么、不交什么） | [`docs/DELIVERY.md`](docs/DELIVERY.md) |
+| **对接方**（要调用算法） | [`docs/API.md`](docs/API.md) → 起服务 → 打开 `/docs` |
+| **要查字段**（参数 / 返回 / 错误码） | [`docs/API.md`](docs/API.md) |
+| **要部署**（Docker / 公网 / 边缘鉴权） | [`internal/docs/DEPLOYMENT.md`](internal/docs/DEPLOYMENT.md) |
+| **要交付**（交什么、不交什么） | [`internal/docs/DELIVERY.md`](internal/docs/DELIVERY.md) |
 | **要跑命令行**（规划 / 压测 / 可视化） | 本文档 §3.3、§3.4；脚本在 [`tools/`](tools/) |
-| **要了解算法** | 本文档 §5；[`docs/deprecated/algorithm_design.md`](docs/deprecated/algorithm_design.md) |
+| **要了解算法** | 本文档 §5；[`internal/docs/archive/algorithm_design.md`](internal/docs/archive/algorithm_design.md) |
 
 ---
 
@@ -108,9 +109,8 @@ python -c "import numpy, scipy, matplotlib, plotly, pydantic; print('OK', plotly
 
 ### 3.3 运行（**规划与可视化分离**）
 
-> 📘 **接口与字段手册**：[`docs/API_INTERFACE.md`](docs/API_INTERFACE.md)（函数名、参数、返回结构、错误码、内部变量）
-> ｜ 联调对接：[`docs/API_QUICKSTART.md`](docs/API_QUICKSTART.md)
-> ｜ 命令行输出文件字段：[`docs/deprecated/INPUT_OUTPUT_GUIDE.md`](docs/deprecated/INPUT_OUTPUT_GUIDE.md)
+> 📘 **接口说明文档**：[`docs/API.md`](docs/API.md)（接口列表、参数、返回结构、错误码、调用示例、FAQ）
+> ｜ 命令行输出文件字段：[`internal/docs/archive/INPUT_OUTPUT_GUIDE.md`](internal/docs/archive/INPUT_OUTPUT_GUIDE.md)
 
 本项目把**规划代码**和**可视化代码**完全分离：
 
@@ -259,9 +259,8 @@ python serve.py --host 0.0.0.0 --port 8000
 | `POST /api/v1/jobs` + `GET /api/v1/jobs/{id}` | 大批量异步作业 |
 | `GET /docs` | Swagger 交互文档 |
 
-> 完整契约（函数名 / 参数 / 返回结构 / 错误码 / 内部变量）见
-> [`docs/API_INTERFACE.md`](docs/API_INTERFACE.md)；
-> 联调步骤与常见问题见 [`docs/API_QUICKSTART.md`](docs/API_QUICKSTART.md)。
+> 完整接口说明（参数 / 返回结构 / 错误码 / 调用示例 / 常见问题）见
+> [`docs/API.md`](docs/API.md)。
 
 ---
 
@@ -282,11 +281,8 @@ python serve.py --host 0.0.0.0 --port 8000
 │   └── jobs.py                   #   异步作业注册表
 ├── serve.py                      # ★ REST 服务启动脚本（打印局域网地址）
 ├── src/                          # ★ 算法内核（展开见下）
-├── docs/                         # ★ 文档
-│   ├── API_INTERFACE.md          #   接口契约（函数/参数/返回/错误码/内部变量）
-│   ├── API_QUICKSTART.md         #   联调对接说明
-│   ├── DELIVERY.md               #   交付清单（交什么 / 不交什么）
-│   └── deprecated/               #   已归档文档（仅作历史参考）
+├── docs/                         # ★ 对外文档（随交付提供）
+│   └── API.md                    #   接口说明：接口/参数/返回/错误码/示例/FAQ
 ├── input/                        # ★ 示例数据（模拟文件）
 │   ├── config.json               #   时空网格配置 (50×50×10×120)
 │   ├── static_obstacles.json     #   12 个静态障碍物
@@ -359,13 +355,16 @@ tools/*.py  ──┐
 │   └── visualization/
 │       └── viewer.py             # 3D 可视化 + 风险热力图
 │
-├── docs/
-│   ├── API_INTERFACE.md          # ★ 接口契约（函数/参数/返回/错误码/内部变量）
-│   ├── API_QUICKSTART.md         # ★ 联调对接说明（起服务 + 调用示例 + FAQ）
-│   └── deprecated/               # 已废弃/归档文档（仅作历史参考）
-│       ├── algorithm_design.md       # 算法原理（★ 内容仍有效，仅 I/O 部分失效）
-│       ├── input_output_spec.md      # 输入输出格式规范（已废弃）
-│       └── INPUT_OUTPUT_GUIDE.md     # 命令行 I/O 字段说明（已废弃）
+├── docs/                         # ★ 对外文档（随交付提供）
+│   └── API.md                    #   接口说明：接口/参数/返回/错误码/示例/FAQ
+│
+├── internal/                     # 课题材料与内部资料（不交付）
+│   ├── demand.md
+│   ├── *.docx                    # 需求与排期材料
+│   └── docs/
+│       ├── DELIVERY.md           # 交付清单（交什么 / 不交什么）
+│       ├── DEPLOYMENT.md         # 部署运维（Docker / 边缘鉴权）
+│       └── archive/              # 旧文档与算法设计说明
 │
 └── output/                       # 规划输出
     ├── single/                   # plan_single.py 输出
@@ -583,9 +582,8 @@ A* 现在直接接受飞行器性能参数，越界路径在搜索阶段就被�
 **`tools/plan_multi.py` 启动时自动校验**：每个任务的飞行器性能是否满足 `requirements`（载荷 ≤ 容量、续航 ≤ 上限、速度 ≤ 上限、高度 ≤ 上限）。
 
 **详细字段定义**：
-- 📘 **接口权威契约**：[`docs/API_INTERFACE.md`](docs/API_INTERFACE.md)（函数名、参数、返回结构、错误码、内部变量）
-- 🚀 **联调对接步骤**：[`docs/API_QUICKSTART.md`](docs/API_QUICKSTART.md)
-- 📦 命令行写盘文件的字段：[`docs/deprecated/INPUT_OUTPUT_GUIDE.md`](docs/deprecated/INPUT_OUTPUT_GUIDE.md)（已废弃，仅作历史参考）
+- 📘 **接口说明文档**：[`docs/API.md`](docs/API.md)（接口列表、参数、返回结构、错误码、调用示例、FAQ）
+- 📦 命令行写盘文件的字段：[`internal/docs/archive/INPUT_OUTPUT_GUIDE.md`](internal/docs/archive/INPUT_OUTPUT_GUIDE.md)（已废弃，仅作历史参考）
 
 ### 6.2 输出（`output/` 目录）
 
@@ -773,7 +771,7 @@ CI：[.github/workflows/ci.yml](.github/workflows/ci.yml)（push/PR 自动跑单
 
 #### P10. 文档同步问题
 
-`generate_waypoints` 默认 `min_spacing=50.0`，但 [docs/deprecated/algorithm_design.md](docs/deprecated/algorithm_design.md) 和 [README 历史版本](README.md) 都写 80m。建议要么把代码默认改为 80m，要么更新文档。
+`generate_waypoints` 默认 `min_spacing=50.0`，但 [internal/docs/archive/algorithm_design.md](internal/docs/archive/algorithm_design.md) 和 [README 历史版本](README.md) 都写 80m。建议要么把代码默认改为 80m，要么更新文档。
 
 #### P11. 日志与监控缺失
 
@@ -938,12 +936,11 @@ config.json `dt=10` 与 `SpaceTimeConfig` 默认 `dt=5` 不同，加载后网格
 - [x] 多机批量脚本 `tools/plan_multi.py`
 - [x] 压力测试脚本 `tools/run_stress_test.py`
 - [x] 可视化脚本 `tools/visualize.py` / `tools/visualize_stress.py`
-- [x] 算法设计文档 `docs/deprecated/algorithm_design.md`（算法原理仍有效，仅 I/O 部分被接口文档取代）
-- [x] **接口契约** [`docs/API_INTERFACE.md`](docs/API_INTERFACE.md)（函数/参数/返回结构/错误码/内部变量）
-- [x] **联调对接说明** [`docs/API_QUICKSTART.md`](docs/API_QUICKSTART.md)（起服务 + 调用示例 + FAQ）
+- [x] 算法设计文档 `internal/docs/archive/algorithm_design.md`（算法原理仍有效，仅 I/O 部分被接口文档取代）
+- [x] **接口说明文档** [`docs/API.md`](docs/API.md)（接口列表 / 参数 / 返回结构 / 错误码 / 调用示例 / 常见问题）
 - [x] **Python SDK** `uav_planner/`（`plan_single` / `plan_batch` / `plan_from_dir` / `validate_route`）
 - [x] **REST 服务** `server/` + `serve.py`（Swagger 文档、统一错误信封、异步作业）
-- [x] 命令行 I/O 字段说明 `docs/deprecated/INPUT_OUTPUT_GUIDE.md`（已废弃）
+- [x] 命令行 I/O 字段说明 `internal/docs/archive/INPUT_OUTPUT_GUIDE.md`（已废弃）
 - [x] README（本文档）
 - [x] conda 环境 `environment.yml` + `setup_env.sh`
 - [x] 单元测试（见 §7.2 P9）
