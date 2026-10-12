@@ -45,8 +45,9 @@ all = [
 [tool.setuptools.packages.find]
 include = ["uav_planner*", "src*", "server*"]
 
-# 命令行入口脚本以模块形式一并安装：uav_planner 的实现复用了
-# plan_single.plan_single_task / plan_multi.plan_batch，缺了它们
-# SDK 会 import 失败。
+# 安装入口只保留 serve（交付物：REST 服务启动脚本）。
+# 开发工具（tools/ 下的 plan_*.py / run_stress_test.py / visualize*.py）
+# 不属于交付范围，也不作为模块安装——它们直接以脚本方式运行，
+# 且依赖通过 uav_planner.pipeline 由本包提供，依赖方向是 tools → uav_planner。
 [tool.setuptools]
-py-modules = ["plan_single", "plan_multi", "run_stress_test", "visualize", "visualize_stress", "serve"]
+py-modules = ["serve"]

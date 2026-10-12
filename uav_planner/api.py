@@ -199,12 +199,13 @@ def plan_single(
         if cost_grid else None
     )
 
-    # 复用 CLI 的编排路径（verbose=False 保证不污染调用方的 stdout）
-    from plan_single import plan_single_task
+    # 编排逻辑来自本包的 pipeline 模块（原先定义在命令行脚本里，
+    # 依赖方向倒挂；现已下沉到 SDK，接口层可独立交付）
+    from .pipeline import run_single_task
 
     t0 = time.time()
     try:
-        final_route, all_routes, warnings = plan_single_task(
+        final_route, all_routes, warnings = run_single_task(
             task, cfg, obstacle_set, perf,
             optimize=optimize,
             max_iterations=int(max_iterations),
@@ -295,7 +296,7 @@ def plan_batch(
 
     warnings: List[str] = []
     if validate_tasks:
-        from plan_multi import validate_tasks_with_aircraft
+        from .pipeline import validate_tasks_with_aircraft
 
         task_objs, incompatible = validate_tasks_with_aircraft(task_objs, perfs)
         for task_id, problems in incompatible:
@@ -307,10 +308,10 @@ def plan_batch(
                 {"incompatible_count": len(incompatible)},
             )
 
-    from plan_multi import plan_batch as _plan_batch
+    from .pipeline import run_batch as _run_batch
 
     t0 = time.time()
-    result, _planner = _plan_batch(
+    result, _planner = _run_batch(
         task_objs, perfs, cfg, obstacle_set,
         dispatch=dispatch,
         workers=int(max_workers),

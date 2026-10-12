@@ -30,7 +30,7 @@ import os
 import sys
 import time
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from src.models.space import SpaceTimeConfig
 from src.models.obstacles import ObstacleSet
@@ -55,146 +55,8 @@ from src.planners.route_optimizer import RouteOptimizer
 from src.grid.cost import build_clearance_cost_grid
 from src.validator import PathValidator
 
-
-def plan_single_task(
-    task: FlightTask,
-    config: SpaceTimeConfig,
-    obstacle_set: ObstacleSet,
-    perf: AircraftPerformance,
-    optimize: bool = True,
-    max_iterations: int = 2_000_000,
-    cost_grid=None,
-    verbose: bool = True,
-) -> tuple[PlannedRoute, list[PlannedRoute], list[str]]:
-    """
-    对单个任务执行完整规划。
-
-    Args:
-        verbose: 是否打印进度。SDK/HTTP 调用时传 False，避免污染服务日志与被
-                 调用的 stdout；CLI 传 True 保持既有交互输出。
-
-    Returns:
-        (final_route, all_routes, warnings)
-        - final_route: 优化后的最终航线
-        - all_routes: A* + 优化所有中间结果
-        - warnings: 飞行器需求校验警告
-    """
-    warnings = []
-
-    def _log(msg: str = ""):
-        if verbose:
-            print(msg)
-
-    # 1. 任务 + 飞行器兼容性校验
-    valid, msg = task.validate()
-    if not valid:
-        raise ValueError(f"任务定义非法: {msg}")
-    compatible, problems = task.check_aircraft_compatibility(perf)
-    if not compatible:
-        warnings.extend(problems)
-        _log(f"[!] 飞行器 {perf.aircraft_id} 与任务 {task.task_id} 不兼容:")
-        for p in problems:
-            _log(f"    - {p}")
-
-    # 2. A* 规划
-    _log(f"\n[1/2] 时空 A* 规划 ({task.task_id})...")
-    planner = SpaceTimeAStar(
-        config=config,
-        obstacle_set=obstacle_set,
-        max_speed=perf.get_max_speed(),
-        max_iterations=max_iterations,
-        cost_grid=cost_grid,
-        min_altitude=perf.get_min_altitude(),
-        max_altitude=perf.get_max_altitude(),
-        max_climb_rate=perf.get_max_climb_rate(),
-        max_descent_rate=perf.get_max_descent_rate(),
-    )
-
-    all_routes = []
-    t0 = time.time()
-
-    if len(task.waypoints) > 2:
-        # 多航点分段规划
-        traj = []
-        current_time = task.departure_time
-        success = True
-        for seg_idx in range(len(task.waypoints) - 1):
-            wp_s = task.waypoints[seg_idx]
-            wp_e = task.waypoints[seg_idx + 1]
-            seg_route = planner.plan(
-                start=(wp_s.x, wp_s.y, wp_s.z),
-                goal=(wp_e.x, wp_e.y, wp_e.z),
-                start_time=current_time,
-                task_id=task.task_id,
-                aircraft_id=task.aircraft_id,
-                route_id=f"astar-{task.task_id}-seg{seg_idx}",
-            )
-            if seg_route.status != "planned":
-                success = False
-                _log(f"    航段 {seg_idx} 失败: {seg_route.message}")
-                break
-            if traj:
-                traj.extend(seg_route.trajectory[1:])
-            else:
-                traj.extend(seg_route.trajectory)
-            current_time = seg_route.trajectory[-1].t + wp_e.hover_time
-
-        if success:
-            route = PlannedRoute(
-                route_id=f"astar-{task.task_id}",
-                task_id=task.task_id,
-                aircraft_id=task.aircraft_id,
-                trajectory=traj,
-                status="planned",
-                algorithm="SpaceTimeAStar-MultiWaypoint",
-            )
-            route.compute_metrics(perf)
-            all_routes.append(route)
-            _log(f"    成功: {route.total_distance:.1f}m, {route.total_time:.1f}s, "
-                 f"{len(traj)}点")
-        else:
-            failed = PlannedRoute(
-                route_id=f"astar-{task.task_id}",
-                task_id=task.task_id,
-                aircraft_id=task.aircraft_id,
-                status="failed",
-                message="多航点规划失败",
-            )
-            all_routes.append(failed)
-    else:
-        route = planner.plan(
-            start=(task.start.x, task.start.y, task.start.z),
-            goal=(task.end.x, task.end.y, task.end.z),
-            start_time=task.departure_time,
-            task_id=task.task_id,
-            aircraft_id=task.aircraft_id,
-            route_id=f"astar-{task.task_id}",
-        )
-        all_routes.append(route)
-        if route.status == "planned":
-            _log(f"    成功: {route.total_distance:.1f}m, {route.total_time:.1f}s")
-        else:
-            _log(f"    失败: {route.message}")
-
-    final_route = all_routes[-1]
-
-    # 3. 多目标优化
-    if optimize and final_route.status == "planned":
-        _log(f"\n[2/2] 多目标航线优化 ({task.task_id})...")
-        optimizer = RouteOptimizer(config, obstacle_set, perf, cost_grid=cost_grid)
-        optimized = optimizer.optimize(task, route_id=f"opt-{task.task_id}")
-        all_routes.append(optimized)
-        final_route = optimized
-        _log(f"    优化完成: {final_route.total_distance:.1f}m, "
-             f"{final_route.total_time:.1f}s")
-        _log(f"      风险: max={final_route.max_risk:.4f}, "
-             f"avg={final_route.avg_risk:.4f}, "
-             f"最近障碍={final_route.min_obstacle_distance:.1f}m")
-    else:
-        _log(f"\n[2/2] 跳过优化")
-
-    _log(f"\n  规划耗时: {(time.time()-t0)*1000:.1f} ms")
-    return final_route, all_routes, warnings
+# 编排逻辑已下沉到 SDK（原先定义在本脚本里，造成 uav_planner 反向依赖命令行脚本）
+from uav_planner.pipeline import run_single_task as plan_single_task
 
 
 def main():
