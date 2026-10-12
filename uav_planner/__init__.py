@@ -13,7 +13,7 @@
     print(result["status"], result["route"]["metrics"])
 
 所有入参与返回值都是纯 JSON 结构，可直接 ``json.dumps``。
-字段级契约见 ``docs/API_INTERFACE.md``；起 HTTP 服务见 ``serve.py``。
+字段级契约见 ``docs/API.md``；起 HTTP 服务见 ``serve.py``。
 """
 
 from __future__ import annotations

@@ -2,8 +2,8 @@
 >
 > 项目的对外形态已从「跑命令行脚本 + 读输出目录」改为**可调用的接口**
 > （Python SDK + REST 服务）。输入输出的权威契约见
-> [`docs/API_INTERFACE.md`](../API_INTERFACE.md)，联调步骤见
-> [`docs/API_QUICKSTART.md`](../API_QUICKSTART.md)。
+> [`docs/API_INTERFACE.md`](../../../docs/API.md)，联调步骤见
+> [`docs/API_QUICKSTART.md`](../../../docs/API.md)。
 >
 > 本文档仅作历史参考，不再维护。其中「输出文件」部分仍大致描述了
 > 命令行脚本写盘的字段，但接口返回结构以 `API_INTERFACE.md` 为准。

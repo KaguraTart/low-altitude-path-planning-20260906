@@ -49,6 +49,8 @@ def lan_ips() -> list:
     return sorted(ip for ip in ips if not ip.startswith("127."))
 
 
+
+
 def main():
     parser = argparse.ArgumentParser(description="启动路径规划 REST 服务")
     parser.add_argument("--host", default="0.0.0.0",
@@ -84,15 +86,16 @@ def main():
         ips = lan_ips()
         if ips:
             print()
-            print("  局域网访问（把下面地址发给对接方）:")
+            print("  局域网访问:")
             for ip in ips:
                 print(f"    http://{ip}:{args.port}/docs")
         else:
             print()
             print("  [!] 未探测到局域网地址，请用 `ipconfig getifaddr en0` 自行确认")
+
         print()
-        print("  注意：本服务无任何认证。仅限内网联调使用，")
-        print("       切勿直接暴露到公网；确认系统防火墙已放行该端口。")
+        print("  注意：本服务不做认证。请确保处于可信网络，")
+        print("       若需公网访问，务必在前面加一层边缘鉴权，详见 internal/docs/DEPLOYMENT.md")
 
     print("=" * 62)
     print()
