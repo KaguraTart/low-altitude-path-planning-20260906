@@ -23,7 +23,7 @@ jobs:
       - name: 安装依赖
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt pytest
+          pip install -e ".[all]" -c requirements-runtime.lock
 
       - name: 导入冒烟测试
         run: python -c "import numpy, scipy, matplotlib, plotly, fastapi, uvicorn; print('imports OK')"
@@ -65,6 +65,7 @@ jobs:
           assert r['route']['metrics']['total_distance_m'] > 0
           print('REST smoke OK:', r['route']['metrics'])
           "
+          python tools/smoke_v2.py --base-url http://127.0.0.1:8000
           kill $SERVER_PID
 
   stress:
@@ -81,7 +82,7 @@ jobs:
           python-version: "3.11"
           cache: pip
 
-      - run: pip install -r requirements.txt
+      - run: pip install -e ".[all]" -c requirements-runtime.lock
 
       - name: 万级规模压测
         run: |
