@@ -1,0 +1,75 @@
+"""Exercise deployed v1/v2 contracts, including real asynchronous job polling."""
+from __future__ import annotations
+
+import argparse
+import json
+import time
+import urllib.error
+import urllib.request
+from typing import Any
+
+
+def request(base_url: str, path: str, body: Any = None) -> Any:
+    data=None if body is None else json.dumps(body,allow_nan=False).encode()
+    req=urllib.request.Request(base_url.rstrip("/")+path,data,{"Content-Type":"application/json"})
+    with urllib.request.urlopen(req,timeout=30) as response:
+        return json.load(response)
+
+
+def smoke(base_url: str) -> dict:
+    results={}
+    assert request(base_url,"/api/v1/health")["status"]=="ok"
+    health=request(base_url,"/api/v2/health")
+    assert health["status"]=="ok" and health["native_available"]
+    version=request(base_url,"/api/v2/version")
+    spec=request(base_url,"/openapi.json")
+    assert spec["paths"]["/api/v2/plan/single"]["post"]["responses"]["200"]["content"]["application/json"]["schema"]["$ref"].endswith("RouteResult")
+    old=request(base_url,"/api/v1/examples/single")
+    old_result=request(base_url,"/api/v1/plan/single",old)
+    assert old_result["status"]=="planned",old_result
+    sample=request(base_url,"/api/v2/examples/single")
+    result=request(base_url,"/api/v2/plan/single",sample)
+    assert result["status"]=="planned" and result["validation"]["valid"],result
+    validation={**sample,"trajectory_wkt":result["trajectory_wkt"],"vertex_times_s":result["vertex_times_s"],
+                "motion_segments":result["motion_segments"]}
+    validation.pop("time_budget_s",None)
+    check=request(base_url,"/api/v2/validate",validation)
+    assert check["valid"],check
+    scene=request(base_url,"/api/v2/scenes",sample["scene"])
+    assert request(base_url,"/api/v2/scenes/"+scene["scene_id"])["scene_version"]==scene["scene_version"]
+    batch=request(base_url,"/api/v2/examples/batch")
+    completed=request(base_url,"/api/v2/plan/batch",batch)
+    assert completed["success_count"]==len(batch["tasks"]) and not completed["conflicts"],completed
+    submitted=request(base_url,"/api/v2/jobs",batch)
+    deadline=time.monotonic()+30
+    while time.monotonic()<deadline:
+        status=request(base_url,submitted["poll_url"])
+        if status["status"] in {"succeeded","failed"}:
+            break
+        time.sleep(.1)
+    else:
+        raise AssertionError("Asynchronous job did not finish within 30s")
+    assert status["status"]=="succeeded" and status["result"]["success_count"]==len(batch["tasks"]),status
+    capabilities=request(base_url,"/api/v2/capabilities")
+    assert len(capabilities["rule_types"])==20
+    bad={**sample,"route_mode_typo":"free"}
+    try:
+        request(base_url,"/api/v2/plan/single",bad)
+    except urllib.error.HTTPError as exc:
+        assert exc.code==400
+        error=json.load(exc)
+        assert error["error"]["code"]=="INVALID_INPUT"
+    else:
+        raise AssertionError("Unknown constraint field was silently accepted")
+    results.update(status="passed",base_url=base_url,api_version=version["api_version"],
+                   native_available=True,openapi_paths=len(spec["paths"]),scene_id=scene["scene_id"],
+                   batch_success_count=completed["success_count"],async_job_id=submitted["job_id"],
+                   checked_at=time.strftime("%Y-%m-%dT%H:%M:%SZ",time.gmtime()))
+    return results
+
+
+if __name__=="__main__":
+    parser=argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--base-url",default="http://127.0.0.1:18001")
+    args=parser.parse_args()
+    print(json.dumps(smoke(args.base_url),ensure_ascii=False,indent=2))

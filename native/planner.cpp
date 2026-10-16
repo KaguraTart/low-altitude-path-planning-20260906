@@ -453,6 +453,7 @@ ValidationResult validate_motion(const std::vector<MotionPrimitive>& ps,const Li
             if(p.kind=="yaw") {
                 if(std::abs(p.sweep)<=EPS)out.violations.push_back({id,"MISSING_YAW_SWEEP",0,0});
                 check_max(out,id,"YAW_RATE",std::abs(p.sweep)/p.duration,yaw);
+                check_max(out,id,"TURN_ANGLE",std::abs(p.sweep)*180/3.141592653589793,limit_value(limits,"max_turn_angle_deg",180));
             }
             if(vmin>0)out.violations.push_back({id,"MIN_SPEED_HOVER",0,vmin});
         } else {
@@ -481,7 +482,9 @@ ValidationResult validate_motion(const std::vector<MotionPrimitive>& ps,const Li
             if(p.peak+1e-5<vmin)out.violations.push_back({id,"MIN_SPEED",p.peak,vmin});
             if(i&&p.v0+1e-5<vmin)out.violations.push_back({id,"MIN_TRANSITION_SPEED",p.v0,vmin});
             double normal=p.kind=="arc"?vh*vh/p.radius:0;
-            double acceleration=std::hypot(p.ta>EPS?p.accel:0,normal),deceleration=std::hypot(p.td>EPS?p.decel:0,normal);
+            // A positive phase still carries its full acceleration even if it
+            // is shorter than the geometric comparison tolerance.
+            double acceleration=std::hypot(p.ta>0?p.accel:0,normal),deceleration=std::hypot(p.td>0?p.decel:0,normal);
             check_max(out,id,"ACCELERATION",acceleration,amax);check_max(out,id,"DECELERATION",deceleration,dmax);
             double rate=p.kind=="arc"?vh/p.radius:0;check_max(out,id,"YAW_RATE",rate,yaw);
             out.maxima["horizontal_speed_mps"]=std::max(out.maxima["horizontal_speed_mps"],vh);
@@ -495,8 +498,18 @@ ValidationResult validate_motion(const std::vector<MotionPrimitive>& ps,const Li
         }
     }
     int previous=-1;
+    double continuous_arc_sweep=0;
     for(size_t i=0;i<ps.size();++i) {
         if(ps[i].length<=EPS)continue;
+        if(ps[i].kind=="arc") {
+            // Splitting one continuous turn into several analytic records
+            // must not lower the certified physical turning angle.
+            bool continuation=previous>=0&&ps[previous].kind=="arc"&&
+                ps[previous].sweep*ps[i].sweep>0&&
+                distance(tangent(ps[previous],true),tangent(ps[i],false))<=1e-5;
+            continuous_arc_sweep=continuation?continuous_arc_sweep+ps[i].sweep:ps[i].sweep;
+            check_max(out,static_cast<int>(i),"TURN_ANGLE",std::abs(continuous_arc_sweep)*180/3.141592653589793,limit_value(limits,"max_turn_angle_deg",180));
+        } else continuous_arc_sweep=0;
         if(previous>=0) {
             auto a=tangent(ps[previous],true),b=tangent(ps[i],false);
             double ah=std::hypot(a[0],a[1]),bh=std::hypot(b[0],b[1]);
@@ -509,6 +522,7 @@ ValidationResult validate_motion(const std::vector<MotionPrimitive>& ps,const Li
                 out.violations.push_back({static_cast<int>(i),"TURN_RADIUS_BYPASS",tangent_difference,0});
             if(has_yaw) {
                 check_max(out,static_cast<int>(i),"YAW_HEADING_MISMATCH",std::abs(std::remainder(sweeps-horizontal_angle,2*3.141592653589793)),0);
+                check_max(out,static_cast<int>(i),"TURN_ANGLE",std::abs(sweeps)*180/3.141592653589793,limit_value(limits,"max_turn_angle_deg",180));
                 if(rmin>0&&std::abs(sweeps)>EPS)out.violations.push_back({static_cast<int>(i),"TURN_RADIUS_HOVER_BYPASS",0,rmin});
             } else if(rmin<=0&&std::abs(horizontal_angle)>1e-5&&std::isfinite(yaw))
                 out.violations.push_back({static_cast<int>(i),"MISSING_YAW_TRANSITION",std::abs(horizontal_angle),0});

@@ -17,7 +17,7 @@ from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 
-from ..models.space import SpaceTimeConfig
+from ..models.space import SpaceTimeConfig, segment_closest_approach
 from ..models.task import PlannedRoute
 
 Cell = Tuple[int, int, int, int]
@@ -54,6 +54,9 @@ class SpatioTemporalOccupancyTable:
         self._mask_valid = False
         # route_id → mark_route 时用的半径，排除自身占用时要按同一半径还原
         self._mark_radius: Dict[str, float] = {}
+        self._route_cells: Dict[str, set] = {}
+        self._segments: Dict[str, tuple] = {}
+        self._segment_index: Dict[Cell, set] = {}
 
     # ------------------------------------------------------------------
     # 占用登记
@@ -93,28 +96,46 @@ class SpatioTemporalOccupancyTable:
                 万级航线请保持 0，安全间隔改由 to_dense_mask 的
                 dilation_cells 控制（按轴计算，只需 floor 层）。
         """
-        for p in route.trajectory:
-            for cell in self._world_to_grid_with_radius(p.x, p.y, p.z, p.t, safety_radius):
-                self._add_cell(cell, route.aircraft_id, route.route_id)
+        if route.route_id in self._route_cells:
+            self.unmark_route(route)
+        points = [(p.x, p.y, p.z, p.t) for p in route.trajectory]
+        segments = list(zip(points, points[1:])) or [(p, p) for p in points]
+        cells = set()
+        self._segments[route.route_id] = (route.aircraft_id, segments)
+        for index, (start, end) in enumerate(segments):
+            for cell in self.config.segment_cells(start, end):
+                self._segment_index.setdefault(cell, set()).add((route.route_id, index))
+            cells.update(self.config.segment_cells(start, end, radius=safety_radius))
+        for cell in cells:
+            self._add_cell(cell, route.aircraft_id, route.route_id)
+        self._route_cells[route.route_id] = cells
         self._mark_radius[route.route_id] = safety_radius
 
     def unmark_route(self, route: PlannedRoute, safety_radius: float = 0.0):
-        """从占用表中移除航线的占用格"""
-        radius = self._mark_radius.pop(route.route_id, safety_radius)
-        for p in route.trajectory:
-            for cell in self._world_to_grid_with_radius(p.x, p.y, p.z, p.t, radius):
-                by_aircraft = self._occupancy.get(cell)
-                if by_aircraft is None:
-                    continue
-                routes_of_aircraft = by_aircraft.get(route.aircraft_id)
-                if routes_of_aircraft is not None:
-                    routes_of_aircraft.discard(route.route_id)
-                    if not routes_of_aircraft:
-                        del by_aircraft[route.aircraft_id]
-                if not by_aircraft:
-                    del self._occupancy[cell]
-                    if self._mask_valid and self._base_mask is not None:
-                        self._base_mask[cell] = False
+        """Remove the exact registered snapshot, including swept segment cells."""
+        self._mark_radius.pop(route.route_id, safety_radius)
+        registered = self._segments.pop(route.route_id, None)
+        aircraft_id = registered[0] if registered else route.aircraft_id
+        for cell in self._route_cells.pop(route.route_id, set()):
+            by_aircraft = self._occupancy.get(cell)
+            if not by_aircraft:
+                continue
+            route_ids = by_aircraft.get(aircraft_id, set())
+            route_ids.discard(route.route_id)
+            if not route_ids:
+                by_aircraft.pop(aircraft_id, None)
+            if not by_aircraft:
+                del self._occupancy[cell]
+                if self._mask_valid and self._base_mask is not None:
+                    self._base_mask[cell] = False
+        if registered:
+            for index, (start, end) in enumerate(registered[1]):
+                for cell in self.config.segment_cells(start, end):
+                    entries = self._segment_index.get(cell)
+                    if entries is not None:
+                        entries.discard((route.route_id, index))
+                        if not entries:
+                            del self._segment_index[cell]
 
     # ------------------------------------------------------------------
     # 查询
@@ -140,81 +161,44 @@ class SpatioTemporalOccupancyTable:
         self, route: PlannedRoute, min_separation: float = 10.0,
         time_window: float = 5.0,
     ) -> List[dict]:
-        """找出新航线与已登记航线之间的所有冲突
+        """Find continuous conflicts, retaining the configured time tolerance.
 
-        复杂度 O(|trajectory| × 时间窗步数 × (2r+1)³)，其中
-        r = floor(min_separation / 最小格长) + 1。
-        旧实现对每个轨迹点遍历**全表**（O(|occupancy|)），在万级航线下
-        是 O(n²·m²)；这里按"中心距 < min_separation 的格必落在 r 邻域内"
-        只查局部，与全表扫描结果一致。
-
-        Returns:
-            [{"route_a", "route_b", "aircraft_b", "time", "position_a",
-              "position_b", "distance"}, ...]
+        Swept voxel indexing supplies a conservative broad phase. The narrow
+        phase uses actual coordinates/timestamps rather than cell centers, and
+        minimizes separation over complete segment pairs (including edge swaps).
         """
         conflicts = []
-        cfg = self.config
-        nt, dt = cfg.nt, cfg.dt
-        min_cell = min(cfg.dx, cfg.dy, cfg.dz)
-        # 空间邻域半径（+1 余量：轨迹点经 to_grid 取整，可能偏离格心半格）
-        r = int(min_separation // min_cell) + 1 if min_separation > 0 else 0
-        rng = range(-r, r + 1)
-
-        for pa in route.trajectory:
-            ix, iy, iz = cfg.to_grid(pa.x, pa.y, pa.z)
-            if dt > 0:
-                # 时间窗覆盖到的步。约定（见 SpaceTimeConfig）：
-                #   time_to_step(t) = int((t - t_min) / dt)   ← 向下取整
-                #   step_to_time(it) = t_min + (it + 0.5) * dt ← 步**中心**
-                # 由 |pa.t - step_to_time(it)| <= time_window 反解出 it 的闭区间，
-                # 再向外扩到整数（floor/ceil），保证这里拿到的是**超集**，
-                # 最后由下面的显式复核精确裁剪。若直接用 ceil/floor
-                # （漏掉 ±0.5dt），会漏掉紧邻时间窗边界的步（假阴性），
-                # 曾经的写法还会反过来把窗外一步纳入（假阳性）。
-                half = 0.5 * dt
-                it_lo = int(np.floor((pa.t - time_window - cfg.t_min - half) / dt))
-                it_hi = int(np.ceil((pa.t + time_window - cfg.t_min - half) / dt))
-            else:
-                it_lo = it_hi = cfg.time_to_step(pa.t)
-            for it_a in range(max(0, it_lo), min(nt - 1, it_hi) + 1):
-                # 显式复核：与 PathValidator 朴素路径的 abs(pa.t - pb.t) > tw 保持一致
-                if abs(pa.t - cfg.step_to_time(it_a)) > time_window:
+        if min_separation <= 0 or time_window < 0:
+            return conflicts
+        points = [(p.x, p.y, p.z, p.t) for p in route.trajectory]
+        segments = list(zip(points, points[1:])) or [(p, p) for p in points]
+        seen = set()
+        for start, end in segments:
+            candidates = set()
+            for cell in self.config.segment_cells(start, end, radius=min_separation, time_padding=time_window):
+                candidates.update(self._segment_index.get(cell, ()))
+            for other_route_id, index in sorted(candidates):
+                aircraft_id, other_segments = self._segments[other_route_id]
+                if aircraft_id == route.aircraft_id:
                     continue
-                for ddx in rng:
-                    jx = ix + ddx
-                    if not (0 <= jx < cfg.nx):
-                        continue
-                    for ddy in rng:
-                        jy = iy + ddy
-                        if not (0 <= jy < cfg.ny):
-                            continue
-                        for ddz in rng:
-                            jz = iz + ddz
-                            if not (0 <= jz < cfg.nz):
-                                continue
-                            by_aircraft = self._occupancy.get((jx, jy, jz, it_a))
-                            if not by_aircraft:
-                                continue
-                            wx, wy, wz = cfg.to_world(jx, jy, jz)
-                            dx = pa.x - wx
-                            dy = pa.y - wy
-                            dz = pa.z - wz
-                            d = float(np.sqrt(dx * dx + dy * dy + dz * dz))
-                            if d >= min_separation:
-                                continue
-                            for aircraft_id, route_ids in by_aircraft.items():
-                                if aircraft_id == route.aircraft_id:
-                                    continue  # 自身不算冲突
-                                for other_route_id in route_ids:
-                                    conflicts.append({
-                                        "route_a": route.route_id,
-                                        "route_b": other_route_id,
-                                        "aircraft_b": aircraft_id,
-                                        "time": round(pa.t, 2),
-                                        "position_a": (round(pa.x, 1), round(pa.y, 1), round(pa.z, 1)),
-                                        "position_b": (round(wx, 1), round(wy, 1), round(wz, 1)),
-                                        "distance": round(d, 2),
-                                    })
+                other_start, other_end = other_segments[index]
+                closest = segment_closest_approach(start, end, other_start, other_end, time_window)
+                if closest is None or closest[0] >= min_separation:
+                    continue
+                distance, timestamp, position_a, position_b = closest
+                key = (other_route_id, round(timestamp, 8))
+                if key in seen:
+                    continue
+                seen.add(key)
+                conflicts.append({
+                    "route_a": route.route_id,
+                    "route_b": other_route_id,
+                    "aircraft_b": aircraft_id,
+                    "time": round(timestamp, 2),
+                    "position_a": tuple(round(v, 1) for v in position_a),
+                    "position_b": tuple(round(v, 1) for v in position_b),
+                    "distance": round(distance, 2),
+                })
         return conflicts
 
     def clearance_cells(self, min_separation: Optional[float] = None) -> Tuple[int, int, int]:
@@ -266,17 +250,9 @@ class SpatioTemporalOccupancyTable:
 
         if exclude_route is not None:
             rid = exclude_route.route_id
-            radius = self._mark_radius.get(rid, 0.0)
-            for p in exclude_route.trajectory:
-                for cell in self._world_to_grid_with_radius(p.x, p.y, p.z, p.t, radius):
-                    by_aircraft = self._occupancy.get(cell)
-                    others = False
-                    if by_aircraft:
-                        for _aircraft_id, route_ids in by_aircraft.items():
-                            if route_ids - {rid}:
-                                others = True
-                                break
-                    mask[cell] = others
+            for cell in self._route_cells.get(rid, set()):
+                by_aircraft = self._occupancy.get(cell, {})
+                mask[cell] = any(route_ids - {rid} for route_ids in by_aircraft.values())
 
         if dilate:
             rx, ry, rz = self.clearance_cells()
@@ -299,6 +275,9 @@ class SpatioTemporalOccupancyTable:
         """清空占用表"""
         self._occupancy.clear()
         self._mark_radius.clear()
+        self._route_cells.clear()
+        self._segments.clear()
+        self._segment_index.clear()
         self._base_mask = None
         self._mask_valid = False
 

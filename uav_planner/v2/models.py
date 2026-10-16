@@ -68,13 +68,13 @@ def validated_wkt(value: str, *, kind: str | None = None, require_z: bool = Fals
     coords = get_coordinates(geometry, include_z=geometry.has_z)
     if not all(math.isfinite(float(v)) for row in coords for v in row):
         raise ValueError("WKT coordinates must be finite")
-    # GEOS regards a purely vertical line as zero-length in its planar model.
-    # It is a valid flight leg as long as its three-dimensional vertices differ.
+    # GEOS regards vertical and stationary trajectories as zero-length in XY.
+    # Their Z coordinates and separate timestamps express flight or waiting.
     def vertical(component: BaseGeometry) -> bool:
         if component.geom_type != "LineString" or not component.has_z:
             return False
         vertices = list(component.coords)
-        return len({(x, y) for x, y, _ in vertices}) == 1 and len({z for _, _, z in vertices}) > 1
+        return len({(x, y) for x, y, _ in vertices}) == 1
 
     vertical_line = vertical(geometry) or (
         geometry.geom_type == "MultiLineString"
@@ -447,7 +447,7 @@ class Scene(StrictModel):
     coordinates: CoordinateSpec
     bounds: Bounds3D
     resolution: tuple[Positive, Positive, Positive] = (25, 25, 10)
-    horizon_s: Positive = 3600
+    horizon_s: Positive = Field(default=3600,le=86400)
     time_origin: Timestamp
     airways: list[Airway] = Field(default_factory=list)
     connectors: list[Connector] = Field(default_factory=list)
@@ -519,7 +519,7 @@ class Task(StrictModel):
     departure_time: Timestamp
     alt_reference: AltitudeReference
     route_mode: RouteMode = "strict"
-    waypoints: list[Waypoint] = Field(default_factory=list)
+    waypoints: list[Waypoint] = Field(default_factory=list,max_length=256)
     earliest_arrival: Timestamp | None = None
     latest_arrival: Timestamp | None = None
     profile_id: StrictStr = "dji_mini_4_pro"

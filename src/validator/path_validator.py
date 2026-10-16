@@ -28,7 +28,7 @@ import numpy as np
 from ..models.aircraft import AircraftPerformance
 from ..models.obstacles import ObstacleSet
 from ..models.task import PlannedRoute, TrajectoryPoint
-from ..models.space import SpaceTimeGrid
+from ..models.space import SpaceTimeGrid, segment_box_interval, segment_closest_approach
 
 
 class Severity(Enum):
@@ -169,6 +169,9 @@ class PathValidator:
 
         # 1. 连续性
         self._check_continuity(traj, result)
+        if result.has_errors():
+            result.is_valid = False
+            return result
 
         # 2. 障碍避让
         if self.obstacle_set is not None:
@@ -228,10 +231,31 @@ class PathValidator:
         """
         planned = [r for r in routes if r.status == "planned"]
         tw = time_window if time_window is not None else self.time_window
-
+        malformed = ValidationResult(is_valid=True)
+        checkable = []
+        for route in planned:
+            points = route.trajectory
+            if (not points or any(not np.isfinite((p.x, p.y, p.z, p.t)).all() for p in points)
+                    or any(not self._within_config(p) for p in points)
+                    or any(b.t <= a.t for a, b in zip(points, points[1:]))):
+                malformed.add(ValidationIssue(severity=Severity.ERROR, code="INVALID_TRAJECTORY",
+                    message=f"航线 {route.route_id} 轨迹为空、越界、包含非有限值或时间不严格递增"))
+                malformed.is_valid = False
+            else:
+                checkable.append(route)
+        if not np.isfinite((tw, self.min_separation)).all() or tw < 0 or self.min_separation < 0:
+            malformed.add(ValidationIssue(severity=Severity.ERROR, code="INVALID_SEPARATION_CONFIG",
+                                          message="时间窗和安全间隔必须为有限非负值"))
+            malformed.is_valid = False
+            self._finalize_multi(malformed, planned)
+            return malformed
         if self.config is None:
-            return self._validate_multi_naive(planned, tw)
-        return self._validate_multi_occupancy(planned, tw)
+            result = self._validate_multi_naive(checkable, tw)
+        else:
+            result = self._validate_multi_occupancy(checkable, tw)
+        result.merge(malformed)
+        self._finalize_multi(result, planned)
+        return result
 
     def _validate_multi_occupancy(
         self, planned: List[PlannedRoute], tw: float
@@ -275,19 +299,16 @@ class PathValidator:
                 min_dist = float("inf")
                 min_time = 0.0
                 min_pos = None
-                for pa in ri.trajectory:
-                    for pb in rj.trajectory:
-                        if abs(pa.t - pb.t) > tw:
-                            continue
-                        d = np.sqrt(
-                            (pa.x - pb.x) ** 2
-                            + (pa.y - pb.y) ** 2
-                            + (pa.z - pb.z) ** 2
-                        )
-                        if d < min_dist:
-                            min_dist = d
-                            min_time = pa.t
-                            min_pos = ((pa.x, pa.y, pa.z), (pb.x, pb.y, pb.z))
+                ap = [(p.x, p.y, p.z, p.t) for p in ri.trajectory]
+                bp = [(p.x, p.y, p.z, p.t) for p in rj.trajectory]
+                a_segments = list(zip(ap, ap[1:])) or [(p, p) for p in ap]
+                b_segments = list(zip(bp, bp[1:])) or [(p, p) for p in bp]
+                for a0, a1 in a_segments:
+                    for b0, b1 in b_segments:
+                        closest = segment_closest_approach(a0, a1, b0, b1, tw)
+                        if closest is not None and closest[0] < min_dist:
+                            min_dist, min_time, pa, pb = closest
+                            min_pos = (pa, pb)
 
                 if min_dist < self.min_separation:
                     self._add_separation_issue(
@@ -302,8 +323,8 @@ class PathValidator:
         self, result, route_a: str, route_b: str,
         dist: float, time: float, position,
     ):
-        severity = Severity.ERROR if dist < self.min_separation / 2 else Severity.WARNING
-        code = "MULTI_UAV_COLLISION" if severity == Severity.ERROR else "MULTI_UAV_PROXIMITY"
+        severity = Severity.ERROR
+        code = "MULTI_UAV_COLLISION" if dist < self.min_separation / 2 else "MULTI_UAV_PROXIMITY"
         result.add(ValidationIssue(
             severity=severity, code=code,
             message=(
@@ -330,10 +351,26 @@ class PathValidator:
     # 单项检查实现
     # ============================================================
 
+    def _within_config(self, point: TrajectoryPoint) -> bool:
+        cfg = self.config
+        return cfg is None or (cfg.x_min <= point.x <= cfg.x_max
+            and cfg.y_min <= point.y <= cfg.y_max and cfg.z_min <= point.z <= cfg.z_max
+            and cfg.t_min <= point.t < cfg.t_max)
+
     def _check_continuity(self, traj: List[TrajectoryPoint], result: ValidationResult):
         """连续性：相邻轨迹点不应有大跳跃"""
+        for i, point in enumerate(traj):
+            if not np.isfinite((point.x, point.y, point.z, point.t)).all():
+                result.add(ValidationIssue(severity=Severity.ERROR, code="NON_FINITE_TRAJECTORY",
+                                           message=f"轨迹点 {i} 包含非有限坐标或时间", trajectory_index=i))
+            elif not self._within_config(point):
+                result.add(ValidationIssue(severity=Severity.ERROR, code="OUTSIDE_SPACETIME_BOUNDS",
+                                           message=f"轨迹点 {i} 超出时空边界", trajectory_index=i, time=point.t))
         for i in range(1, len(traj)):
             p0, p1 = traj[i - 1], traj[i]
+            if p1.t <= p0.t:
+                result.add(ValidationIssue(severity=Severity.ERROR, code="NON_MONOTONIC_TIME",
+                                           message=f"轨迹段 {i} 时间必须严格递增", trajectory_index=i, time=p1.t))
             seg_dist = np.sqrt(
                 (p1.x - p0.x) ** 2 + (p1.y - p0.y) ** 2 + (p1.z - p0.z) ** 2
             )
@@ -352,6 +389,19 @@ class PathValidator:
         safety_margin: float,
     ):
         """静态障碍避让"""
+        for i, (start, end) in enumerate(zip(traj, traj[1:]), start=1):
+            for obs in self.obstacle_set.static_obstacles:
+                interval = segment_box_interval((start.x, start.y, start.z), (end.x, end.y, end.z),
+                    (obs.x - obs.width, obs.y - obs.depth, obs.z),
+                    (obs.x + obs.width, obs.y + obs.depth, obs.z + obs.height))
+                if interval is not None:
+                    fraction = interval[0]
+                    result.add(ValidationIssue(severity=Severity.ERROR, code="STATIC_OBSTACLE_COLLISION",
+                        message=f"轨迹段 {i} 与静态障碍 {obs.name} 相交", trajectory_index=i,
+                        time=start.t + fraction * (end.t - start.t),
+                        position=(start.x + fraction * (end.x - start.x),
+                                  start.y + fraction * (end.y - start.y),
+                                  start.z + fraction * (end.z - start.z))))
         for i, p in enumerate(traj):
             for obs in self.obstacle_set.static_obstacles:
                 # 用包围盒距离（AABB）
@@ -381,6 +431,17 @@ class PathValidator:
         safety_margin: float,
     ):
         """动态障碍避让：用线性插值取该时刻障碍物位置"""
+        for i, (start, end) in enumerate(zip(traj, traj[1:]), start=1):
+            a0, a1 = (start.x, start.y, start.z, start.t), (end.x, end.y, end.z, end.t)
+            for obs in self.obstacle_set.dynamic_obstacles:
+                points = obs.trajectory
+                for b0, b1 in list(zip(points, points[1:])) or [(p, p) for p in points]:
+                    closest = segment_closest_approach(a0, a1, b0, b1)
+                    if closest is not None and closest[0] <= obs.safety_radius:
+                        distance, timestamp, position, _ = closest
+                        result.add(ValidationIssue(severity=Severity.ERROR, code="DYNAMIC_OBSTACLE_COLLISION",
+                            message=f"轨迹段 {i} 与动态障碍 {obs.name} 冲突（距离 {distance:.2f}m）",
+                            trajectory_index=i, time=timestamp, position=position))
         for i, p in enumerate(traj):
             for obs in self.obstacle_set.dynamic_obstacles:
                 pos = obs.position_at(p.t)
@@ -438,17 +499,11 @@ class PathValidator:
         max_h_speed = performance.get_max_speed()
         max_climb = performance.get_max_climb_rate()
         max_desc = performance.get_max_descent_rate()
-        max_turn_dps = performance.get_max_speed()  # placeholder, replaced by dedicated call below
         max_turn_dps = performance.performance.max_turn_rate_dps
         max_acc = performance.performance.max_acceleration_mps2
         max_dec = performance.performance.max_deceleration_mps2
-        # 最小转弯半径（如果 performance 暴露该字段，否则由 max_turn_rate 推算）
-        # 假设 v=max_speed，则 r_min = v / (turn_rate_rad) = max_speed / (max_turn_rate * π/180)
-        import math
-        if max_h_speed > 0 and max_turn_dps > 0:
-            min_turn_radius = max_h_speed / (max_turn_dps * math.pi / 180.0)
-        else:
-            min_turn_radius = 0.0
+        min_turn_radius = performance.performance.min_turn_radius_m
+        previous_horizontal_direction = None
 
         for i in range(1, len(traj)):
             p0, p1 = traj[i - 1], traj[i]
@@ -469,7 +524,7 @@ class PathValidator:
             v_full = np.sqrt(vx * vx + vy * vy + vz * vz)
 
             # 水平速度
-            if v_h > max_h_speed + 0.1:
+            if v_h > max_h_speed + 1e-6:
                 result.add(ValidationIssue(
                     severity=Severity.ERROR, code="SPEED_EXCEEDED",
                     message=f"轨迹段 {i} 水平速度 {v_h:.2f}m/s 超过最大 {max_h_speed}m/s",
@@ -477,13 +532,13 @@ class PathValidator:
                 ))
 
             # 爬升率 / 下降率
-            if vz > max_climb + 0.01:
+            if vz > max_climb + 1e-6:
                 result.add(ValidationIssue(
                     severity=Severity.ERROR, code="CLIMB_RATE_EXCEEDED",
                     message=f"轨迹段 {i} 爬升率 {vz:.2f}m/s 超过最大 {max_climb}m/s",
                     trajectory_index=i, time=p1.t, position=(p1.x, p1.y, p1.z),
                 ))
-            elif vz < -max_desc - 0.01:
+            elif vz < -max_desc - 1e-6:
                 result.add(ValidationIssue(
                     severity=Severity.ERROR, code="DESCENT_RATE_EXCEEDED",
                     message=f"轨迹段 {i} 下降率 {-vz:.2f}m/s 超过最大 {max_desc}m/s",
@@ -502,12 +557,30 @@ class PathValidator:
                     ay = vy - vy_prev
                     az = vz - vz_prev
                     a = np.sqrt(ax * ax + ay * ay + az * az) / dt
-                    if a > max_acc + 0.1:
+                    if a > max_acc + 1e-6:
                         result.add(ValidationIssue(
                             severity=Severity.ERROR, code="ACCELERATION_EXCEEDED",
                             message=f"轨迹段 {i} 加速度 {a:.2f}m/s² 超过最大 {max_acc}m/s²",
                             trajectory_index=i, time=p1.t, position=(p1.x, p1.y, p1.z),
                         ))
+                    previous_speed = float(np.sqrt(vx_prev ** 2 + vy_prev ** 2 + vz_prev ** 2))
+                    deceleration = (previous_speed - v_full) / dt
+                    if deceleration > max_dec + 1e-6:
+                        result.add(ValidationIssue(severity=Severity.ERROR, code="DECELERATION_EXCEEDED",
+                            message=f"轨迹段 {i} 减速度 {deceleration:.2f}m/s² 超过最大 {max_dec}m/s²",
+                            trajectory_index=i, time=p1.t, position=(p1.x, p1.y, p1.z)))
+
+            # The v1 contract describes straight segments. A non-collinear join
+            # has zero geometric radius; fitting a circle through three samples
+            # would certify a curve that the returned trajectory never follows.
+            if v_h > 1e-9:
+                direction = np.array((dx, dy)) / np.hypot(dx, dy)
+                if (min_turn_radius > 0 and previous_horizontal_direction is not None
+                        and float(direction @ previous_horizontal_direction) < 1 - 1e-10):
+                    result.add(ValidationIssue(severity=Severity.ERROR, code="TURN_RADIUS_EXCEEDED",
+                        message=f"轨迹段 {i} 存在折线转角，无法满足最小转弯半径 {min_turn_radius}m",
+                        trajectory_index=i, time=p0.t, position=(p0.x, p0.y, p0.z)))
+                previous_horizontal_direction = direction
 
             # 转弯率（航向变化）
             if i >= 2:
@@ -517,7 +590,7 @@ class PathValidator:
                 h1 = np.degrees(np.arctan2(p1.y - p0.y, p1.x - p0.x))
                 d_h = ((h1 - h0 + 180) % 360) - 180
                 turn_dps = abs(d_h) / dt if dt > 0 else 0
-                if turn_dps > max_turn_dps + 1.0:
+                if turn_dps > max_turn_dps + 1e-6:
                     result.add(ValidationIssue(
                         severity=Severity.ERROR, code="TURN_RATE_EXCEEDED",
                         message=f"轨迹段 {i} 转弯率 {turn_dps:.1f}°/s 超过最大 {max_turn_dps}°/s",
@@ -528,6 +601,11 @@ class PathValidator:
         self, traj: List[TrajectoryPoint], result: ValidationResult,
     ):
         """与 SpaceTimeGrid 一致性检查（直接查 occupancy）"""
+        for i, (a, b) in enumerate(zip(traj, traj[1:]), start=1):
+            if not self.grid.segment_is_free((a.x, a.y, a.z, a.t), (b.x, b.y, b.z, b.t)):
+                result.add(ValidationIssue(severity=Severity.ERROR, code="GRID_OCCUPIED",
+                    message=f"轨迹段 {i} 穿过占用网格或超出时空边界", trajectory_index=i,
+                    time=b.t, position=(b.x, b.y, b.z)))
         for i, p in enumerate(traj):
             ix, iy, iz = self.grid.config.to_grid(p.x, p.y, p.z)
             it = self.grid.config.time_to_step(p.t)

@@ -123,7 +123,7 @@ class ParallelPlanner:
             performances: 飞行器性能字典 {aircraft_id: AircraftPerformance}
             request_id: 请求 ID
             dispatch: 调度模式开关。True 时只跑 A* 不计算 risk/heading 等附加字段，
-                      并对失败任务自动微调起点/终点到最近空闲格后重试一次。
+                      不改动任务起终点；占用或不可达时明确返回失败。
                       生产调度推荐 True；demo/报告用 False。
             conflict_avoidance: 是否做多机冲突避免（任务书 §五.4）。
                       默认开启：并行初规划 → 检测冲突 → 用占用表掩码重规划
@@ -154,6 +154,20 @@ class ParallelPlanner:
                 dispatch=dispatch, min_separation=min_separation,
                 max_rounds=max_conflict_rounds,
             )
+            # A returned trajectory is executable only after hard separation
+            # conflicts are resolved. Keep the raw points and conflict records
+            # for diagnosis, but exclude every affected route from successes.
+            unresolved_route_ids = {
+                conflict[key]
+                for conflict in conflicts
+                for key in ("route_a", "route_b")
+                if key in conflict
+            }
+            for route in routes:
+                if route.status == "planned" and route.route_id in unresolved_route_ids:
+                    route.status = "failed"
+                    reason = "存在未解决的多机安全间隔冲突，冲突协调结束后仍不可执行"
+                    route.message = f"{route.message} | {reason}" if route.message else reason
         else:
             # 不避让也必须如实报告冲突，否则调用方会把"未检查"误当成"无冲突"
             conflicts = self.detect_conflicts_occupancy(
@@ -252,29 +266,7 @@ class ParallelPlanner:
         start_wp = task.start
         end_wp = task.end
 
-        # ★ 调度模式下先做起点/终点预校验（在障碍物内就微调）
-        # 这样 A* 不会因为"起点被障碍物占用"直接失败。
-        if dispatch:
-            sx, sy, sz = self._snap_to_free(start_wp.x, start_wp.y, start_wp.z)
-            ex, ey, ez = self._snap_to_free(end_wp.x, end_wp.y, end_wp.z)
-            # 把微调后的坐标写回航点（不影响 task 本体，只在本线程使用）
-            from ..models.aircraft import Waypoint
-            snapped_start = Waypoint(
-                wp_id=start_wp.wp_id, x=sx, y=sy, z=sz,
-                wp_type=start_wp.wp_type, hover_time=start_wp.hover_time,
-                earliest_arrival=start_wp.earliest_arrival,
-                latest_arrival=start_wp.latest_arrival,
-                task_description=start_wp.task_description,
-            )
-            snapped_end = Waypoint(
-                wp_id=end_wp.wp_id, x=ex, y=ey, z=ez,
-                wp_type=end_wp.wp_type, hover_time=end_wp.hover_time,
-                earliest_arrival=end_wp.earliest_arrival,
-                latest_arrival=end_wp.latest_arrival,
-                task_description=end_wp.task_description,
-            )
-            start_wp = snapped_start
-            end_wp = snapped_end
+        # Dispatch changes reporting cost only; task coordinates stay exact.
 
         # 如果有多个途经点，分段规划
         if len(task.waypoints) > 2:
@@ -338,20 +330,8 @@ class ParallelPlanner:
         current_time = task.departure_time if start_time is None else start_time
         total_planning_time = 0.0
 
-        # 多航点：起点 / 终点 / 每个 via 都做一次预微调
+        # Preserve every user-specified waypoint, including dispatch mode.
         waypoints = list(task.waypoints)
-        if dispatch:
-            snapped = []
-            for wp in waypoints:
-                sx, sy, sz = self._snap_to_free(wp.x, wp.y, wp.z)
-                snapped.append(Waypoint(
-                    wp_id=wp.wp_id, x=sx, y=sy, z=sz,
-                    wp_type=wp.wp_type, hover_time=wp.hover_time,
-                    earliest_arrival=wp.earliest_arrival,
-                    latest_arrival=wp.latest_arrival,
-                    task_description=wp.task_description,
-                ))
-            waypoints = snapped
 
         for i in range(len(waypoints) - 1):
             wp_start = waypoints[i]

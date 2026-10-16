@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import threading
 import uuid
+from sys import getsizeof
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from typing import Any, Callable, Dict, Optional
@@ -26,22 +27,35 @@ from typing import Any, Callable, Dict, Optional
 class JobRegistry:
     """线程安全的进程内作业表"""
 
-    def __init__(self, max_workers: int = 2, max_jobs: int = 200):
+    def __init__(self, max_workers: int = 2, max_jobs: int = 200,
+                 max_completed_bytes: int = 128 * 1024 * 1024):
         """
         Args:
             max_workers: 同时执行的作业数。规划本身是 CPU 密集且内部已有
                          多线程并行，这里开太大会互相抢核，反而更慢。
-            max_jobs: 保留的作业上限，超出后淘汰最旧的**已完成**作业，
-                      防止长跑服务把内存吃满。
+            max_jobs: 未完成作业的接收上限和历史记录保留上限。
+            max_completed_bytes: 已完成结果的内存估算上限；超出时淘汰旧结果。
         """
-        self._executor = ThreadPoolExecutor(
-            max_workers=max(1, int(max_workers)),
-            thread_name_prefix="uav-job",
-        )
+        self._max_workers = max(1, int(max_workers))
+        self._executor = self._new_executor()
         self._jobs: Dict[str, Dict[str, Any]] = {}
         self._order: list = []
         self._lock = threading.Lock()
         self._max_jobs = max(1, int(max_jobs))
+        self._max_completed_bytes = max(1, int(max_completed_bytes))
+        self._result_sizes: Dict[str, int] = {}
+        self._completed_bytes = 0
+        self._accepting = True
+
+    def _new_executor(self) -> ThreadPoolExecutor:
+        return ThreadPoolExecutor(max_workers=self._max_workers, thread_name_prefix="uav-job")
+
+    def start(self) -> None:
+        """Allow a fresh application lifecycle after the previous one drained."""
+        with self._lock:
+            if not self._accepting:
+                self._executor = self._new_executor()
+                self._accepting = True
 
     # ------------------------------------------------------------ 提交
 
@@ -64,18 +78,24 @@ class JobRegistry:
             "error": None,
         }
         with self._lock:
+            from uav_planner import ErrorCode, PlanningError
+
+            active = sum(rec["status"] in ("pending", "running") for rec in self._jobs.values())
+            if not self._accepting or active >= self._max_jobs:
+                raise PlanningError(ErrorCode.JOB_QUEUE_FULL, "Background job queue is full or shutting down",
+                                    {"active_jobs": active, "limit": self._max_jobs,
+                                     "accepting": self._accepting})
             self._jobs[job_id] = record
             self._order.append(job_id)
             self._evict_locked()
-
-        self._executor.submit(self._run, job_id, fn, args, kwargs)
+            self._executor.submit(self._run, job_id, fn, args, kwargs)
         return job_id
 
     def _run(self, job_id: str, fn: Callable, args: tuple, kwargs: dict):
         started = datetime.now()
         with self._lock:
             rec = self._jobs.get(job_id)
-            if rec is None:            # 已被淘汰
+            if rec is None or rec["status"] != "pending":
                 return
             rec["status"] = "running"
             rec["started_at"] = started.isoformat(timespec="seconds")
@@ -84,14 +104,24 @@ class JobRegistry:
             result = fn(*args, **kwargs)
             error = None
         except Exception as e:  # noqa: BLE001 - 作业边界需要兜住一切异常
-            from uav_planner import PlanningError
+            from uav_planner import ErrorCode, PlanningError
+            from uav_planner.v2.native import NativeUnavailableError
 
             result = None
             error = (
                 e.to_dict()["error"] if isinstance(e, PlanningError)
-                else {"code": "INTERNAL_ERROR", "message": str(e), "detail": {}}
+                else {"code": ErrorCode.NATIVE_UNAVAILABLE if isinstance(e, NativeUnavailableError) else ErrorCode.INTERNAL_ERROR,
+                      "message": str(e), "detail": {}}
             )
 
+        result_bytes = _retained_size(result) if error is None else 0
+        if result_bytes > self._max_completed_bytes:
+            from uav_planner import ErrorCode
+            result = None
+            error = {"code": ErrorCode.JOB_RESULT_TOO_LARGE,
+                     "message": "Background result exceeds the retained memory budget",
+                     "detail": {"estimated_bytes": result_bytes, "limit_bytes": self._max_completed_bytes}}
+            result_bytes = 0
         finished = datetime.now()
         with self._lock:
             rec = self._jobs.get(job_id)
@@ -105,6 +135,9 @@ class JobRegistry:
             else:
                 rec["status"] = "succeeded"
                 rec["result"] = result
+                self._result_sizes[job_id] = result_bytes
+                self._completed_bytes += result_bytes
+            self._evict_locked()
 
     # ------------------------------------------------------------ 查询
 
@@ -127,16 +160,46 @@ class JobRegistry:
 
     def _evict_locked(self):
         """淘汰最旧的已完成作业（调用方须持有锁）"""
-        while len(self._order) > self._max_jobs:
+        while len(self._order) > self._max_jobs or self._completed_bytes > self._max_completed_bytes:
             for idx, jid in enumerate(self._order):
                 rec = self._jobs.get(jid)
                 if rec is not None and rec["status"] in ("succeeded", "failed"):
                     self._jobs.pop(jid, None)
                     self._order.pop(idx)
+                    self._completed_bytes -= self._result_sizes.pop(jid, 0)
                     break
             else:
                 # 全是未完成的作业，暂不淘汰，等它们结束再说
                 return
 
-    def shutdown(self, wait: bool = False):
-        self._executor.shutdown(wait=wait)
+    def shutdown(self, wait: bool = False) -> None:
+        with self._lock:
+            self._accepting = False
+            executor = self._executor
+            for rec in self._jobs.values():
+                if rec["status"] == "pending":
+                    rec["status"] = "failed"
+                    rec["finished_at"] = datetime.now().isoformat(timespec="seconds")
+                    rec["error"] = {"code": "JOB_CANCELLED", "message": "Service shutdown cancelled the queued job", "detail": {}}
+            self._evict_locked()
+        executor.shutdown(wait=wait, cancel_futures=True)
+
+
+def _retained_size(value: Any) -> int:
+    """Estimate a JSON-shaped result without allocating a serialized copy."""
+    seen: set[int] = set()
+    pending = [value]
+    total = 0
+    while pending:
+        item = pending.pop()
+        identity = id(item)
+        if identity in seen:
+            continue
+        seen.add(identity)
+        total += getsizeof(item)
+        if isinstance(item, dict):
+            pending.extend(item.keys())
+            pending.extend(item.values())
+        elif isinstance(item, (list, tuple, set, frozenset)):
+            pending.extend(item)
+    return total

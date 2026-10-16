@@ -351,6 +351,49 @@ def test_analytic_arc_checks_radius_yaw_and_centripetal_acceleration():
     assert {"TURN_RADIUS", "YAW_RATE", "ACCELERATION", "DECELERATION"} <= {v["code"] for v in result["violations"]}
 
 
+def test_analytic_turn_angle_uses_arc_sweep_even_without_polyline_corners():
+    arc = {"kind": "arc", "start": [10, 0, 0], "end": [0, 10, 0], "center": [0, 0, 0],
+           "radius": 10, "sweep": math.pi / 2, "length": 5 * math.pi,
+           "duration": 2.5 * math.pi, "v0": 2, "v1": 2, "peak": 2,
+           "tc": 2.5 * math.pi}
+    result = native.validate_motion([arc], {"max_turn_angle_deg": 45})
+    assert not result["valid"]
+    assert any(v["code"] == "TURN_ANGLE" and v["actual"] == pytest.approx(90)
+               for v in result["violations"])
+
+
+def test_analytic_turn_angle_cannot_be_bypassed_by_splitting_tangent_arcs():
+    middle = 10 / math.sqrt(2)
+    first = {"kind": "arc", "start": [10, 0, 0], "end": [middle, middle, 0],
+             "center": [0, 0, 0], "radius": 10, "sweep": math.pi / 4,
+             "length": 2.5 * math.pi, "duration": 1.25 * math.pi,
+             "v0": 2, "v1": 2, "peak": 2, "tc": 1.25 * math.pi}
+    second = dict(first, start=first["end"], end=[0, 10, 0])
+    assert native.validate_motion([first], {"max_turn_angle_deg": 45})["valid"]
+    result = native.validate_motion([first, second], {"max_turn_angle_deg": 45})
+    assert not result["valid"]
+    assert any(v["primitive"] == 1 and v["code"] == "TURN_ANGLE" for v in result["violations"])
+
+
+def test_analytic_positive_subnanosecond_phases_keep_their_acceleration():
+    primitive = {"kind": "line", "start": [0, 0, 0], "end": [1, 0, 0],
+                 "length": 1, "duration": 1.000000001, "v0": 0, "v1": 0,
+                 "peak": 1, "accel": 1e9, "decel": 1e9,
+                 "ta": 1e-9, "tc": .999999999, "td": 1e-9}
+    result = native.validate_motion([primitive], {"acceleration_mps2": 2, "deceleration_mps2": 2})
+    assert not result["valid"]
+    assert {"ACCELERATION", "DECELERATION"} <= {v["code"] for v in result["violations"]}
+    assert result["maxima"]["acceleration_mps2"] == pytest.approx(1e9)
+
+
+def test_analytic_yaw_angle_uses_actual_sweep_instead_of_modulo_heading():
+    yaw = {"kind": "yaw", "start": [0, 0, 0], "end": [0, 0, 0],
+           "duration": 10, "sweep": 2 * math.pi}
+    result = native.validate_motion([yaw], {"max_yaw_rate_deg_s": 60, "max_turn_angle_deg": 180})
+    assert not result["valid"]
+    assert any(v["code"] == "TURN_ANGLE" for v in result["violations"])
+
+
 def test_analytic_arc_combines_tangential_and_normal_acceleration():
     length = 4 * math.pi / 2
     ta = 4 / 3
