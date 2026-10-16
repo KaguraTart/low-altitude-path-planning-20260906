@@ -37,22 +37,22 @@ python tools/benchmark_v2.py --validate-only
 
 SDK 冒烟应调用 v1 `plan_single` 和 v2 `register_scene/plan_single_v2/plan_batch_v2/validate_route_v2`；HTTP 冒烟应验证两版本 health、examples、同步规划、异步完整结果、v2 坐标转换及错误信封。具体可执行步骤见部署指南。
 
-验收场景在优化前冻结，使用种子 20261016 与 `input/v2_benchmarks/manifest.json` 中的 SHA-256；不改任务、减少约束或缓存任务答案来制造达标。strict/mixed/free 三套各 1000 个已知可行任务，在场景预注册后，**8 CPU / 8 GB、每套 10 轮、每轮 1000 条全部成功并独立验证通过、完整 HTTP 与 JSON 返回 ≤10 秒**。10/100 规模也保留结果，便于定位增长趋势。
+验收场景在优化前冻结，使用种子 20261016 与 `input/v2_benchmarks/manifest.json` 中的 SHA-256；不改任务、减少约束或缓存任务答案来制造达标。strict/mixed/free 三套各 1000 个已知可行任务，在场景预注册后，**8 CPU / 8 GB、每套 10 轮、每轮 1000 条全部成功并独立验证通过、完整 HTTP 与 JSON 返回 ≤10 秒**。脚本另支持 10/100 规模诊断，不计入本次 30 轮发布门槛。
 
 独立验证包括端点/到达窗口、连续几何与规则、从公开运动原语重建的原生运动学证书、连续多机间隔和返回条数。计时包含请求构建、实际规划和完整 JSON；场景编译单独记录；验证发生在计时结束后。异步 202、排队开始、仅原生核耗时、失败任务省略和只看成功任务耗时都不满足验收口径。HTTP 客户端 RSS 不是服务端内存证据，需另存 `docker stats`/容器资源限制。
 
 | 证据 | 当前状态 |
 |------|------|
 | 宿主机 SDK 诊断：每套 1000 条 | 初轮 strict 1.514 s / mixed 4.623 s / free 1.211 s，全部成功；仅诊断 |
-| 8 CPU / 8 GB 候选镜像、三套十轮完整 HTTP | **待验证** |
-| 镜像内 v1/v2 冒烟与 OpenAPI 一致性 | **待验证** |
-| 正式服务替换与回滚确认 | **待验证** |
+| 8 CPU / 8 GiB 候选镜像、三套十轮完整 HTTP | 30/30 轮通过，每轮 1000/1000；最大 strict/mixed/free 1.454/4.541/1.191 s |
+| 镜像内 v1/v2 冒烟与 OpenAPI 一致性 | 候选与正式服务均通过，源码及规范哈希一致 |
+| 正式服务替换与回滚确认 | 18000 端口 API 2.0.0 健康；旧镜像已保留，回滚步骤已记录（未执行回滚） |
 
-发布时用实际报告路径、Git SHA、镜像 ID、宿主机/容器环境、每轮数据替换“待验证”。宿主机诊断不能代替目标 Docker HTTP 验收。
+完整证据见 [性能报告](../reports/v2-20261016/PERFORMANCE.md)。被测/已发布提交为 c14b18677a00abf20b8500f827417dd35aaa0d27，镜像 ID 为 sha256:60479a4fd6be59b40defd8e7b146a98522d649b04d134e901d0e8aacd42ada42；后续报告提交不改变算法代码。552 项完整回归通过，GitHub CI 通过，30 轮原始记录与资源证据已归档。
 
 ## 4. 打包与版本一致性
 
-运行镜像必须由当前 Git SHA 构建原生 wheel，再将 wheel 安装到同版本 Python 3.11 运行层；不要只复制 Python 源文件并漏掉扩展。同一镜像包含 `docs/API.md` 和 `docs/openapi.json`。生成规范只读取模型，不执行规划 handler：
+运行镜像必须由当前 Git SHA 构建原生 wheel，再将 wheel 安装到同版本 Python 3.11 运行层；不要只复制 Python 源文件并漏掉扩展。同一镜像包含 `docs/API.md` 和 `docs/openapi.json`。规范以锁定依赖的 Python 3.11 镜像为准；其他 FastAPI/Pydantic 版本的 schema 拆分可能不同。生成规范只读取模型，不执行规划 handler：
 
 ```bash
 python - <<'PY'

@@ -6,7 +6,7 @@
 >
 > 当前版本：**2.0.0**（v1 保留，新增 WKT / WGS84 v2） · 最后更新：2026-10-16
 >
-> v2 容器性能与正式发布验收：**待验证**。下文原有 demo、压测和审计评分为 v1 历史记录，不能用作 v2 验收结果。
+> v2 Docker HTTP 验收 **30/30 轮通过**，正式服务已更新为同一验收镜像。下文原有 demo、压测和审计评分为 v1 历史记录；v2 证据见 [`性能报告`](internal/reports/v2-20261016/PERFORMANCE.md)。
 
 ---
 
@@ -54,7 +54,9 @@ python tools/benchmark_v2.py --base-url http://127.0.0.1:18001 \
   --repeats 10 --scales 10 100 1000 --output output/v2_benchmarks/http
 ```
 
-当前宿主机 SDK 诊断已跑到每套 1000 条全部成功，strict/mixed/free 首轮约 1.514 / 4.623 / 1.211 秒；**这些不是 8 CPU / 8 GB Docker HTTP 十轮验收结果**。正式容器结果待验证，不提前标记达标。
+2026-10-16 Docker HTTP 验收已完成：8 CPU / 8 GiB、三套各 1000 任务各 10 轮，30/30 轮全部成功且独立验证、运动学证书与连续冲突检查通过。strict/mixed/free 最大完整 HTTP/JSON 耗时分别为 **1.454 / 4.541 / 1.191 秒**，均低于 10 秒门槛。完整回归 **552 项通过**。原始逐轮报告、输入哈希、阶段耗时和服务内存证据见 [`internal/reports/v2-20261016/PERFORMANCE.md`](internal/reports/v2-20261016/PERFORMANCE.md)。
+
+正式服务 `127.0.0.1:18000` 已部署并通过 v1/v2、坐标往返及异步完整结果烟测；被测/已发布 revision 为 `c14b18677a00abf20b8500f827417dd35aaa0d27`，镜像 ID 为 `sha256:60479a4fd6be59b40defd8e7b146a98522d649b04d134e901d0e8aacd42ada42`。后续报告与发布证据提交晚于该 revision，算法代码保持一致，详见报告中的版本说明。
 
 以下 §1–§9 保留原 v1 项目说明、工具和历史性能记录；其中“不采集气象”不影响 v2 使用上游提供的天气空间场执行规则。
 

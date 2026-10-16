@@ -1,0 +1,1 @@
+{"python": "3.11.17 (main, Oct  6 2026, 02:02:21) [GCC 14.2.0]", "numpy": "2.4.6", "scipy": "1.17.1", "pydantic": "2.14.1", "fastapi": "0.143.2", "shapely": "2.2.0", "pyproj": "3.7.2", "PROJ": "9.5.1"}

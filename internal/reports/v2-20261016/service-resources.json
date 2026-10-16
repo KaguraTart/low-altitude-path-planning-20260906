@@ -1,0 +1,11 @@
+{
+  "memory_peak_bytes": 295407616,
+  "memory_current_bytes": 229842944,
+  "memory_events": "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0\n",
+  "cpu_stat": "usage_usec 73587162\nuser_usec 73069894\nsystem_usec 517268\ncore_sched.force_idle_usec 0\nnr_periods 818\nnr_throttled 3\nthrottled_usec 669270\nnr_bursts 0\nburst_usec 0\n",
+  "process_status": [
+    "VmHWM:\t  335368 kB",
+    "VmRSS:\t  263968 kB",
+    "Threads:\t37"
+  ]
+}

@@ -178,12 +178,14 @@ docker logs low-altitude-path-planning-candidate
 
 | 项目 | 当前结果 |
 |------|------|
-| 宿主机 SDK 首轮 1000 条诊断 | strict 1.514 s，mixed 4.623 s，free 1.211 s；全部成功 |
-| 候选镜像双版本烟测 | **待验证** |
-| 8 CPU / 8 GB 三套十轮 HTTP | **待验证** |
-| 正式替换后双版本复测 | **待验证** |
+| 完整功能回归 | 552 项通过，40.77 s |
+| 候选镜像双版本烟测 | 通过；[`candidate-smoke.json`](../reports/v2-20261016/candidate-smoke.json) |
+| 8 CPU / 8 GiB 三套十轮 HTTP | 30/30 轮通过；strict/mixed/free 最大 1.454/4.541/1.191 s，每轮 1000/1000 成功、证书通过、冲突 0 |
+| 服务资源 | cgroup memory.peak 281.72 MiB，进程 VmHWM 327.51 MiB，OOM 0；[`service-resources.json`](../reports/v2-20261016/service-resources.json) |
+| 正式替换后双版本复测 | 通过，2026-10-16T11:03:22Z；[`production-smoke.json`](../reports/v2-20261016/production-smoke.json) |
+| GitHub PR #8 收尾 | **待发布负责人完成报告提交并标记 Ready** |
 
-以上诊断不能证明 Docker 门槛已经达标。发布前填入本次实际证据。
+性能、全部 30 轮与阶段统计见 [`../reports/v2-20261016/PERFORMANCE.md`](../reports/v2-20261016/PERFORMANCE.md)。被测且正式运行的镜像为 `low-altitude-path-planning:c14b18677a00abf20b8500f827417dd35aaa0d27`，ID `sha256:60479a4fd6be59b40defd8e7b146a98522d649b04d134e901d0e8aacd42ada42`，8 CPU/8 GiB；正式源文件与 OpenAPI 快照一致。CI 对被测代码的 test（3m37s）与 visualize（35s）通过，手动 stress job 按设计跳过。后续报告/证据提交不改变算法，不以文档分支的新 HEAD 替换已验收镜像。
 
 ## 6. 排空与正式切换
 
