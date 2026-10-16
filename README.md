@@ -44,9 +44,9 @@ curl --fail-with-body -sS http://127.0.0.1:8000/api/v2/plan/single \
   -H 'Content-Type: application/json' --data-binary @/tmp/uav-single-v2.json
 ```
 
-部署使用仓库根目录多阶段 Dockerfile 构建 Python 3.11 原生包，Compose 为 `127.0.0.1:18000 → 8000`、8 CPU / 8 GB，通过 `UAV_IMAGE_TAG` 选择不可变 Git SHA 镜像。候选端口 18001、双版本作业排空、烟测与回滚命令见 [`internal/docs/DEPLOYMENT.md`](internal/docs/DEPLOYMENT.md)。
+部署使用仓库根目录多阶段 Dockerfile 构建 Python 3.11 原生包，正式 Compose 默认配额为 **2 CPU / 2 GiB**，端口为 `127.0.0.1:18000 → 8000`，通过 `UAV_IMAGE_TAG` 选择不可变 Git SHA 镜像。候选端口 18001、双版本作业排空、烟测与按 Git SHA 重建回滚的命令见 [`internal/docs/DEPLOYMENT.md`](internal/docs/DEPLOYMENT.md)。旧镜像可清理，回滚不依赖本地保留旧镜像。
 
-固定验收数据已冻结在 [`input/v2_benchmarks`](input/v2_benchmarks)，manifest 记录 SHA-256。`tools/benchmark_v2.py` 对 strict/mixed/free 三套各 1000 个已知可行任务各跑 10 轮；每轮要求全部成功、独立验证通过、完整 HTTP 与 JSON 返回 ≤10 秒。场景预加载和编译另计，不能只测异步提交。
+固定验收数据已冻结在 [`input/v2_benchmarks`](input/v2_benchmarks)，manifest 记录 SHA-256。历史性能验收在 **8 CPU / 8 GiB** 下，对 strict/mixed/free 三套各 1000 个已知可行任务各跑 10 轮；每轮要求全部成功、独立验证通过、完整 HTTP 与 JSON 返回 ≤10 秒。该条件不代表正式 2 CPU / 2 GiB 配额下仍满足 1000 任务 10 秒；生产耗时以实际配额和负载测量为准。场景预加载和编译另计，不能只测异步提交。下列完整性能重测须使用专门的 8 CPU / 8 GiB 候选容器。
 
 ```bash
 python tools/benchmark_v2.py --validate-only
@@ -56,7 +56,7 @@ python tools/benchmark_v2.py --base-url http://127.0.0.1:18001 \
 
 2026-10-16 Docker HTTP 验收已完成：8 CPU / 8 GiB、三套各 1000 任务各 10 轮，30/30 轮全部成功且独立验证、运动学证书与连续冲突检查通过。strict/mixed/free 最大完整 HTTP/JSON 耗时分别为 **1.454 / 4.541 / 1.191 秒**，均低于 10 秒门槛。完整回归 **552 项通过**。原始逐轮报告、输入哈希、阶段耗时和服务内存证据见 [`internal/reports/v2-20261016/PERFORMANCE.md`](internal/reports/v2-20261016/PERFORMANCE.md)。
 
-正式服务 `127.0.0.1:18000` 已部署并通过 v1/v2、坐标往返及异步完整结果烟测；被测/已发布 revision 为 `c14b18677a00abf20b8500f827417dd35aaa0d27`，镜像 ID 为 `sha256:60479a4fd6be59b40defd8e7b146a98522d649b04d134e901d0e8aacd42ada42`。后续报告与发布证据提交晚于该 revision，算法代码保持一致，详见报告中的版本说明。
+历史部署记录：`c14b18677a00abf20b8500f827417dd35aaa0d27` 曾在正式端口通过 v1/v2、坐标往返及异步完整结果烟测，镜像 ID 为 `sha256:60479a4fd6be59b40defd8e7b146a98522d649b04d134e901d0e8aacd42ada42`；该记录不表示镜像仍保留在本地。详见报告中的版本说明。当前 main、运行 revision、2 CPU / 2 GiB 实际配额和分支/镜像清单，使用部署指南的实时核对命令查询，不在历史报告中持续改写部署 SHA。
 
 以下 §1–§9 保留原 v1 项目说明、工具和历史性能记录；其中“不采集气象”不影响 v2 使用上游提供的天气空间场执行规则。
 

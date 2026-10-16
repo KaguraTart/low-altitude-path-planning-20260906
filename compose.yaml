@@ -10,9 +10,9 @@ services:
     restart: unless-stopped
     ports:
       - "127.0.0.1:18000:8000"
-    cpus: 8
-    mem_limit: 8g
-    memswap_limit: 8g
+    cpus: 2
+    mem_limit: 2g
+    memswap_limit: 2g
     stop_grace_period: 120s
     healthcheck:
       test: ["CMD", "python", "-c", "import json,urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/v1/health', timeout=5); assert json.load(urllib.request.urlopen('http://127.0.0.1:8000/api/v2/health', timeout=5))['native_available']"]

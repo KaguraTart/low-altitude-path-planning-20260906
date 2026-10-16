@@ -4,19 +4,19 @@
 
 ## 1. 运行配置与基线
 
-| 项目 | v2 目标 | 原正式服务 / 回滚基线 |
+| 项目 | 当前正式部署默认配置 | 原 v1 历史记录（不代表本地仍有镜像） |
 |------|------|------|
 | Python / 包 | 3.11 / 2.0.0，含 C++17 扩展 | 原 v1 镜像 |
 | 镜像标签 | `low-altitude-path-planning:<Git SHA>`，`UAV_IMAGE_TAG` 选择 | `low-altitude-path-planning:9816f8b` |
 | 镜像 ID | 构建后记录 | `sha256:c03196d8cc7d1952ad29013e9dd70e12323127601615ba5253af7bc7f80e4e89` |
 | 正式容器 | `low-altitude-path-planning-api` | 同名 |
 | 正式映射 | `127.0.0.1:18000:8000` | 相同 |
-| 资源 | 8 CPU / 8 GB（Compose `mem_limit: 8g`） | 2 CPU / 2 GiB |
+| 资源 | 2 CPU / 2 GiB（Compose `cpus: 2`、`mem_limit: 2g`） | 当时为 2 CPU / 2 GiB |
 | 候选容器 | `low-altitude-path-planning-candidate`，`127.0.0.1:18001:8000` | 不占正式端口 |
 
 服务保持单进程。规划核内部并行，不通过增加 ASGI worker 共享进程内场景和作业表；多 worker 会导致 scene/job 查询落到没有记录的进程。容器内监听 `0.0.0.0:8000`，宿主机仅绑定回环，继续接入现有反向代理/隧道。服务不内置认证，公网访问沿用边缘鉴权与限流；限流范围须覆盖 `/api/v1/*` 和 `/api/v2/*`。
 
-场景在编译前执行 `uav_planner/v2/budgets.py` 预算检查：单场景最多 200 航路、1000 障碍、20 管制区、1000 接驳、1000 规则、32 配置、100 数据集和 50000 WKT 顶点；格场/外部网格条目各最多 1200000，外部网格节点乘积最多 4000000，单场景估算存储最多 512 MiB。登记表最多 8 场景、合计估算存储 1 GiB，以 LRU 淘汰；新场景编译串行执行。估算量不是实际 RSS 硬上限，不能代替容器 8 GB 资源限制；验收需监测服务内存。当前镜像的限额通过 `/api/v2/capabilities` 核对。
+场景在编译前执行 `uav_planner/v2/budgets.py` 预算检查：单场景最多 200 航路、1000 障碍、20 管制区、1000 接驳、1000 规则、32 配置、100 数据集和 50000 WKT 顶点；格场/外部网格条目各最多 1200000，外部网格节点乘积最多 4000000，单场景估算存储最多 512 MiB。登记表最多 8 场景、合计估算存储 1 GiB，以 LRU 淘汰；新场景编译串行执行。估算量不是实际 RSS 硬上限，不能代替正式容器 2 GiB 资源限制；按实际场景与并发负载监测服务内存。当前镜像的限额通过 `/api/v2/capabilities` 核对。
 
 时域 `horizon_s` 默认 3600、最大 86400 秒；单任务最多 256 个中间业务航点；SDK/HTTP 批量均为 1–10000 个任务。验证时间数组和解析原语分别最多 100000 项；每路线的认证碰撞采样与导出顶点也分别限制 100000 项，超额返回明确预算错误，不输出截断的成功路线。
 
@@ -70,7 +70,9 @@ git push -u origin HEAD
 gh pr create --title '新增 WKT/WGS84 v2 约束规划接口并保留 v1' --body-file /tmp/uav-v2-pr.md
 ```
 
-待需要进入镜像的改动均已提交后构建，记录完整 Git SHA 与镜像 ID：
+必要变更合入 main 并通过最新 CI 后，从实际验收的 main SHA 构建并核对镜像 ID。完成整合后删除旧本地/远端分支，保留 main、Git 提交历史与发布证据；使用第 8 节命令查询实际状态。
+
+以下 18001 候选容器的 **8 CPU / 8 GiB 仅供第 5 节专门性能验收**，不是正式默认配额。日常发布功能核对使用上面的 `check_docker_release.sh`（2 CPU / 2 GiB）。重新运行专用性能验收时可使用：
 
 ```bash
 UAV_BUILD_SHA=$(git rev-parse HEAD)
@@ -78,7 +80,6 @@ docker build --build-arg GIT_SHA="$UAV_BUILD_SHA" --label org.opencontainers.ima
   -t "low-altitude-path-planning:$UAV_BUILD_SHA" .
 docker image inspect "low-altitude-path-planning:$UAV_BUILD_SHA" \
   --format '{{.Id}} {{json .Config.Labels}}'
-docker image inspect low-altitude-path-planning:9816f8b --format '{{.Id}}'
 docker run -d --name low-altitude-path-planning-candidate \
   --cpus=8 --memory=8g --memory-swap=8g -p 127.0.0.1:18001:8000 \
   "low-altitude-path-planning:$UAV_BUILD_SHA"
@@ -173,9 +174,9 @@ PY
 
 验证移动航线必须同时提交 route.motion_segments；模型允许字段省略，但缺失会返回 valid:false、MOTION_MODEL_REQUIRED。POINT Z 单个时刻的零持续时间静止状态可省略；持续等待用重复坐标 LINESTRING Z、递增时间和 hover 原语。发布必须核对镜像内规范快照和运行 `/openapi.json` 相同，不只检查 Markdown 文件存在。
 
-## 5. 固定性能验收
+## 5. 历史固定性能验收与复现
 
-场景预注册后，三套 strict/mixed/free，各 1000 个任务各 10 轮，在候选容器 8 CPU / 8 GB 上要求每轮全部成功、独立验证通过且完整 HTTP/JSON ≤10 秒。冻结输入、SHA 校验、参考可行性与 ALL20 反事实检查由 runner 执行；不能换掉失败输入、删规则或复用任务答案。
+历史性能验收条件为：场景预注册后，三套 strict/mixed/free，各 1000 个任务各 10 轮，在专用候选容器 **8 CPU / 8 GiB** 上要求每轮全部成功、独立验证通过且完整 HTTP/JSON ≤10 秒。重跑同一性能门槛仍须使用该配额；正式默认 **2 CPU / 2 GiB 不承诺 1000 任务 10 秒达标**，其实际耗时单独记录。冻结输入、SHA 校验、参考可行性与 ALL20 反事实检查由 runner 执行；不能换掉失败输入、删规则或复用任务答案。
 
 ```bash
 python tools/benchmark_v2.py --validate-only
@@ -187,16 +188,16 @@ docker logs low-altitude-path-planning-candidate
 
 计时包括请求创建、真实规划与完整返回 JSON；场景注册另计，独立验算在计时外。runner 报告中的 HTTP RSS 属于本地验算进程，服务内存需从容器监测另存。保留每轮结果、input/result SHA、场景版本、成功/失败数、运动学证书数、冲突数、min/median/p95/max、输出字节数、镜像 ID 与资源限制。异步提交的耗时不满足这一门槛。
 
-| 项目 | 当前结果 |
+| 历史验收项目 | 当次已归档结果 |
 |------|------|
 | 完整功能回归 | 552 项通过，40.77 s |
 | 候选镜像双版本烟测 | 通过；[`candidate-smoke.json`](../reports/v2-20261016/candidate-smoke.json) |
 | 8 CPU / 8 GiB 三套十轮 HTTP | 30/30 轮通过；strict/mixed/free 最大 1.454/4.541/1.191 s，每轮 1000/1000 成功、证书通过、冲突 0 |
 | 服务资源 | cgroup memory.peak 281.72 MiB，进程 VmHWM 327.51 MiB，OOM 0；[`service-resources.json`](../reports/v2-20261016/service-resources.json) |
 | 正式替换后双版本复测 | 通过，2026-10-16T11:03:22Z；[`production-smoke.json`](../reports/v2-20261016/production-smoke.json) |
-| GitHub PR #8 收尾 | 历史验收报告提交与 Ready 已完成；PR 待合并，当前 CI 状态以最新检查为准 |
+| GitHub PR #8 历史记录 | 历史验收报告提交与 Ready 已记录；当前 main 与分支状态通过第 8 节命令核对 |
 
-性能、全部 30 轮与阶段统计见 [`../reports/v2-20261016/PERFORMANCE.md`](../reports/v2-20261016/PERFORMANCE.md)。被测且正式运行的镜像为 `low-altitude-path-planning:c14b18677a00abf20b8500f827417dd35aaa0d27`，ID `sha256:60479a4fd6be59b40defd8e7b146a98522d649b04d134e901d0e8aacd42ada42`，8 CPU/8 GiB；正式源文件与 OpenAPI 快照一致。CI 对被测代码的 test（3m37s）与 visualize（35s）通过，手动 stress job 按设计跳过。后续报告/证据提交不改变算法，不以文档分支的新 HEAD 替换已验收镜像。
+性能、全部 30 轮与阶段统计见 [`../reports/v2-20261016/PERFORMANCE.md`](../reports/v2-20261016/PERFORMANCE.md)。历史被测并曾发布的镜像为 `low-altitude-path-planning:c14b18677a00abf20b8500f827417dd35aaa0d27`，ID `sha256:60479a4fd6be59b40defd8e7b146a98522d649b04d134e901d0e8aacd42ada42`，当次配额为 8 CPU / 8 GiB，源码与 OpenAPI 快照一致。CI 对当次被测代码的 test（3m37s）与 visualize（35s）通过，手动 stress job 按设计跳过。这些历史记录不表示相关镜像仍在本地，也不能代替本轮 main 与 2 CPU / 2 GiB 正式服务的验证。
 
 ## 6. 排空与正式切换
 
@@ -211,7 +212,7 @@ curl --fail-with-body -sS http://127.0.0.1:18000/api/v2/health/jobs
 
 应用关闭流程停止两版本接纳、将尚未执行的 pending 作业标为 JOB_CANCELLED，并等待 running 作业结束。它不替代切换前的上游暂停与排空；只有看到两套 pending/running 均为 0，才进入正常发布切换。
 
-候选所有门槛通过后，用**验收过的同一 SHA 镜像**切换 Compose，保持正式回环端口：
+正式配额的功能、打包与接口烟测通过后，用**验收过的同一 SHA 镜像**切换 Compose，保持 **2 CPU / 2 GiB** 和正式回环端口：
 
 ```bash
 UAV_RELEASE_SHA=$(git rev-parse HEAD)
@@ -220,46 +221,63 @@ UAV_IMAGE_TAG="$UAV_RELEASE_SHA" docker compose up -d --no-build --force-recreat
 curl --fail-with-body -sS http://127.0.0.1:18000/api/v1/health
 curl --fail-with-body -sS http://127.0.0.1:18000/api/v2/health
 curl --fail-with-body -sS http://127.0.0.1:18000/api/v2/version
-docker inspect low-altitude-path-planning-api --format '{{.Image}}'
+docker inspect low-altitude-path-planning-api \
+  --format 'image={{.Image}} cpus={{.HostConfig.NanoCpus}} memory={{.HostConfig.Memory}}'
 ```
 
 如果当前 HEAD 已变化，将 `UAV_RELEASE_SHA` 设为第 3 节记录并验收通过的原 SHA；不能重新取一个未经测试的镜像。生产重复第 4 节烟测（base 改为 18000），重新注册平台保存的原始场景 JSON，然后恢复流量。重启会丢失内存中的场景与历史作业，旧 scene_id 不可作为恢复数据源。
 
-确认正式运行后再删除候选容器；保留上一版镜像与发布证据：
+确认正式运行后再删除候选容器；保留 Git SHA、构建配置与发布证据。旧镜像可按核对后的精确 ID 清理，不要求为回滚继续保留：
 
 ```bash
 docker stop low-altitude-path-planning-candidate
 docker rm low-altitude-path-planning-candidate
 ```
 
-## 7. 回滚到原 v1 镜像
+## 7. 按 Git SHA 重新构建回滚版本
 
-先暂停新提交并尽可能排空，保存当前故障日志和镜像 ID。确认回滚镜像 ID 与基线完全一致，再使用资源覆盖文件恢复旧 2 CPU / 2 GiB 配置：
+回滚不依赖本地旧镜像。先暂停新提交并尽可能排空，保存故障日志和当前镜像 ID；选择含完整 v2 Dockerfile、依赖与 `GIT_SHA` 构建参数的 Git SHA，在候选端口通过烟测后，再按 **2 CPU / 2 GiB** 切换。已知可重建的历史 v2 基准为 `c14b18677a00abf20b8500f827417dd35aaa0d27`。旧 v1 镜像标签 `9816f8b` 对应主线提交没有 Dockerfile，不能直接作为下列构建命令的目标。重建产生的新镜像 ID 必须重新记录，不要求与历史镜像 ID 相同。
 
 ```bash
-docker image inspect low-altitude-path-planning:9816f8b --format '{{.Id}}'
 docker logs low-altitude-path-planning-api > /tmp/uav-v2-failed-container.log 2>&1
-cat > /tmp/uav-rollback.yaml <<'YAML'
-services:
-  app:
-    image: low-altitude-path-planning:9816f8b
-    cpus: 2
-    mem_limit: 2g
-    memswap_limit: 2g
-    healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/v1/health', timeout=5)"]
-YAML
-UAV_IMAGE_TAG=9816f8b docker compose -f compose.yaml -f /tmp/uav-rollback.yaml \
-  up -d --no-build --force-recreate app
+# 先将 UAV_ROLLBACK_SHA 设置为已确认的完整 Git SHA。
+: "${UAV_ROLLBACK_SHA:?Set the verified rollback Git SHA}"
+git cat-file -e "${UAV_ROLLBACK_SHA}^{commit}"
+git cat-file -e "${UAV_ROLLBACK_SHA}:Dockerfile"
+UAV_ROLLBACK_DIR=$(mktemp -d /tmp/uav-rollback.XXXXXX)
+git worktree add --detach "$UAV_ROLLBACK_DIR" "$UAV_ROLLBACK_SHA"
+docker build --build-arg GIT_SHA="$UAV_ROLLBACK_SHA" \
+  -t "low-altitude-path-planning:$UAV_ROLLBACK_SHA" "$UAV_ROLLBACK_DIR"
+docker image inspect "low-altitude-path-planning:$UAV_ROLLBACK_SHA" --format '{{.Id}}'
+git worktree remove "$UAV_ROLLBACK_DIR"
+# 先按相应版本在 18001 完成烟测，再执行正式切换。
+UAV_IMAGE_TAG="$UAV_ROLLBACK_SHA" docker compose config
+UAV_IMAGE_TAG="$UAV_ROLLBACK_SHA" docker compose up -d --no-build --force-recreate app
 curl --fail-with-body -sS http://127.0.0.1:18000/api/v1/health
 curl --fail-with-body -sS http://127.0.0.1:18000/api/v1/version
 docker inspect low-altitude-path-planning-api \
   --format 'image={{.Image}} cpus={{.HostConfig.NanoCpus}} memory={{.HostConfig.Memory}}'
 ```
 
-原镜像仅提供 v1，回滚后平台要恢复 v1 调用；不能把 v2 请求发送到旧镜像。v2 场景与作业内存无法跨版本恢复。验证 v1 示例真实规划成功后恢复流量。下次重新发布 v2 时去掉回滚覆盖文件，并明确指定新的 SHA。
+以上步骤适用于完整 v2 部署提交，沿用双版本健康检查与完整烟测。场景与作业内存无法跨版本恢复，重新注册平台保存的原始场景并验证真实规划后再恢复流量。
 
-## 8. 排错
+## 8. 当前运行版本与清理核对
+
+当前状态通过 Git、运行服务与 Docker 查询，不以历史报告中的 SHA 代替实时状态，也不要求为每次部署追加一个写死最新 SHA 的文档提交：
+
+```bash
+git rev-parse main
+git branch -avv
+git ls-remote --heads origin
+curl --fail-with-body -sS http://127.0.0.1:18000/api/v2/version
+docker inspect low-altitude-path-planning-api \
+  --format 'image={{.Image}} cpus={{.HostConfig.NanoCpus}} memory={{.HostConfig.Memory}}'
+docker image ls --no-trunc low-altitude-path-planning
+```
+
+必要变更整合后核对 main 与运行 revision，正式配额应为 `NanoCpus=2000000000`、`Memory=2147483648`。分支清理后核对本地及远端剩余分支，镜像清理后核对仍在用的镜像 ID；历史冻结输入和原始验收报告保持不变。PR/CI 的实际合并、测试与部署结果以对应检查和当次操作输出为准。
+
+## 9. 排错
 
 | 现象 | 证据与处理 |
 |------|------|
@@ -269,5 +287,5 @@ docker inspect low-altitude-path-planning-api \
 | strict 失败 | 检查航路高度、全宽、有效期、方向、真实连接和显式接驳；不自动改 free |
 | 规则缺引用或 nodata | 补版本化空间场、有效时段和覆盖范围；不删除规则来通过验收 |
 | 容器 HTTP 比 SDK 慢 | 对比完整 JSON 大小、CPU throttling、序列化和并发作业；按同一冻结输入定位 |
-| 容器 OOM / 抢占 CPU | 检查实际 8 CPU/8 GB 限制、作业积压和服务 RSS；不能只看客户端 RSS |
+| 容器 OOM / 抢占 CPU | 核对正式 2 CPU / 2 GiB 限制、作业积压和服务 RSS；专用性能候选另核对 8 CPU / 8 GiB；不能只看客户端 RSS |
 | 代理超时 | 使用异步完整结果轮询或按业务调整代理超时；性能验收仍计完整规划返回 |
