@@ -19,6 +19,7 @@ import random
 import sys
 
 import pytest
+import numpy as np
 
 from src.models.aircraft import AircraftPerformance, FlightTask, Waypoint
 from src.models.obstacles import ObstacleSet
@@ -94,22 +95,22 @@ def _plan_crossing(config, conflict_avoidance, n_pairs=4, min_sep=MIN_SEP):
 # 独立交叉验证：不复用项目里的任何检测/校验代码
 # ---------------------------------------------------------------------------
 def _min_same_time_distance(route_a, route_b):
-    """按时间戳取交集，求同一时刻的最小欧氏距离；无时间交集返回 None。
-
-    轨迹点的 t 一律落在 `step_to_time` 的步中心上（dt=10 → 5,15,25,...），
-    两条航线时间轴同源，因此直接对齐时间戳即可，无需插值。
-    时间轴不相交 ⇒ 两机从未同时在场 ⇒ 物理上不可能冲突。
-    """
-    pos_a = {round(p.t, 6): (p.x, p.y, p.z) for p in route_a.trajectory}
-    pos_b = {round(p.t, 6): (p.x, p.y, p.z) for p in route_b.trajectory}
-    common = sorted(set(pos_a) & set(pos_b))
-    if not common:
-        return None
-    best = float("inf")
-    for t in common:
-        xa, ya, za = pos_a[t]
-        xb, yb, zb = pos_b[t]
-        best = min(best, ((xa - xb) ** 2 + (ya - yb) ** 2 + (za - zb) ** 2) ** 0.5)
+    """Independent exact relative-motion oracle; timestamps need not align."""
+    best = None
+    for a0,a1 in zip(route_a.trajectory,route_a.trajectory[1:]):
+        for b0,b1 in zip(route_b.trajectory,route_b.trajectory[1:]):
+            lo,hi=max(a0.t,b0.t),min(a1.t,b1.t)
+            if hi<lo or a1.t<=a0.t or b1.t<=b0.t:
+                continue
+            a=np.array([a0.x,a0.y,a0.z]);b=np.array([b0.x,b0.y,b0.z])
+            va=(np.array([a1.x,a1.y,a1.z])-a)/(a1.t-a0.t)
+            vb=(np.array([b1.x,b1.y,b1.z])-b)/(b1.t-b0.t)
+            relative=a+va*(lo-a0.t)-b-vb*(lo-b0.t)
+            velocity=va-vb
+            speed2=float(np.dot(velocity,velocity))
+            offset=float(np.clip(-np.dot(relative,velocity)/speed2,0,hi-lo)) if speed2 else 0
+            distance=float(np.linalg.norm(relative+velocity*offset))
+            best=distance if best is None else min(best,distance)
     return best
 
 

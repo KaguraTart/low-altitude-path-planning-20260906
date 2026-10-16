@@ -1,0 +1,5957 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "低空无人机路径规划算法接口",
+    "description": "多维时空 A* 路径规划 + 多目标航线优化 + 路径合法性验证。\n\n- 单任务规划：`POST /api/v1/plan/single`\n- 多机批量规划：`POST /api/v1/plan/batch`\n- 航线合法性校验：`POST /api/v1/validate`\n- 大批量异步作业：`POST /api/v1/jobs` + `GET /api/v1/jobs/{job_id}`\n\n字段含义、单位与调用示例见仓库 `docs/API.md`。",
+    "version": "2.0.0"
+  },
+  "paths": {
+    "/api/v1/health": {
+      "get": {
+        "tags": [
+          "基础"
+        ],
+        "summary": "Health",
+        "description": "健康检查：服务是否就绪、已运行多久、异步作业积压情况",
+        "operationId": "health_api_v1_health_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/server__schemas__HealthResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/version": {
+      "get": {
+        "tags": [
+          "基础"
+        ],
+        "summary": "Version",
+        "description": "接口版本、封装的算法组件与默认参数",
+        "operationId": "version_api_v1_version_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/health/jobs": {
+      "get": {
+        "tags": [
+          "基础"
+        ],
+        "summary": "Jobs Health",
+        "description": "异步作业队列统计（pending/running/succeeded/failed）",
+        "operationId": "jobs_health_api_v1_health_jobs_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/plan/single": {
+      "post": {
+        "tags": [
+          "规划"
+        ],
+        "summary": "Api Plan Single",
+        "description": "单条航线规划：时空 A* → 多目标优化 → 合法性验证\n\n航线可用 ``start`` + ``goal`` 两点给出，或用 ``waypoints`` 给出完整\n航点序列（含中间经停）。**有中间经停时必须用 waypoints**，只给起终点\n会丢掉经停点，规划出一条更短但不合要求的航线。",
+        "operationId": "api_plan_single_api_v1_plan_single_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PlanSingleRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Api Plan Single Api V1 Plan Single Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/plan/batch": {
+      "post": {
+        "tags": [
+          "规划"
+        ],
+        "summary": "Api Plan Batch",
+        "description": "多任务批量并行规划（同步）\n\n适合中小批量联调。**大批量请改用** ``POST /api/v1/jobs``：\n实测 10000 个任务约需 437 秒，同步请求会被客户端超时掐断。",
+        "operationId": "api_plan_batch_api_v1_plan_batch_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PlanBatchRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Api Plan Batch Api V1 Plan Batch Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/validate": {
+      "post": {
+        "tags": [
+          "验证"
+        ],
+        "summary": "Api Validate",
+        "description": "校验一条航线的合法性（连续性 / 障碍 / 性能 / 高度 / 时空占用）\n\n航线可由外部系统给出，不限于本算法产出——这是联调时验证对方航线的主要手段。",
+        "operationId": "api_validate_api_v1_validate_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/server__schemas__ValidateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Api Validate Api V1 Validate Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/jobs": {
+      "post": {
+        "tags": [
+          "异步作业"
+        ],
+        "summary": "Submit Job",
+        "description": "提交批量规划作业，立即返回 ``job_id``（HTTP 202）\n\n请求体与 ``POST /api/v1/plan/batch`` 完全相同，只是改为后台执行。\n用 ``GET /api/v1/jobs/{job_id}`` 轮询进度与结果。",
+        "operationId": "submit_job_api_v1_jobs_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PlanBatchRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobSubmitResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/jobs/{job_id}": {
+      "get": {
+        "tags": [
+          "异步作业"
+        ],
+        "summary": "Get Job",
+        "description": "查询作业状态；``status`` 为 ``succeeded`` 时 ``result`` 里是完整的规划结果\n\n作业表在进程内存中，服务重启后历史作业不可查；多 worker 部署时轮询\n可能落到没有该作业的进程。联调阶段足够，生产需换持久化存储。",
+        "operationId": "get_job_api_v1_jobs__job_id__get",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Job Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobStatusResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/examples/single": {
+      "get": {
+        "tags": [
+          "示例"
+        ],
+        "summary": "Example Single",
+        "description": "返回一份可直接使用的 ``/api/v1/plan/single`` 示例请求体\n\n联调起步用：取下来直接 POST 回去就能看到完整响应结构。",
+        "operationId": "example_single_api_v1_examples_single_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Example Single Api V1 Examples Single Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/examples/batch": {
+      "get": {
+        "tags": [
+          "示例"
+        ],
+        "summary": "Example Batch",
+        "description": "返回一份可直接使用的 ``/api/v1/plan/batch``（或 ``/jobs``）示例请求体",
+        "operationId": "example_batch_api_v1_examples_batch_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Example Batch Api V1 Examples Batch Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v2/health": {
+      "get": {
+        "tags": [
+          "v2 WKT / WGS84"
+        ],
+        "summary": "Health",
+        "operationId": "health_api_v2_health_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/server__v2__HealthResponse"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Invalid input or unavailable resource",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Input or referenced constraints are invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown scene or job",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Job admission or retention budget reached",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected service error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Native planning engine unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v2/health/jobs": {
+      "get": {
+        "tags": [
+          "v2 WKT / WGS84"
+        ],
+        "summary": "Health Jobs",
+        "operationId": "health_jobs_api_v2_health_jobs_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "integer"
+                  },
+                  "type": "object",
+                  "title": "Response Health Jobs Api V2 Health Jobs Get"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Invalid input or unavailable resource",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Input or referenced constraints are invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown scene or job",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Job admission or retention budget reached",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected service error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Native planning engine unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v2/version": {
+      "get": {
+        "tags": [
+          "v2 WKT / WGS84"
+        ],
+        "summary": "Version",
+        "operationId": "version_api_v2_version_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VersionResponse"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Invalid input or unavailable resource",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Input or referenced constraints are invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown scene or job",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Job admission or retention budget reached",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected service error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Native planning engine unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v2/capabilities": {
+      "get": {
+        "tags": [
+          "v2 WKT / WGS84"
+        ],
+        "summary": "Capabilities",
+        "operationId": "capabilities_api_v2_capabilities_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Capabilities"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Invalid input or unavailable resource",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Input or referenced constraints are invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown scene or job",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Job admission or retention budget reached",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected service error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Native planning engine unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v2/scenes": {
+      "post": {
+        "tags": [
+          "v2 WKT / WGS84"
+        ],
+        "summary": "Create Scene",
+        "operationId": "create_scene_api_v2_scenes_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Scene"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SceneResponse"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Invalid input or unavailable resource",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Input or referenced constraints are invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown scene or job",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Job admission or retention budget reached",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected service error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Native planning engine unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v2/scenes/{scene_id}": {
+      "get": {
+        "tags": [
+          "v2 WKT / WGS84"
+        ],
+        "summary": "Get Scene",
+        "operationId": "get_scene_api_v2_scenes__scene_id__get",
+        "parameters": [
+          {
+            "name": "scene_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Scene Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SceneResponse"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Invalid input or unavailable resource",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Input or referenced constraints are invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown scene or job",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Job admission or retention budget reached",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected service error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Native planning engine unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v2/coordinates/convert": {
+      "post": {
+        "tags": [
+          "v2 WKT / WGS84"
+        ],
+        "summary": "Coordinates",
+        "operationId": "coordinates_api_v2_coordinates_convert_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CoordinateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CoordinateResponse"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Invalid input or unavailable resource",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Input or referenced constraints are invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown scene or job",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Job admission or retention budget reached",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected service error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Native planning engine unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v2/plan/single": {
+      "post": {
+        "tags": [
+          "v2 WKT / WGS84"
+        ],
+        "summary": "Single",
+        "description": "WKT single flight. route_mode defaults to strict; all heights are explicit.",
+        "operationId": "single_api_v2_plan_single_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SingleRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RouteResult"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Invalid input or unavailable resource",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Input or referenced constraints are invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown scene or job",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Job admission or retention budget reached",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected service error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Native planning engine unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v2/plan/batch": {
+      "post": {
+        "tags": [
+          "v2 WKT / WGS84"
+        ],
+        "summary": "Batch",
+        "operationId": "batch_api_v2_plan_batch_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BatchRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BatchResult"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Invalid input or unavailable resource",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Input or referenced constraints are invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown scene or job",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Job admission or retention budget reached",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected service error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Native planning engine unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v2/validate": {
+      "post": {
+        "tags": [
+          "v2 WKT / WGS84"
+        ],
+        "summary": "Validate",
+        "operationId": "validate_api_v2_validate_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/server__v2__ValidateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationResponse"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Invalid input or unavailable resource",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Input or referenced constraints are invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown scene or job",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Job admission or retention budget reached",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected service error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Native planning engine unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v2/jobs": {
+      "post": {
+        "tags": [
+          "v2 WKT / WGS84"
+        ],
+        "summary": "Submit",
+        "operationId": "submit_api_v2_jobs_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BatchRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobSubmitted"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Invalid input or unavailable resource",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Input or referenced constraints are invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown scene or job",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Job admission or retention budget reached",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected service error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Native planning engine unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v2/jobs/{job_id}": {
+      "get": {
+        "tags": [
+          "v2 WKT / WGS84"
+        ],
+        "summary": "Job",
+        "operationId": "job_api_v2_jobs__job_id__get",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Job Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobResult"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Invalid input or unavailable resource",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Input or referenced constraints are invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown scene or job",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Job admission or retention budget reached",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected service error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Native planning engine unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v2/examples/single": {
+      "get": {
+        "tags": [
+          "v2 WKT / WGS84"
+        ],
+        "summary": "Example Single",
+        "operationId": "example_single_api_v2_examples_single_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SingleRequest"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Invalid input or unavailable resource",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Input or referenced constraints are invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown scene or job",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Job admission or retention budget reached",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected service error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Native planning engine unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v2/examples/batch": {
+      "get": {
+        "tags": [
+          "v2 WKT / WGS84"
+        ],
+        "summary": "Example Batch",
+        "operationId": "example_batch_api_v2_examples_batch_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BatchRequest"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Invalid input or unavailable resource",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Input or referenced constraints are invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown scene or job",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Job admission or retention budget reached",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected service error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Native planning engine unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "AircraftProfile": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id",
+            "default": "dji_mini_4_pro"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name",
+            "default": "DJI Mini 4 Pro (engineering planning profile)"
+          },
+          "max_speed_mps": {
+            "type": "number",
+            "title": "Max Speed Mps",
+            "default": 12,
+            "gt": 0
+          },
+          "cruise_speed_mps": {
+            "type": "number",
+            "title": "Cruise Speed Mps",
+            "default": 6,
+            "gt": 0
+          },
+          "climb_speed_mps": {
+            "type": "number",
+            "title": "Climb Speed Mps",
+            "default": 3,
+            "gt": 0
+          },
+          "descent_speed_mps": {
+            "type": "number",
+            "title": "Descent Speed Mps",
+            "default": 3,
+            "gt": 0
+          },
+          "max_yaw_rate_deg_s": {
+            "type": "number",
+            "title": "Max Yaw Rate Deg S",
+            "default": 60,
+            "gt": 0
+          },
+          "acceleration_mps2": {
+            "type": "number",
+            "title": "Acceleration Mps2",
+            "default": 2,
+            "gt": 0
+          },
+          "deceleration_mps2": {
+            "type": "number",
+            "title": "Deceleration Mps2",
+            "default": 2,
+            "gt": 0
+          },
+          "min_turn_radius_m": {
+            "type": "number",
+            "title": "Min Turn Radius M",
+            "default": 0,
+            "ge": 0
+          },
+          "radius_m": {
+            "type": "number",
+            "title": "Radius M",
+            "default": 0.3,
+            "gt": 0
+          },
+          "height_m": {
+            "type": "number",
+            "title": "Height M",
+            "default": 0.2,
+            "gt": 0
+          },
+          "safety_margin_m": {
+            "type": "number",
+            "title": "Safety Margin M",
+            "default": 5,
+            "ge": 0
+          },
+          "endurance_s": {
+            "type": "number",
+            "title": "Endurance S",
+            "default": 2040,
+            "gt": 0
+          },
+          "max_range_m": {
+            "type": "number",
+            "title": "Max Range M",
+            "default": 18000,
+            "gt": 0
+          },
+          "payload_kg": {
+            "type": "number",
+            "title": "Payload Kg",
+            "default": 0,
+            "ge": 0
+          },
+          "rtl_altitude_m": {
+            "type": "number",
+            "title": "Rtl Altitude M",
+            "default": 20,
+            "ge": 0
+          },
+          "can_hover": {
+            "type": "boolean",
+            "title": "Can Hover",
+            "default": true
+          },
+          "supported_bands": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Supported Bands"
+          },
+          "low_battery_percent": {
+            "type": "number",
+            "title": "Low Battery Percent",
+            "default": 20,
+            "ge": 0,
+            "le": 100
+          },
+          "engineering_values": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Engineering Values"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "AircraftProfile"
+      },
+      "AircraftState": {
+        "properties": {
+          "at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "At"
+          },
+          "battery_percent": {
+            "anyOf": [
+              {
+                "type": "number",
+                "ge": 0,
+                "le": 100
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Battery Percent"
+          },
+          "remaining_flight_time_s": {
+            "anyOf": [
+              {
+                "type": "number",
+                "ge": 0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Remaining Flight Time S"
+          },
+          "remaining_range_m": {
+            "anyOf": [
+              {
+                "type": "number",
+                "ge": 0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Remaining Range M"
+          },
+          "home_wkt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Home Wkt"
+          },
+          "alt_reference": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "MSL",
+                  "AGL",
+                  "ELLIPSOID",
+                  "QNE",
+                  "QNH"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Alt Reference"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "AircraftState"
+      },
+      "Airway": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Id"
+          },
+          "centerLine": {
+            "type": "string",
+            "title": "Centerline"
+          },
+          "widthMeters": {
+            "type": "number",
+            "title": "Widthmeters",
+            "gt": 0
+          },
+          "minAltitude": {
+            "type": "number",
+            "title": "Minaltitude"
+          },
+          "maxAltitude": {
+            "type": "number",
+            "title": "Maxaltitude"
+          },
+          "altReference": {
+            "type": "string",
+            "enum": [
+              "MSL",
+              "AGL",
+              "ELLIPSOID",
+              "QNE",
+              "QNH"
+            ],
+            "title": "Altreference"
+          },
+          "startGrid": {
+            "$ref": "#/components/schemas/GeographicBounds"
+          },
+          "endGrid": {
+            "$ref": "#/components/schemas/GeographicBounds"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "ACTIVE",
+              "INACTIVE"
+            ],
+            "title": "Status",
+            "default": "ACTIVE"
+          },
+          "direction": {
+            "type": "string",
+            "enum": [
+              "BOTH",
+              "FORWARD",
+              "REVERSE"
+            ],
+            "title": "Direction",
+            "default": "BOTH"
+          },
+          "valid_from": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Valid From"
+          },
+          "valid_to": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Valid To"
+          },
+          "climbConstraint": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ClimbConstraint"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "turnConstraint": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TurnConstraint"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "id",
+          "centerLine",
+          "widthMeters",
+          "minAltitude",
+          "maxAltitude",
+          "altReference",
+          "startGrid",
+          "endGrid"
+        ],
+        "title": "Airway"
+      },
+      "BatchRequest": {
+        "properties": {
+          "scene_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Scene Id"
+          },
+          "scene": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Scene"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "tasks": {
+            "items": {
+              "$ref": "#/components/schemas/Task-Output"
+            },
+            "type": "array",
+            "maxItems": 10000,
+            "minItems": 1,
+            "title": "Tasks"
+          },
+          "request_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Request Id"
+          },
+          "time_budget_s": {
+            "type": "number",
+            "maximum": 300.0,
+            "title": "Time Budget S",
+            "default": 10,
+            "gt": 0
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "tasks"
+        ],
+        "title": "BatchRequest"
+      },
+      "BatchResult": {
+        "properties": {
+          "planned_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Planned At"
+          },
+          "request_id": {
+            "type": "string",
+            "title": "Request Id"
+          },
+          "scene_id": {
+            "type": "string",
+            "title": "Scene Id"
+          },
+          "scene_version": {
+            "type": "string",
+            "title": "Scene Version"
+          },
+          "routes": {
+            "items": {
+              "$ref": "#/components/schemas/RouteResult"
+            },
+            "type": "array",
+            "title": "Routes"
+          },
+          "success_count": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Success Count"
+          },
+          "failed_count": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Failed Count"
+          },
+          "conflicts": {
+            "items": {
+              "$ref": "#/components/schemas/Conflict"
+            },
+            "type": "array",
+            "title": "Conflicts"
+          },
+          "elapsed_ms": {
+            "type": "number",
+            "title": "Elapsed Ms",
+            "ge": 0
+          },
+          "engine": {
+            "type": "string",
+            "title": "Engine"
+          },
+          "coordinate_context": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/JsonValue"
+            },
+            "type": "object",
+            "title": "Coordinate Context"
+          },
+          "stage_timings_ms": {
+            "additionalProperties": {
+              "type": "number",
+              "ge": 0
+            },
+            "type": "object",
+            "title": "Stage Timings Ms"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "planned_at",
+          "request_id",
+          "scene_id",
+          "scene_version",
+          "routes",
+          "success_count",
+          "failed_count",
+          "elapsed_ms",
+          "engine"
+        ],
+        "title": "BatchResult"
+      },
+      "Bounds3D": {
+        "properties": {
+          "x_min": {
+            "type": "number",
+            "title": "X Min"
+          },
+          "x_max": {
+            "type": "number",
+            "title": "X Max"
+          },
+          "y_min": {
+            "type": "number",
+            "title": "Y Min"
+          },
+          "y_max": {
+            "type": "number",
+            "title": "Y Max"
+          },
+          "z_min": {
+            "type": "number",
+            "title": "Z Min"
+          },
+          "z_max": {
+            "type": "number",
+            "title": "Z Max"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "x_min",
+          "x_max",
+          "y_min",
+          "y_max",
+          "z_min",
+          "z_max"
+        ],
+        "title": "Bounds3D"
+      },
+      "Capabilities": {
+        "properties": {
+          "api_version": {
+            "type": "string",
+            "title": "Api Version"
+          },
+          "route_modes": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Route Modes"
+          },
+          "default_route_mode": {
+            "type": "string",
+            "title": "Default Route Mode"
+          },
+          "rule_types": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Rule Types"
+          },
+          "altitude_references": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Altitude References"
+          },
+          "geometric_tolerance_m": {
+            "type": "number",
+            "title": "Geometric Tolerance M"
+          },
+          "max_scene_radius_m": {
+            "type": "number",
+            "title": "Max Scene Radius M"
+          },
+          "grid_formats": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Grid Formats"
+          },
+          "scene_lifecycle": {
+            "type": "string",
+            "title": "Scene Lifecycle"
+          },
+          "scene_limits": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "type": "object",
+            "title": "Scene Limits"
+          },
+          "max_registered_scenes": {
+            "type": "integer",
+            "title": "Max Registered Scenes"
+          },
+          "max_registered_scene_bytes": {
+            "type": "integer",
+            "title": "Max Registered Scene Bytes"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "api_version",
+          "route_modes",
+          "default_route_mode",
+          "rule_types",
+          "altitude_references",
+          "geometric_tolerance_m",
+          "max_scene_radius_m",
+          "grid_formats",
+          "scene_lifecycle",
+          "scene_limits",
+          "max_registered_scenes",
+          "max_registered_scene_bytes"
+        ],
+        "title": "Capabilities"
+      },
+      "ClimbConstraint": {
+        "properties": {
+          "maxClimbRate": {
+            "type": "number",
+            "title": "Maxclimbrate",
+            "gt": 0
+          },
+          "maxDescentRate": {
+            "type": "number",
+            "title": "Maxdescentrate",
+            "gt": 0
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "maxClimbRate",
+          "maxDescentRate"
+        ],
+        "title": "ClimbConstraint"
+      },
+      "Conflict": {
+        "properties": {
+          "task_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Task Ids"
+          },
+          "start_time_s": {
+            "type": "number",
+            "title": "Start Time S",
+            "ge": 0
+          },
+          "end_time_s": {
+            "type": "number",
+            "title": "End Time S",
+            "ge": 0
+          },
+          "minimum_distance_m": {
+            "anyOf": [
+              {
+                "type": "number",
+                "ge": 0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Minimum Distance M"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "task_ids",
+          "start_time_s",
+          "end_time_s"
+        ],
+        "title": "Conflict"
+      },
+      "Connector": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Id"
+          },
+          "geometry_wkt": {
+            "type": "string",
+            "title": "Geometry Wkt"
+          },
+          "min_altitude": {
+            "type": "number",
+            "title": "Min Altitude"
+          },
+          "max_altitude": {
+            "type": "number",
+            "title": "Max Altitude"
+          },
+          "alt_reference": {
+            "type": "string",
+            "enum": [
+              "MSL",
+              "AGL",
+              "ELLIPSOID",
+              "QNE",
+              "QNH"
+            ],
+            "title": "Alt Reference"
+          },
+          "buffer_m": {
+            "type": "number",
+            "title": "Buffer M",
+            "default": 0,
+            "ge": 0
+          },
+          "valid_from": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Valid From"
+          },
+          "valid_to": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Valid To"
+          },
+          "airway_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Airway Ids"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "id",
+          "geometry_wkt",
+          "min_altitude",
+          "max_altitude",
+          "alt_reference"
+        ],
+        "title": "Connector"
+      },
+      "ControlZone": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Id"
+          },
+          "geom": {
+            "type": "string",
+            "title": "Geom"
+          },
+          "boundary2d": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Boundary2D"
+          },
+          "centerPoint": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Centerpoint"
+          },
+          "minAlt": {
+            "type": "number",
+            "title": "Minalt"
+          },
+          "maxAlt": {
+            "type": "number",
+            "title": "Maxalt"
+          },
+          "zoneType": {
+            "type": "string",
+            "title": "Zonetype"
+          },
+          "shapeParams": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/JsonValue"
+            },
+            "type": "object",
+            "title": "Shapeparams"
+          },
+          "altReference": {
+            "type": "string",
+            "enum": [
+              "MSL",
+              "AGL",
+              "ELLIPSOID",
+              "QNE",
+              "QNH"
+            ],
+            "title": "Altreference"
+          },
+          "areaM2": {
+            "anyOf": [
+              {
+                "type": "number",
+                "ge": 0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Aream2"
+          },
+          "volumeM3": {
+            "anyOf": [
+              {
+                "type": "number",
+                "ge": 0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Volumem3"
+          },
+          "level": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Level"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "ACTIVE",
+              "INACTIVE"
+            ],
+            "title": "Status",
+            "default": "ACTIVE"
+          },
+          "effective_start": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Effective Start"
+          },
+          "effective_end": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Effective End"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "id",
+          "geom",
+          "minAlt",
+          "maxAlt",
+          "zoneType",
+          "altReference"
+        ],
+        "title": "ControlZone"
+      },
+      "CoordinateRequest": {
+        "properties": {
+          "geometries_wkt": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "minItems": 1,
+            "title": "Geometries Wkt"
+          },
+          "direction": {
+            "type": "string",
+            "enum": [
+              "wgs84_to_local",
+              "local_to_wgs84"
+            ],
+            "title": "Direction"
+          },
+          "alt_reference": {
+            "type": "string",
+            "enum": [
+              "MSL",
+              "AGL",
+              "ELLIPSOID",
+              "QNE",
+              "QNH"
+            ],
+            "title": "Alt Reference"
+          },
+          "coordinates": {
+            "$ref": "#/components/schemas/CoordinateSpec"
+          },
+          "at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "At"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "geometries_wkt",
+          "direction",
+          "alt_reference",
+          "coordinates"
+        ],
+        "title": "CoordinateRequest"
+      },
+      "CoordinateResponse": {
+        "properties": {
+          "geometries_wkt": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Geometries Wkt"
+          },
+          "direction": {
+            "type": "string",
+            "enum": [
+              "wgs84_to_local",
+              "local_to_wgs84"
+            ],
+            "title": "Direction"
+          },
+          "alt_reference": {
+            "type": "string",
+            "enum": [
+              "MSL",
+              "AGL",
+              "ELLIPSOID",
+              "QNE",
+              "QNH"
+            ],
+            "title": "Alt Reference"
+          },
+          "coordinate_context": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/JsonValue"
+            },
+            "type": "object",
+            "title": "Coordinate Context"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "geometries_wkt",
+          "direction",
+          "alt_reference",
+          "coordinate_context"
+        ],
+        "title": "CoordinateResponse"
+      },
+      "CoordinateSpec": {
+        "properties": {
+          "origin_lon": {
+            "type": "number",
+            "title": "Origin Lon",
+            "ge": -180,
+            "le": 180
+          },
+          "origin_lat": {
+            "type": "number",
+            "title": "Origin Lat",
+            "ge": -90,
+            "le": 90
+          },
+          "origin_alt_msl": {
+            "type": "number",
+            "title": "Origin Alt Msl",
+            "default": 0
+          },
+          "max_radius_m": {
+            "type": "number",
+            "title": "Max Radius M",
+            "default": 50000,
+            "gt": 0,
+            "le": 50000
+          },
+          "terrain_msl_m": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Terrain Msl M"
+          },
+          "geoid_separation_m": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Geoid Separation M"
+          },
+          "terrain_source": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Terrain Source"
+          },
+          "geoid_source": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Geoid Source"
+          },
+          "height_corrections": {
+            "items": {
+              "$ref": "#/components/schemas/HeightCorrection"
+            },
+            "type": "array",
+            "title": "Height Corrections"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "origin_lon",
+          "origin_lat"
+        ],
+        "title": "CoordinateSpec"
+      },
+      "Dataset": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Id"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "terrain",
+              "weather",
+              "signal",
+              "noise",
+              "area",
+              "grid",
+              "risk",
+              "corridor"
+            ],
+            "title": "Kind"
+          },
+          "version": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Version"
+          },
+          "valid_from": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Valid From"
+          },
+          "valid_to": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Valid To"
+          },
+          "cells": {
+            "items": {
+              "$ref": "#/components/schemas/FieldCell"
+            },
+            "type": "array",
+            "title": "Cells"
+          },
+          "geometry_wkt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Geometry Wkt"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "id",
+          "kind",
+          "version"
+        ],
+        "title": "Dataset"
+      },
+      "DynamicObstacle": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id",
+            "description": "障碍物唯一 ID"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name",
+            "description": "显示名",
+            "default": "unnamed"
+          },
+          "type": {
+            "type": "string",
+            "title": "Type",
+            "description": "uav / vehicle / bird_flock / other",
+            "default": "other"
+          },
+          "safety_radius": {
+            "type": "number",
+            "title": "Safety Radius",
+            "description": "安全避让半径（米）",
+            "default": 10.0
+          },
+          "source": {
+            "type": "string",
+            "title": "Source",
+            "description": "数据源标识",
+            "default": "api"
+          },
+          "trajectory": {
+            "items": {
+              "$ref": "#/components/schemas/TrajectoryPoint"
+            },
+            "type": "array",
+            "title": "Trajectory",
+            "description": "轨迹点列表（按时间递增）"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "id",
+          "trajectory"
+        ],
+        "title": "DynamicObstacle",
+        "description": "动态障碍物：轨迹点线性插值 + 安全半径"
+      },
+      "ErrorBody": {
+        "properties": {
+          "code": {
+            "type": "string",
+            "title": "Code"
+          },
+          "message": {
+            "type": "string",
+            "title": "Message"
+          },
+          "detail": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/JsonValue"
+            },
+            "type": "object",
+            "title": "Detail"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "code",
+          "message"
+        ],
+        "title": "ErrorBody"
+      },
+      "ErrorEnvelope": {
+        "properties": {
+          "error": {
+            "$ref": "#/components/schemas/ErrorBody"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "error"
+        ],
+        "title": "ErrorEnvelope"
+      },
+      "FieldCell": {
+        "properties": {
+          "geometry_wkt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Geometry Wkt"
+          },
+          "bounds": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Bounds3D"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "min_altitude": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Min Altitude"
+          },
+          "max_altitude": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Altitude"
+          },
+          "values": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/JsonValue"
+            },
+            "type": "object",
+            "title": "Values"
+          },
+          "valid_from": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Valid From"
+          },
+          "valid_to": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Valid To"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "values"
+        ],
+        "title": "FieldCell"
+      },
+      "GeographicBounds": {
+        "properties": {
+          "minLon": {
+            "type": "number",
+            "title": "Minlon",
+            "ge": -180,
+            "le": 180
+          },
+          "maxLon": {
+            "type": "number",
+            "title": "Maxlon",
+            "ge": -180,
+            "le": 180
+          },
+          "minLat": {
+            "type": "number",
+            "title": "Minlat",
+            "ge": -90,
+            "le": 90
+          },
+          "maxLat": {
+            "type": "number",
+            "title": "Maxlat",
+            "ge": -90,
+            "le": 90
+          },
+          "minAlt": {
+            "type": "number",
+            "title": "Minalt"
+          },
+          "maxAlt": {
+            "type": "number",
+            "title": "Maxalt"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "minLon",
+          "maxLon",
+          "minLat",
+          "maxLat",
+          "minAlt",
+          "maxAlt"
+        ],
+        "title": "GeographicBounds"
+      },
+      "GridCell": {
+        "properties": {
+          "bounds": {
+            "$ref": "#/components/schemas/Bounds3D"
+          },
+          "code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Code"
+          },
+          "occupied": {
+            "type": "boolean",
+            "title": "Occupied",
+            "default": true
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "bounds"
+        ],
+        "title": "GridCell"
+      },
+      "GridRange": {
+        "properties": {
+          "start": {
+            "prefixItems": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "integer"
+              },
+              {
+                "type": "integer"
+              }
+            ],
+            "type": "array",
+            "maxItems": 3,
+            "minItems": 3,
+            "title": "Start"
+          },
+          "end": {
+            "prefixItems": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "integer"
+              },
+              {
+                "type": "integer"
+              }
+            ],
+            "type": "array",
+            "maxItems": 3,
+            "minItems": 3,
+            "title": "End"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "start",
+          "end"
+        ],
+        "title": "GridRange"
+      },
+      "GridSpec": {
+        "properties": {
+          "crs": {
+            "type": "string",
+            "title": "Crs",
+            "default": "LOCAL_AEQD"
+          },
+          "origin": {
+            "prefixItems": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "number"
+              }
+            ],
+            "type": "array",
+            "maxItems": 3,
+            "minItems": 3,
+            "title": "Origin"
+          },
+          "resolution": {
+            "prefixItems": [
+              {
+                "type": "number",
+                "gt": 0
+              },
+              {
+                "type": "number",
+                "gt": 0
+              },
+              {
+                "type": "number",
+                "gt": 0
+              }
+            ],
+            "type": "array",
+            "maxItems": 3,
+            "minItems": 3,
+            "title": "Resolution"
+          },
+          "shape": {
+            "prefixItems": [
+              {
+                "type": "integer",
+                "exclusiveMinimum": 0.0
+              },
+              {
+                "type": "integer",
+                "exclusiveMinimum": 0.0
+              },
+              {
+                "type": "integer",
+                "exclusiveMinimum": 0.0
+              }
+            ],
+            "type": "array",
+            "maxItems": 3,
+            "minItems": 3,
+            "title": "Shape"
+          },
+          "occupied": {
+            "items": {
+              "prefixItems": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "integer"
+                }
+              ],
+              "type": "array",
+              "maxItems": 3,
+              "minItems": 3
+            },
+            "type": "array",
+            "title": "Occupied"
+          },
+          "occupied_ranges": {
+            "items": {
+              "$ref": "#/components/schemas/GridRange"
+            },
+            "type": "array",
+            "title": "Occupied Ranges"
+          },
+          "cells": {
+            "items": {
+              "$ref": "#/components/schemas/GridCell"
+            },
+            "type": "array",
+            "title": "Cells"
+          },
+          "codes": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object",
+            "title": "Codes"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "origin",
+          "resolution",
+          "shape"
+        ],
+        "title": "GridSpec"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "type": "array",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "title": "HTTPValidationError"
+      },
+      "HeightCorrection": {
+        "properties": {
+          "reference": {
+            "type": "string",
+            "enum": [
+              "QNE",
+              "QNH"
+            ],
+            "title": "Reference"
+          },
+          "offset_m": {
+            "type": "number",
+            "title": "Offset M"
+          },
+          "source": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Source"
+          },
+          "version": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Version"
+          },
+          "valid_from": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Valid From"
+          },
+          "valid_to": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Valid To"
+          },
+          "geometry_wkt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Geometry Wkt"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "reference",
+          "offset_m",
+          "source",
+          "version",
+          "valid_from",
+          "valid_to"
+        ],
+        "title": "HeightCorrection"
+      },
+      "JobError": {
+        "properties": {
+          "code": {
+            "type": "string",
+            "title": "Code"
+          },
+          "message": {
+            "type": "string",
+            "title": "Message"
+          },
+          "detail": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/JsonValue"
+            },
+            "type": "object",
+            "title": "Detail"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "code",
+          "message"
+        ],
+        "title": "JobError"
+      },
+      "JobResult": {
+        "properties": {
+          "job_id": {
+            "type": "string",
+            "title": "Job Id"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "running",
+              "succeeded",
+              "failed"
+            ],
+            "title": "Status"
+          },
+          "created_at": {
+            "type": "string",
+            "title": "Created At"
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started At"
+          },
+          "finished_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finished At"
+          },
+          "elapsed_ms": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Elapsed Ms"
+          },
+          "result": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/BatchResult"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "error": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/JobError"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "job_id",
+          "status",
+          "created_at"
+        ],
+        "title": "JobResult"
+      },
+      "JobStatusResponse": {
+        "properties": {
+          "job_id": {
+            "type": "string",
+            "title": "Job Id"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status",
+            "description": "pending / running / succeeded / failed"
+          },
+          "created_at": {
+            "type": "string",
+            "title": "Created At",
+            "description": "提交时间（ISO 8601）"
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started At",
+            "description": "开始执行时间"
+          },
+          "finished_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finished At",
+            "description": "结束时间"
+          },
+          "elapsed_ms": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Elapsed Ms",
+            "description": "执行耗时（毫秒）"
+          },
+          "result": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Result",
+            "description": "成功时的规划结果"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error",
+            "description": "失败时的错误信封"
+          }
+        },
+        "type": "object",
+        "required": [
+          "job_id",
+          "status",
+          "created_at"
+        ],
+        "title": "JobStatusResponse",
+        "description": "GET /api/v1/jobs/{job_id} 响应"
+      },
+      "JobSubmitResponse": {
+        "properties": {
+          "job_id": {
+            "type": "string",
+            "title": "Job Id",
+            "description": "作业 ID，用于轮询 GET /api/v1/jobs/{job_id}"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status",
+            "description": "pending / running / succeeded / failed"
+          },
+          "poll_url": {
+            "type": "string",
+            "title": "Poll Url",
+            "description": "轮询地址"
+          }
+        },
+        "type": "object",
+        "required": [
+          "job_id",
+          "status",
+          "poll_url"
+        ],
+        "title": "JobSubmitResponse",
+        "description": "POST /api/v1/jobs 响应"
+      },
+      "JobSubmitted": {
+        "properties": {
+          "job_id": {
+            "type": "string",
+            "title": "Job Id"
+          },
+          "status": {
+            "type": "string",
+            "const": "pending",
+            "title": "Status"
+          },
+          "poll_url": {
+            "type": "string",
+            "title": "Poll Url"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "job_id",
+          "status",
+          "poll_url"
+        ],
+        "title": "JobSubmitted"
+      },
+      "JsonValue": {},
+      "Keypoint": {
+        "properties": {
+          "types": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Types"
+          },
+          "wkt": {
+            "type": "string",
+            "title": "Wkt"
+          },
+          "time_s": {
+            "type": "number",
+            "title": "Time S",
+            "ge": 0
+          },
+          "grid_indices": {
+            "anyOf": [
+              {
+                "prefixItems": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "integer"
+                  }
+                ],
+                "type": "array",
+                "maxItems": 3,
+                "minItems": 3
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Grid Indices"
+          },
+          "grid_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Grid Code"
+          },
+          "waypoint_index": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Waypoint Index"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "types",
+          "wkt",
+          "time_s"
+        ],
+        "title": "Keypoint"
+      },
+      "MotionSegment": {
+        "properties": {
+          "airway_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Airway Ids"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "line",
+              "arc",
+              "climb",
+              "descent",
+              "hover",
+              "yaw"
+            ],
+            "title": "Kind"
+          },
+          "start_time_s": {
+            "type": "number",
+            "title": "Start Time S",
+            "ge": 0
+          },
+          "end_time_s": {
+            "type": "number",
+            "title": "End Time S",
+            "ge": 0
+          },
+          "start": {
+            "prefixItems": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "number"
+              }
+            ],
+            "type": "array",
+            "maxItems": 3,
+            "minItems": 3,
+            "title": "Start"
+          },
+          "end": {
+            "prefixItems": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "number"
+              }
+            ],
+            "type": "array",
+            "maxItems": 3,
+            "minItems": 3,
+            "title": "End"
+          },
+          "length_m": {
+            "type": "number",
+            "title": "Length M",
+            "default": 0,
+            "ge": 0
+          },
+          "distance_m": {
+            "type": "number",
+            "title": "Distance M",
+            "default": 0,
+            "ge": 0
+          },
+          "points": {
+            "items": {
+              "prefixItems": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "number"
+                }
+              ],
+              "type": "array",
+              "maxItems": 3,
+              "minItems": 3
+            },
+            "type": "array",
+            "title": "Points"
+          },
+          "times_s": {
+            "items": {
+              "type": "number",
+              "ge": 0
+            },
+            "type": "array",
+            "title": "Times S"
+          },
+          "max_speed_mps": {
+            "anyOf": [
+              {
+                "type": "number",
+                "ge": 0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Speed Mps"
+          },
+          "radius_m": {
+            "anyOf": [
+              {
+                "type": "number",
+                "ge": 0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Radius M"
+          },
+          "center": {
+            "anyOf": [
+              {
+                "prefixItems": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "number"
+                  }
+                ],
+                "type": "array",
+                "maxItems": 3,
+                "minItems": 3
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Center"
+          },
+          "start_speed_mps": {
+            "anyOf": [
+              {
+                "type": "number",
+                "ge": 0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Start Speed Mps"
+          },
+          "end_speed_mps": {
+            "anyOf": [
+              {
+                "type": "number",
+                "ge": 0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "End Speed Mps"
+          },
+          "acceleration_mps2": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Acceleration Mps2"
+          },
+          "deceleration_mps2": {
+            "anyOf": [
+              {
+                "type": "number",
+                "ge": 0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Deceleration Mps2"
+          },
+          "peak_speed_mps": {
+            "anyOf": [
+              {
+                "type": "number",
+                "ge": 0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Peak Speed Mps"
+          },
+          "accel_time_s": {
+            "anyOf": [
+              {
+                "type": "number",
+                "ge": 0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Accel Time S"
+          },
+          "cruise_time_s": {
+            "anyOf": [
+              {
+                "type": "number",
+                "ge": 0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cruise Time S"
+          },
+          "decel_time_s": {
+            "anyOf": [
+              {
+                "type": "number",
+                "ge": 0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Decel Time S"
+          },
+          "sweep_angle_deg": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sweep Angle Deg"
+          },
+          "profile": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/JsonValue"
+            },
+            "type": "object",
+            "title": "Profile"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "kind",
+          "start_time_s",
+          "end_time_s",
+          "start",
+          "end"
+        ],
+        "title": "MotionSegment"
+      },
+      "PlanBatchRequest": {
+        "properties": {
+          "tasks": {
+            "items": {
+              "$ref": "#/components/schemas/server__schemas__Task"
+            },
+            "type": "array",
+            "title": "Tasks",
+            "description": "任务列表"
+          },
+          "aircraft": {
+            "anyOf": [
+              {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Aircraft",
+            "description": "飞行器列表，或 {id: {...}} 字典；任务引用的 ID 必须存在"
+          },
+          "config": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SpaceTimeConfig"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "static_obstacles": {
+            "items": {
+              "$ref": "#/components/schemas/StaticObstacle"
+            },
+            "type": "array",
+            "title": "Static Obstacles"
+          },
+          "dynamic_obstacles": {
+            "items": {
+              "$ref": "#/components/schemas/DynamicObstacle"
+            },
+            "type": "array",
+            "title": "Dynamic Obstacles"
+          },
+          "max_workers": {
+            "type": "integer",
+            "title": "Max Workers",
+            "description": "并行线程数",
+            "default": 4
+          },
+          "dispatch": {
+            "type": "boolean",
+            "title": "Dispatch",
+            "description": "调度模式：跳过 risk/heading 计算（约省 8%），适用于只看可行性",
+            "default": false
+          },
+          "conflict_avoidance": {
+            "type": "boolean",
+            "title": "Conflict Avoidance",
+            "description": "是否做多机冲突避免",
+            "default": true
+          },
+          "min_separation": {
+            "type": "number",
+            "title": "Min Separation",
+            "description": "多机最小安全间隔（米）",
+            "default": 10.0
+          },
+          "cost_grid": {
+            "type": "boolean",
+            "title": "Cost Grid",
+            "description": "是否启用通行代价层",
+            "default": true
+          },
+          "clearance": {
+            "type": "number",
+            "title": "Clearance",
+            "description": "净空膨胀半径（米）",
+            "default": 200.0
+          },
+          "clearance_cost": {
+            "type": "number",
+            "title": "Clearance Cost",
+            "description": "净空区通行代价倍率",
+            "default": 3.0
+          },
+          "max_iterations": {
+            "type": "integer",
+            "title": "Max Iterations",
+            "description": "单任务 A* 最大迭代次数",
+            "default": 200000
+          },
+          "request_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Request Id",
+            "description": "请求标识"
+          },
+          "validate_tasks": {
+            "type": "boolean",
+            "title": "Validate Tasks",
+            "description": "是否先做飞行器需求兼容性校验并剔除不兼容任务（plan_from_dir 默认开启以与 CLI 对齐，此处默认关闭以如实报告失败）",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "tasks"
+        ],
+        "title": "PlanBatchRequest",
+        "description": "POST /api/v1/plan/batch 与 POST /api/v1/jobs 请求体"
+      },
+      "PlanSingleRequest": {
+        "properties": {
+          "start": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Point"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "起点；与 waypoints 二选一"
+          },
+          "goal": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Point"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "终点；与 waypoints 二选一"
+          },
+          "waypoints": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/server__schemas__Waypoint"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Waypoints",
+            "description": "完整航点序列（含中间经停）；与 start/goal 互斥"
+          },
+          "config": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SpaceTimeConfig"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "时空网格配置，缺省用默认值"
+          },
+          "static_obstacles": {
+            "items": {
+              "$ref": "#/components/schemas/StaticObstacle"
+            },
+            "type": "array",
+            "title": "Static Obstacles"
+          },
+          "dynamic_obstacles": {
+            "items": {
+              "$ref": "#/components/schemas/DynamicObstacle"
+            },
+            "type": "array",
+            "title": "Dynamic Obstacles"
+          },
+          "aircraft": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Aircraft",
+            "description": "飞行器性能，缺省用 15 m/s 通用四旋翼"
+          },
+          "start_time": {
+            "type": "number",
+            "title": "Start Time",
+            "description": "起飞时刻（秒）",
+            "default": 0.0
+          },
+          "priority": {
+            "type": "integer",
+            "title": "Priority",
+            "description": "调度优先级 1-10",
+            "default": 5
+          },
+          "objective_weights": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "number"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Objective Weights",
+            "description": "多目标权重，和须为 1.0"
+          },
+          "optimize": {
+            "type": "boolean",
+            "title": "Optimize",
+            "description": "是否做多目标航线优化",
+            "default": true
+          },
+          "cost_grid": {
+            "type": "boolean",
+            "title": "Cost Grid",
+            "description": "是否启用通行代价层",
+            "default": true
+          },
+          "clearance": {
+            "type": "number",
+            "title": "Clearance",
+            "description": "净空膨胀半径（米）",
+            "default": 200.0
+          },
+          "clearance_cost": {
+            "type": "number",
+            "title": "Clearance Cost",
+            "description": "净空区通行代价倍率",
+            "default": 3.0
+          },
+          "max_iterations": {
+            "type": "integer",
+            "title": "Max Iterations",
+            "description": "A* 最大迭代次数",
+            "default": 2000000
+          },
+          "validate": {
+            "type": "boolean",
+            "title": "Validate",
+            "description": "是否附带路径合法性验证",
+            "default": true
+          },
+          "task_id": {
+            "type": "string",
+            "title": "Task Id",
+            "description": "任务标识",
+            "default": "task-001"
+          }
+        },
+        "type": "object",
+        "title": "PlanSingleRequest",
+        "description": "POST /api/v1/plan/single 请求体"
+      },
+      "Point": {
+        "properties": {
+          "x": {
+            "type": "number",
+            "title": "X",
+            "description": "X 坐标（米）"
+          },
+          "y": {
+            "type": "number",
+            "title": "Y",
+            "description": "Y 坐标（米）"
+          },
+          "z": {
+            "type": "number",
+            "title": "Z",
+            "description": "Z 坐标（米）"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "x",
+          "y",
+          "z"
+        ],
+        "title": "Point",
+        "description": "空间点，单位米"
+      },
+      "RouteInput": {
+        "properties": {
+          "route_id": {
+            "type": "string",
+            "title": "Route Id",
+            "description": "航线 ID",
+            "default": "external-route"
+          },
+          "task_id": {
+            "type": "string",
+            "title": "Task Id",
+            "description": "任务 ID",
+            "default": "external-task"
+          },
+          "aircraft_id": {
+            "type": "string",
+            "title": "Aircraft Id",
+            "description": "飞行器 ID",
+            "default": "external-uav"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status",
+            "description": "planned / failed / partial",
+            "default": "planned"
+          },
+          "total_distance": {
+            "type": "number",
+            "title": "Total Distance",
+            "description": "自报总里程（米），可选",
+            "default": 0.0
+          },
+          "total_time": {
+            "type": "number",
+            "title": "Total Time",
+            "description": "自报总时长（秒），可选",
+            "default": 0.0
+          },
+          "trajectory": {
+            "items": {
+              "$ref": "#/components/schemas/TrajectoryPoint"
+            },
+            "type": "array",
+            "title": "Trajectory",
+            "description": "轨迹点序列"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "trajectory"
+        ],
+        "title": "RouteInput",
+        "description": "待校验的航线（可由外部系统给出，不必是本算法产出）"
+      },
+      "RouteMetrics": {
+        "properties": {
+          "distance_m": {
+            "type": "number",
+            "title": "Distance M",
+            "default": 0,
+            "ge": 0
+          },
+          "flight_time_s": {
+            "type": "number",
+            "title": "Flight Time S",
+            "default": 0,
+            "ge": 0
+          },
+          "wait_time_s": {
+            "type": "number",
+            "title": "Wait Time S",
+            "default": 0,
+            "ge": 0
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "RouteMetrics"
+      },
+      "RouteResult": {
+        "properties": {
+          "task_id": {
+            "type": "string",
+            "title": "Task Id"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "planned",
+              "failed",
+              "timeout"
+            ],
+            "title": "Status"
+          },
+          "code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Code"
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": ""
+          },
+          "route_mode": {
+            "type": "string",
+            "enum": [
+              "strict",
+              "prefer",
+              "free"
+            ],
+            "title": "Route Mode"
+          },
+          "trajectory_wkt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Trajectory Wkt"
+          },
+          "start_wkt": {
+            "type": "string",
+            "title": "Start Wkt"
+          },
+          "goal_wkt": {
+            "type": "string",
+            "title": "Goal Wkt"
+          },
+          "departure_time": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Departure Time"
+          },
+          "time_origin": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Time Origin"
+          },
+          "action": {
+            "type": "string",
+            "enum": [
+              "mission",
+              "return_to_home"
+            ],
+            "title": "Action",
+            "default": "mission"
+          },
+          "vertex_times_s": {
+            "items": {
+              "type": "number",
+              "ge": 0
+            },
+            "type": "array",
+            "title": "Vertex Times S"
+          },
+          "motion_segments": {
+            "items": {
+              "$ref": "#/components/schemas/MotionSegment"
+            },
+            "type": "array",
+            "title": "Motion Segments"
+          },
+          "keypoints": {
+            "items": {
+              "$ref": "#/components/schemas/Keypoint"
+            },
+            "type": "array",
+            "title": "Keypoints"
+          },
+          "metrics": {
+            "$ref": "#/components/schemas/RouteMetrics"
+          },
+          "validation": {
+            "$ref": "#/components/schemas/RouteValidation"
+          },
+          "rule_report": {
+            "items": {
+              "$ref": "#/components/schemas/RuleReport"
+            },
+            "type": "array",
+            "title": "Rule Report"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "task_id",
+          "status",
+          "route_mode",
+          "start_wkt",
+          "goal_wkt",
+          "departure_time"
+        ],
+        "title": "RouteResult"
+      },
+      "RouteValidation": {
+        "properties": {
+          "valid": {
+            "type": "boolean",
+            "title": "Valid"
+          },
+          "violations": {
+            "items": {
+              "$ref": "#/components/schemas/Violation"
+            },
+            "type": "array",
+            "title": "Violations"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "valid"
+        ],
+        "title": "RouteValidation"
+      },
+      "Rule": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Id"
+          },
+          "rule_type": {
+            "type": "string",
+            "enum": [
+              "HEIGHT_LAYER",
+              "WIDTH",
+              "DIRECTION",
+              "SPEED",
+              "TIME",
+              "AREA",
+              "CLIMB",
+              "TURN",
+              "SEPARATION",
+              "NO_FLY",
+              "BUILDING",
+              "ZONE",
+              "WEATHER",
+              "SIGNAL",
+              "PRIORITY",
+              "HOVER",
+              "ENDURANCE",
+              "PAYLOAD",
+              "WAYPOINT",
+              "RTL"
+            ],
+            "title": "Rule Type"
+          },
+          "content": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/JsonValue"
+            },
+            "type": "object",
+            "title": "Content"
+          },
+          "resource_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Resource Ids"
+          },
+          "effective_start": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Effective Start"
+          },
+          "effective_end": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Effective End"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "id",
+          "rule_type",
+          "content"
+        ],
+        "title": "Rule"
+      },
+      "RuleReport": {
+        "properties": {
+          "rule_id": {
+            "type": "string",
+            "title": "Rule Id"
+          },
+          "rule_type": {
+            "type": "string",
+            "enum": [
+              "HEIGHT_LAYER",
+              "WIDTH",
+              "DIRECTION",
+              "SPEED",
+              "TIME",
+              "AREA",
+              "CLIMB",
+              "TURN",
+              "SEPARATION",
+              "NO_FLY",
+              "BUILDING",
+              "ZONE",
+              "WEATHER",
+              "SIGNAL",
+              "PRIORITY",
+              "HOVER",
+              "ENDURANCE",
+              "PAYLOAD",
+              "WAYPOINT",
+              "RTL"
+            ],
+            "title": "Rule Type"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "applied",
+              "not_applicable",
+              "inactive",
+              "failed",
+              "unsupported"
+            ],
+            "title": "Status"
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": ""
+          },
+          "details": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/JsonValue"
+            },
+            "type": "object",
+            "title": "Details"
+          },
+          "reasons": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Reasons"
+          },
+          "dataset_versions": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object",
+            "title": "Dataset Versions"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "rule_id",
+          "rule_type",
+          "status"
+        ],
+        "title": "RuleReport"
+      },
+      "Scene": {
+        "properties": {
+          "coordinates": {
+            "$ref": "#/components/schemas/CoordinateSpec"
+          },
+          "bounds": {
+            "$ref": "#/components/schemas/Bounds3D"
+          },
+          "resolution": {
+            "prefixItems": [
+              {
+                "type": "number",
+                "gt": 0
+              },
+              {
+                "type": "number",
+                "gt": 0
+              },
+              {
+                "type": "number",
+                "gt": 0
+              }
+            ],
+            "type": "array",
+            "maxItems": 3,
+            "minItems": 3,
+            "title": "Resolution",
+            "default": [
+              25,
+              25,
+              10
+            ]
+          },
+          "horizon_s": {
+            "type": "number",
+            "maximum": 86400.0,
+            "title": "Horizon S",
+            "default": 3600,
+            "gt": 0
+          },
+          "time_origin": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Time Origin"
+          },
+          "airways": {
+            "items": {
+              "$ref": "#/components/schemas/Airway"
+            },
+            "type": "array",
+            "title": "Airways"
+          },
+          "connectors": {
+            "items": {
+              "$ref": "#/components/schemas/Connector"
+            },
+            "type": "array",
+            "title": "Connectors"
+          },
+          "obstacles": {
+            "items": {
+              "$ref": "#/components/schemas/Volume"
+            },
+            "type": "array",
+            "title": "Obstacles"
+          },
+          "dynamic_obstacles": {
+            "items": {
+              "$ref": "#/components/schemas/TimedTrajectory"
+            },
+            "type": "array",
+            "title": "Dynamic Obstacles"
+          },
+          "control_zones": {
+            "items": {
+              "$ref": "#/components/schemas/ControlZone"
+            },
+            "type": "array",
+            "title": "Control Zones"
+          },
+          "rules": {
+            "items": {
+              "$ref": "#/components/schemas/Rule"
+            },
+            "type": "array",
+            "title": "Rules"
+          },
+          "datasets": {
+            "items": {
+              "$ref": "#/components/schemas/Dataset"
+            },
+            "type": "array",
+            "title": "Datasets"
+          },
+          "profiles": {
+            "items": {
+              "$ref": "#/components/schemas/AircraftProfile"
+            },
+            "type": "array",
+            "title": "Profiles"
+          },
+          "grid": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/GridSpec"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "coordinates",
+          "bounds",
+          "time_origin"
+        ],
+        "title": "Scene"
+      },
+      "SceneResponse": {
+        "properties": {
+          "scene_id": {
+            "type": "string",
+            "title": "Scene Id"
+          },
+          "scene_version": {
+            "type": "string",
+            "title": "Scene Version"
+          },
+          "status": {
+            "type": "string",
+            "const": "ready",
+            "title": "Status"
+          },
+          "compilation_ms": {
+            "type": "number",
+            "title": "Compilation Ms"
+          },
+          "coordinate_context": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/JsonValue"
+            },
+            "type": "object",
+            "title": "Coordinate Context"
+          },
+          "warnings": {
+            "items": {
+              "$ref": "#/components/schemas/JsonValue"
+            },
+            "type": "array",
+            "title": "Warnings"
+          },
+          "counts": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "type": "object",
+            "title": "Counts"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "scene_id",
+          "scene_version",
+          "status",
+          "compilation_ms",
+          "coordinate_context",
+          "warnings",
+          "counts"
+        ],
+        "title": "SceneResponse"
+      },
+      "SingleRequest": {
+        "properties": {
+          "scene_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Scene Id"
+          },
+          "scene": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Scene"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "task": {
+            "$ref": "#/components/schemas/Task-Output"
+          },
+          "time_budget_s": {
+            "type": "number",
+            "maximum": 300.0,
+            "title": "Time Budget S",
+            "default": 10,
+            "gt": 0
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "task"
+        ],
+        "title": "SingleRequest"
+      },
+      "SpaceTimeConfig": {
+        "properties": {
+          "x_min": {
+            "type": "number",
+            "title": "X Min",
+            "description": "X 最小值（米）",
+            "default": 0.0
+          },
+          "x_max": {
+            "type": "number",
+            "title": "X Max",
+            "description": "X 最大值（米）",
+            "default": 5000.0
+          },
+          "y_min": {
+            "type": "number",
+            "title": "Y Min",
+            "description": "Y 最小值（米）",
+            "default": 0.0
+          },
+          "y_max": {
+            "type": "number",
+            "title": "Y Max",
+            "description": "Y 最大值（米）",
+            "default": 5000.0
+          },
+          "z_min": {
+            "type": "number",
+            "title": "Z Min",
+            "description": "Z 最小值（米，地面）",
+            "default": 0.0
+          },
+          "z_max": {
+            "type": "number",
+            "title": "Z Max",
+            "description": "Z 最大值（米，空域顶）",
+            "default": 500.0
+          },
+          "dx": {
+            "type": "number",
+            "title": "Dx",
+            "description": "X 方向分辨率（米/格），须 > 0",
+            "default": 100.0
+          },
+          "dy": {
+            "type": "number",
+            "title": "Dy",
+            "description": "Y 方向分辨率（米/格），须 > 0",
+            "default": 100.0
+          },
+          "dz": {
+            "type": "number",
+            "title": "Dz",
+            "description": "Z 方向分辨率（米/格），须 > 0",
+            "default": 50.0
+          },
+          "t_min": {
+            "type": "number",
+            "title": "T Min",
+            "description": "规划窗口起点（秒）",
+            "default": 0.0
+          },
+          "t_max": {
+            "type": "number",
+            "title": "T Max",
+            "description": "规划窗口终点（秒）",
+            "default": 1200.0
+          },
+          "dt": {
+            "type": "number",
+            "title": "Dt",
+            "description": "时间步长（秒/步），须 > 0",
+            "default": 10.0
+          }
+        },
+        "type": "object",
+        "title": "SpaceTimeConfig",
+        "description": "时空网格配置：定义空域范围、分辨率与时间窗"
+      },
+      "StaticObstacle": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id",
+            "description": "障碍物唯一 ID"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name",
+            "description": "显示名",
+            "default": "unnamed"
+          },
+          "type": {
+            "type": "string",
+            "title": "Type",
+            "description": "building / tower / terrain / other",
+            "default": "other"
+          },
+          "x": {
+            "type": "number",
+            "title": "X",
+            "description": "中心 X（米）"
+          },
+          "y": {
+            "type": "number",
+            "title": "Y",
+            "description": "中心 Y（米）"
+          },
+          "z": {
+            "type": "number",
+            "title": "Z",
+            "description": "底部 Z（米）",
+            "default": 0.0
+          },
+          "width": {
+            "type": "number",
+            "title": "Width",
+            "description": "X 方向半宽（米）",
+            "default": 20.0
+          },
+          "depth": {
+            "type": "number",
+            "title": "Depth",
+            "description": "Y 方向半深（米）",
+            "default": 20.0
+          },
+          "height": {
+            "type": "number",
+            "title": "Height",
+            "description": "高度（米，自 z 向上）",
+            "default": 50.0
+          },
+          "source": {
+            "type": "string",
+            "title": "Source",
+            "description": "数据源标识",
+            "default": "api"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "id",
+          "x",
+          "y"
+        ],
+        "title": "StaticObstacle",
+        "description": "静态障碍物：AABB 长方体包围盒"
+      },
+      "Task-Output": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Id"
+          },
+          "start_wkt": {
+            "type": "string",
+            "title": "Start Wkt"
+          },
+          "goal_wkt": {
+            "type": "string",
+            "title": "Goal Wkt"
+          },
+          "departure_time": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Departure Time"
+          },
+          "alt_reference": {
+            "type": "string",
+            "enum": [
+              "MSL",
+              "AGL",
+              "ELLIPSOID",
+              "QNE",
+              "QNH"
+            ],
+            "title": "Alt Reference"
+          },
+          "route_mode": {
+            "type": "string",
+            "enum": [
+              "strict",
+              "prefer",
+              "free"
+            ],
+            "title": "Route Mode",
+            "default": "strict"
+          },
+          "waypoints": {
+            "items": {
+              "$ref": "#/components/schemas/Waypoint-Output"
+            },
+            "type": "array",
+            "maxItems": 256,
+            "title": "Waypoints"
+          },
+          "earliest_arrival": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Earliest Arrival"
+          },
+          "latest_arrival": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latest Arrival"
+          },
+          "profile_id": {
+            "type": "string",
+            "title": "Profile Id",
+            "default": "dji_mini_4_pro"
+          },
+          "aircraft": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AircraftProfile"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "state": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AircraftState"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "payload_kg": {
+            "type": "number",
+            "title": "Payload Kg",
+            "default": 0,
+            "ge": 0
+          },
+          "priority": {
+            "type": "integer",
+            "title": "Priority",
+            "default": 0
+          },
+          "start_connector_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Start Connector Id"
+          },
+          "end_connector_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "End Connector Id"
+          },
+          "rule_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rule Ids"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "id",
+          "start_wkt",
+          "goal_wkt",
+          "departure_time",
+          "alt_reference"
+        ],
+        "title": "Task"
+      },
+      "TimedTrajectory": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Id"
+          },
+          "trajectory_wkt": {
+            "type": "string",
+            "title": "Trajectory Wkt"
+          },
+          "vertex_times_s": {
+            "items": {
+              "type": "number",
+              "ge": 0
+            },
+            "type": "array",
+            "minItems": 1,
+            "title": "Vertex Times S"
+          },
+          "alt_reference": {
+            "type": "string",
+            "enum": [
+              "MSL",
+              "AGL",
+              "ELLIPSOID",
+              "QNE",
+              "QNH"
+            ],
+            "title": "Alt Reference"
+          },
+          "horizontal_separation_m": {
+            "type": "number",
+            "title": "Horizontal Separation M",
+            "default": 5,
+            "ge": 0
+          },
+          "vertical_separation_m": {
+            "type": "number",
+            "title": "Vertical Separation M",
+            "default": 5,
+            "ge": 0
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "id",
+          "trajectory_wkt",
+          "vertex_times_s",
+          "alt_reference"
+        ],
+        "title": "TimedTrajectory"
+      },
+      "TrajectoryPoint": {
+        "properties": {
+          "x": {
+            "type": "number",
+            "title": "X",
+            "description": "X 坐标（米）"
+          },
+          "y": {
+            "type": "number",
+            "title": "Y",
+            "description": "Y 坐标（米）"
+          },
+          "z": {
+            "type": "number",
+            "title": "Z",
+            "description": "Z 坐标（米）"
+          },
+          "t": {
+            "type": "number",
+            "title": "T",
+            "description": "时间（秒）"
+          },
+          "heading": {
+            "type": "number",
+            "title": "Heading",
+            "description": "航向角（度），可选",
+            "default": 0.0
+          }
+        },
+        "type": "object",
+        "required": [
+          "x",
+          "y",
+          "z",
+          "t"
+        ],
+        "title": "TrajectoryPoint",
+        "description": "轨迹点：位置 + 时间戳"
+      },
+      "TurnConstraint": {
+        "properties": {
+          "maxTurnAngle": {
+            "type": "number",
+            "title": "Maxturnangle",
+            "gt": 0,
+            "le": 180
+          },
+          "minTurnRadius": {
+            "type": "number",
+            "title": "Minturnradius",
+            "ge": 0
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "maxTurnAngle",
+          "minTurnRadius"
+        ],
+        "title": "TurnConstraint"
+      },
+      "ValidationError": {
+        "properties": {
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Location"
+          },
+          "msg": {
+            "type": "string",
+            "title": "Message"
+          },
+          "type": {
+            "type": "string",
+            "title": "Error Type"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "ctx": {
+            "type": "object",
+            "title": "Context"
+          }
+        },
+        "type": "object",
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError"
+      },
+      "ValidationResponse": {
+        "properties": {
+          "valid": {
+            "type": "boolean",
+            "title": "Valid"
+          },
+          "violations": {
+            "items": {
+              "$ref": "#/components/schemas/Violation"
+            },
+            "type": "array",
+            "title": "Violations"
+          },
+          "rule_report": {
+            "items": {
+              "$ref": "#/components/schemas/RuleReport"
+            },
+            "type": "array",
+            "title": "Rule Report"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "valid",
+          "rule_report"
+        ],
+        "title": "ValidationResponse"
+      },
+      "VersionResponse": {
+        "properties": {
+          "api_version": {
+            "type": "string",
+            "title": "Api Version"
+          },
+          "engine": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/JsonValue"
+            },
+            "type": "object",
+            "title": "Engine"
+          },
+          "default_profile": {
+            "$ref": "#/components/schemas/AircraftProfile"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "api_version",
+          "engine",
+          "default_profile"
+        ],
+        "title": "VersionResponse"
+      },
+      "Violation": {
+        "properties": {
+          "code": {
+            "type": "string",
+            "title": "Code"
+          },
+          "message": {
+            "type": "string",
+            "title": "Message"
+          },
+          "rule_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rule Id"
+          },
+          "time_s": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Time S"
+          },
+          "details": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/JsonValue"
+            },
+            "type": "object",
+            "title": "Details"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "code",
+          "message"
+        ],
+        "title": "Violation"
+      },
+      "Volume": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Id"
+          },
+          "geometry_wkt": {
+            "type": "string",
+            "title": "Geometry Wkt"
+          },
+          "min_altitude": {
+            "type": "number",
+            "title": "Min Altitude"
+          },
+          "max_altitude": {
+            "type": "number",
+            "title": "Max Altitude"
+          },
+          "alt_reference": {
+            "type": "string",
+            "enum": [
+              "MSL",
+              "AGL",
+              "ELLIPSOID",
+              "QNE",
+              "QNH"
+            ],
+            "title": "Alt Reference"
+          },
+          "buffer_m": {
+            "type": "number",
+            "title": "Buffer M",
+            "default": 0,
+            "ge": 0
+          },
+          "valid_from": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Valid From"
+          },
+          "valid_to": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Valid To"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "id",
+          "geometry_wkt",
+          "min_altitude",
+          "max_altitude",
+          "alt_reference"
+        ],
+        "title": "Volume"
+      },
+      "Waypoint-Output": {
+        "properties": {
+          "wkt": {
+            "type": "string",
+            "title": "Wkt"
+          },
+          "earliest": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Earliest"
+          },
+          "latest": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latest"
+          },
+          "hover_s": {
+            "type": "number",
+            "title": "Hover S",
+            "default": 0,
+            "ge": 0
+          },
+          "hover": {
+            "type": "boolean",
+            "title": "Hover",
+            "default": false
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "wkt"
+        ],
+        "title": "Waypoint"
+      },
+      "server__schemas__HealthResponse": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "title": "Status",
+            "description": "ok 表示服务就绪"
+          },
+          "service": {
+            "type": "string",
+            "title": "Service",
+            "description": "服务名"
+          },
+          "api_version": {
+            "type": "string",
+            "title": "Api Version",
+            "description": "接口版本"
+          },
+          "uptime_s": {
+            "type": "number",
+            "title": "Uptime S",
+            "description": "服务已运行时长（秒）"
+          }
+        },
+        "type": "object",
+        "required": [
+          "status",
+          "service",
+          "api_version",
+          "uptime_s"
+        ],
+        "title": "HealthResponse",
+        "description": "GET /api/v1/health 响应"
+      },
+      "server__schemas__Task": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id",
+            "description": "任务唯一 ID"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name",
+            "description": "任务名"
+          },
+          "aircraft_id": {
+            "type": "string",
+            "title": "Aircraft Id",
+            "description": "执行该任务的飞行器 ID，必须存在于 aircraft"
+          },
+          "type": {
+            "type": "string",
+            "title": "Type",
+            "description": "delivery / inspection / patrol / surveillance / other",
+            "default": "other"
+          },
+          "priority": {
+            "type": "integer",
+            "title": "Priority",
+            "description": "调度优先级 1-10（10 最高）",
+            "default": 5
+          },
+          "departure_time": {
+            "type": "number",
+            "title": "Departure Time",
+            "description": "期望起飞时间（秒）",
+            "default": 0.0
+          },
+          "objective_weights": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "number"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Objective Weights",
+            "description": "多目标权重 {distance,time,risk,energy}，和须为 1.0"
+          },
+          "requirements": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Requirements",
+            "description": "任务需求约束 {payload_kg, required_endurance_s, ...}"
+          },
+          "waypoints": {
+            "items": {
+              "$ref": "#/components/schemas/server__schemas__Waypoint"
+            },
+            "type": "array",
+            "title": "Waypoints",
+            "description": "航点序列（至少起点和终点）"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "id",
+          "aircraft_id",
+          "waypoints"
+        ],
+        "title": "Task",
+        "description": "飞行任务"
+      },
+      "server__schemas__ValidateRequest": {
+        "properties": {
+          "route": {
+            "$ref": "#/components/schemas/RouteInput",
+            "description": "待校验的航线"
+          },
+          "aircraft": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Aircraft",
+            "description": "飞行器性能，用于速度/爬升/高度约束检查"
+          },
+          "static_obstacles": {
+            "items": {
+              "$ref": "#/components/schemas/StaticObstacle"
+            },
+            "type": "array",
+            "title": "Static Obstacles"
+          },
+          "dynamic_obstacles": {
+            "items": {
+              "$ref": "#/components/schemas/DynamicObstacle"
+            },
+            "type": "array",
+            "title": "Dynamic Obstacles"
+          },
+          "min_separation": {
+            "type": "number",
+            "title": "Min Separation",
+            "description": "多机最小间隔（米）",
+            "default": 10.0
+          }
+        },
+        "type": "object",
+        "required": [
+          "route"
+        ],
+        "title": "ValidateRequest",
+        "description": "POST /api/v1/validate 请求体"
+      },
+      "server__schemas__Waypoint": {
+        "properties": {
+          "id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Id",
+            "description": "航点 ID，缺省自动编号"
+          },
+          "x": {
+            "type": "number",
+            "title": "X",
+            "description": "X 坐标（米）"
+          },
+          "y": {
+            "type": "number",
+            "title": "Y",
+            "description": "Y 坐标（米）"
+          },
+          "z": {
+            "type": "number",
+            "title": "Z",
+            "description": "Z 坐标（米）"
+          },
+          "type": {
+            "type": "string",
+            "title": "Type",
+            "description": "start / via / end / task",
+            "default": "via"
+          },
+          "earliest_arrival": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Earliest Arrival",
+            "description": "最早到达时间（秒）"
+          },
+          "latest_arrival": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latest Arrival",
+            "description": "最晚到达时间（秒）"
+          },
+          "hover_time": {
+            "type": "number",
+            "title": "Hover Time",
+            "description": "悬停时间（秒）",
+            "default": 0.0
+          },
+          "task_description": {
+            "type": "string",
+            "title": "Task Description",
+            "description": "任务描述",
+            "default": ""
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "x",
+          "y",
+          "z"
+        ],
+        "title": "Waypoint",
+        "description": "航点"
+      },
+      "server__v2__HealthResponse": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "ok",
+              "degraded"
+            ],
+            "title": "Status"
+          },
+          "api_version": {
+            "type": "string",
+            "title": "Api Version"
+          },
+          "native_available": {
+            "type": "boolean",
+            "title": "Native Available"
+          },
+          "jobs": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "type": "object",
+            "title": "Jobs"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "status",
+          "api_version",
+          "native_available",
+          "jobs"
+        ],
+        "title": "HealthResponse"
+      },
+      "server__v2__ValidateRequest": {
+        "properties": {
+          "scene_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Scene Id"
+          },
+          "scene": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Scene"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "task": {
+            "$ref": "#/components/schemas/uav_planner__v2__models__Task"
+          },
+          "trajectory_wkt": {
+            "type": "string",
+            "title": "Trajectory Wkt"
+          },
+          "vertex_times_s": {
+            "items": {
+              "type": "number"
+            },
+            "type": "array",
+            "maxItems": 100000,
+            "minItems": 1,
+            "title": "Vertex Times S"
+          },
+          "motion_segments": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/MotionSegment"
+                },
+                "type": "array",
+                "maxItems": 100000
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Motion Segments"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "task",
+          "trajectory_wkt",
+          "vertex_times_s"
+        ],
+        "title": "ValidateRequest"
+      },
+      "uav_planner__v2__models__Task": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Id"
+          },
+          "start_wkt": {
+            "type": "string",
+            "title": "Start Wkt"
+          },
+          "goal_wkt": {
+            "type": "string",
+            "title": "Goal Wkt"
+          },
+          "departure_time": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Departure Time"
+          },
+          "alt_reference": {
+            "type": "string",
+            "enum": [
+              "MSL",
+              "AGL",
+              "ELLIPSOID",
+              "QNE",
+              "QNH"
+            ],
+            "title": "Alt Reference"
+          },
+          "route_mode": {
+            "type": "string",
+            "enum": [
+              "strict",
+              "prefer",
+              "free"
+            ],
+            "title": "Route Mode",
+            "default": "strict"
+          },
+          "waypoints": {
+            "items": {
+              "$ref": "#/components/schemas/uav_planner__v2__models__Waypoint"
+            },
+            "type": "array",
+            "maxItems": 256,
+            "title": "Waypoints"
+          },
+          "earliest_arrival": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Earliest Arrival"
+          },
+          "latest_arrival": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latest Arrival"
+          },
+          "profile_id": {
+            "type": "string",
+            "title": "Profile Id",
+            "default": "dji_mini_4_pro"
+          },
+          "aircraft": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AircraftProfile"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "state": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AircraftState"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "payload_kg": {
+            "type": "number",
+            "title": "Payload Kg",
+            "default": 0,
+            "ge": 0
+          },
+          "priority": {
+            "type": "integer",
+            "title": "Priority",
+            "default": 0
+          },
+          "start_connector_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Start Connector Id"
+          },
+          "end_connector_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "End Connector Id"
+          },
+          "rule_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rule Ids"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "id",
+          "start_wkt",
+          "goal_wkt",
+          "departure_time",
+          "alt_reference"
+        ],
+        "title": "Task"
+      },
+      "uav_planner__v2__models__Waypoint": {
+        "properties": {
+          "wkt": {
+            "type": "string",
+            "title": "Wkt"
+          },
+          "earliest": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Earliest"
+          },
+          "latest": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latest"
+          },
+          "hover_s": {
+            "type": "number",
+            "title": "Hover S",
+            "default": 0,
+            "ge": 0
+          },
+          "hover": {
+            "type": "boolean",
+            "title": "Hover",
+            "default": false
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "wkt"
+        ],
+        "title": "Waypoint"
+      }
+    }
+  }
+}

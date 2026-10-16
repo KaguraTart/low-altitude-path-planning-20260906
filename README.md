@@ -4,7 +4,9 @@
 >
 > **3.25 多维时空大规模并行规划算法** & **3.26 智能飞行线路规划算法**
 >
-> 项目状态：**可用，需优化**  ·  最后更新：2026-10-12
+> 当前版本：**2.0.0**（v1 保留，新增 WKT / WGS84 v2） · 最后更新：2026-10-16
+>
+> v2 Docker HTTP 验收 **30/30 轮通过**，正式服务已更新为同一验收镜像。下文原有 demo、压测和审计评分为 v1 历史记录；v2 证据见 [`性能报告`](internal/reports/v2-20261016/PERFORMANCE.md)。
 
 ---
 
@@ -18,6 +20,45 @@
 | **要交付**（交什么、不交什么） | [`internal/docs/DELIVERY.md`](internal/docs/DELIVERY.md) |
 | **要跑命令行**（规划 / 压测 / 可视化） | 本文档 §3.3、§3.4；脚本在 [`tools/`](tools/) |
 | **要了解算法** | 本文档 §5；[`internal/docs/archive/algorithm_design.md`](internal/docs/archive/algorithm_design.md) |
+| **要了解 v2 实现与验收边界** | [`internal/docs/V2_ARCHITECTURE.md`](internal/docs/V2_ARCHITECTURE.md)；[`input/v2_benchmarks/`](input/v2_benchmarks/) |
+
+---
+
+## v2 当前实现
+
+v2 在 `/api/v2` 提供强类型 JSON + WKT 接口，外部坐标为 WGS84 经度/纬度和显式高度基准，内部用局部 AEQD 米制坐标计算。v1 原有 URL、SDK 和输入结构继续保留。所有对外字段、20 类规则、完整 v1/v2 示例与迁移方法集中在 [`docs/API.md`](docs/API.md)；Swagger `/docs` 从同一服务的类型模型生成 OpenAPI，Markdown 不参与生成。
+
+- 默认 `route_mode="strict"`：扫掠体须在有效航路或显式起终点接驳体内，无路就失败；`prefer` 允许航路外飞行并在候选图中使用 2 倍航路外基础代价，`free` 不要求航路包含。
+- 场景可预注册，按输入 SHA-256 版本复用不可变编译结果；任务答案不缓存。场景和异步作业存在进程内存，重启后重新注册场景，服务保持单进程。
+- 全部 20 类规则接入搜索筛选和最终验证；天气、信号、地形、区域、风险等数据及当前飞机状态由平台提供，缺少引用或相关场数据不可用会拒绝或阻断路径。
+- C++17 / pybind11 原生内核承担图/网格搜索、连续时间预约、碰撞检测和独立运动学验证。输出含 WKT、逐顶点时间、解析运动原语与关键点；没有原生扩展时明确报服务故障。
+- 内置 DJI Mini 4 Pro 为工程规划配置；平台负责真实包线、环境数据、飞机状态、飞控执行和持续重规划。
+
+```bash
+# 安装时构建 C++17 扩展；需 C++17 编译器与 CMake。
+uv pip install -e '.[server,test]'
+python serve.py --host 127.0.0.1 --port 8000
+curl --fail-with-body -sS http://127.0.0.1:8000/api/v2/health
+curl --fail-with-body -sS http://127.0.0.1:8000/api/v2/examples/single -o /tmp/uav-single-v2.json
+curl --fail-with-body -sS http://127.0.0.1:8000/api/v2/plan/single \
+  -H 'Content-Type: application/json' --data-binary @/tmp/uav-single-v2.json
+```
+
+部署使用仓库根目录多阶段 Dockerfile 构建 Python 3.11 原生包，正式 Compose 默认配额为 **2 CPU / 2 GiB**，端口为 `127.0.0.1:18000 → 8000`，通过 `UAV_IMAGE_TAG` 选择不可变 Git SHA 镜像。候选端口 18001、双版本作业排空、烟测与按 Git SHA 重建回滚的命令见 [`internal/docs/DEPLOYMENT.md`](internal/docs/DEPLOYMENT.md)。旧镜像可清理，回滚不依赖本地保留旧镜像。
+
+固定验收数据已冻结在 [`input/v2_benchmarks`](input/v2_benchmarks)，manifest 记录 SHA-256。历史性能验收在 **8 CPU / 8 GiB** 下，对 strict/mixed/free 三套各 1000 个已知可行任务各跑 10 轮；每轮要求全部成功、独立验证通过、完整 HTTP 与 JSON 返回 ≤10 秒。该条件不代表正式 2 CPU / 2 GiB 配额下仍满足 1000 任务 10 秒；生产耗时以实际配额和负载测量为准。场景预加载和编译另计，不能只测异步提交。下列完整性能重测须使用专门的 8 CPU / 8 GiB 候选容器。
+
+```bash
+python tools/benchmark_v2.py --validate-only
+python tools/benchmark_v2.py --base-url http://127.0.0.1:18001 \
+  --repeats 10 --scales 10 100 1000 --output output/v2_benchmarks/http
+```
+
+2026-10-16 Docker HTTP 验收已完成：8 CPU / 8 GiB、三套各 1000 任务各 10 轮，30/30 轮全部成功且独立验证、运动学证书与连续冲突检查通过。strict/mixed/free 最大完整 HTTP/JSON 耗时分别为 **1.454 / 4.541 / 1.191 秒**，均低于 10 秒门槛。完整回归 **552 项通过**。原始逐轮报告、输入哈希、阶段耗时和服务内存证据见 [`internal/reports/v2-20261016/PERFORMANCE.md`](internal/reports/v2-20261016/PERFORMANCE.md)。
+
+历史部署记录：`c14b18677a00abf20b8500f827417dd35aaa0d27` 曾在正式端口通过 v1/v2、坐标往返及异步完整结果烟测，镜像 ID 为 `sha256:60479a4fd6be59b40defd8e7b146a98522d649b04d134e901d0e8aacd42ada42`；该记录不表示镜像仍保留在本地。详见报告中的版本说明。当前 main、运行 revision、2 CPU / 2 GiB 实际配额和分支/镜像清单，使用部署指南的实时核对命令查询，不在历史报告中持续改写部署 SHA。
+
+以下 §1–§9 保留原 v1 项目说明、工具和历史性能记录；其中“不采集气象”不影响 v2 使用上游提供的天气空间场执行规则。
 
 ---
 

@@ -1,0 +1,22 @@
+{
+  "image_id": "sha256:60479a4fd6be59b40defd8e7b146a98522d649b04d134e901d0e8aacd42ada42",
+  "image_tag": "low-altitude-path-planning:c14b18677a00abf20b8500f827417dd35aaa0d27",
+  "revision": "c14b18677a00abf20b8500f827417dd35aaa0d27",
+  "nano_cpus": 8000000000,
+  "memory_bytes": 8589934592,
+  "memory_swap_bytes": 8589934592,
+  "source_sha256": {
+    "uav_planner/v2/engine.py": "d6889553d70ae3223b2d6f4e89434e813e45094cb1f4d1366effcd12f7f8a37e",
+    "uav_planner/v2/motion.py": "63de3d25d7cc18b1a95d2d56b17ba70f64738ff71444238b6d391215bde79ddd",
+    "uav_planner/v2/rules.py": "484bdbcdb09c7b8869093cbf09ea80d59e3ff575d25a393f66075f08fa4807c3",
+    "uav_planner/v2/models.py": "b528edbe373ada77223a982cd1a60d763caf3ca866d250017c533b6c2b2584d9",
+    "uav_planner/v2/scene.py": "5d20824998b4ec4f58756686fb8d83a6071d468020a23a2081839e9333266ee8",
+    "uav_planner/v2/time_windows.py": "5c754aeb095740a8486940482190577b6931a4ba718d4469d716419ab6d472d7",
+    "uav_planner/v2/native.py": "e222c99dcf5d545f4d61bdf3aa732576d284bcea16871da8d533bbb67c6b2dd1",
+    "server/v2.py": "f483d26d1d16956fdce751515d2ee4628cd6989822970ce2c443922ea2a9f09f",
+    "server/jobs.py": "698f06331488f067d75fed8ce2d870ffe9bb85fc70516efbdba01ec62a868040",
+    "server/app.py": "21cf8dd2c8f444600ee157bbff69ab7913662de410373f334cdb2140c3b6d176"
+  },
+  "openapi_sha256": "85dd1566c02dd9a2e78c4f0d1eb466f6db032b34957de9995339deefc3af5ad3",
+  "cpu_model": "AMD Ryzen 7 9800X3D 8-Core Processor"
+}

@@ -27,6 +27,7 @@ from ..models.obstacles import ObstacleSet
 from ..models.aircraft import AircraftPerformance, FlightTask, Waypoint
 from ..models.task import TrajectoryPoint, PlannedRoute, PlanningExplanation
 from ..grid.cost import CostGrid
+from ..validator.path_validator import PathValidator
 from .spacetime_astar import SpaceTimeAStar
 
 
@@ -52,7 +53,7 @@ class RouteOptimizer:
         self.astar = SpaceTimeAStar(
             config=config,
             obstacle_set=obstacle_set,
-            max_speed=performance.max_speed,
+            max_speed=performance.get_max_speed(),
             cost_grid=cost_grid,
             min_altitude=performance.get_min_altitude(),
             max_altitude=performance.get_max_altitude(),
@@ -97,7 +98,7 @@ class RouteOptimizer:
             )
 
         # 多航点分段规划
-        if len(task.waypoints) > 2:
+        if len(task.waypoints) > 2 or any(wp.hover_time > 0 for wp in task.waypoints):
             raw_trajectory = self._plan_segments(task)
         else:
             raw_route = self.astar.plan(
@@ -130,12 +131,18 @@ class RouteOptimizer:
         # 性能约束校验与修正
         corrected = self._enforce_performance_constraints(smoothed)
 
-        # 碰撞检测：平滑后若穿过障碍物，回退到原始 A* 路径
-        if self._check_collision(corrected):
-            corrected = raw_trajectory
+        # A geometry candidate must retain the schedule and pass the same full
+        # validation as the raw fallback. Retiming or clipping coordinates can
+        # invalidate obstacle avoidance, waits, endpoints, and intermediate tasks.
+        if not self._candidate_is_valid(corrected, task):
+            corrected = self._enforce_performance_constraints(raw_trajectory)
             algorithm_name = "RouteOptimizer(MultiObjective, raw-fallback)"
         else:
             algorithm_name = "RouteOptimizer(MultiObjective)"
+        if not self._candidate_is_valid(corrected, task):
+            return PlannedRoute(route_id=route_id, task_id=task.task_id, aircraft_id=task.aircraft_id,
+                trajectory=corrected, status="failed", message="路径未通过完整安全与性能验证",
+                algorithm="RouteOptimizer(validation failed)", planning_time_ms=(time.time() - t0) * 1000)
 
         # 计算多目标指标
         route = PlannedRoute(
@@ -161,6 +168,10 @@ class RouteOptimizer:
         """多航点分段规划"""
         all_traj = []
         current_time = task.departure_time
+        if task.start.hover_time > 0:
+            all_traj.append(TrajectoryPoint(x=task.start.x, y=task.start.y, z=task.start.z, t=current_time))
+            current_time += task.start.hover_time
+            all_traj.append(TrajectoryPoint(x=task.start.x, y=task.start.y, z=task.start.z, t=current_time))
 
         for i in range(len(task.waypoints) - 1):
             wp_s = task.waypoints[i]
@@ -184,145 +195,102 @@ class RouteOptimizer:
                 all_traj.extend(seg.trajectory)
 
             current_time = seg.trajectory[-1].t + wp_e.hover_time
+            if wp_e.hover_time > 0:
+                all_traj.append(TrajectoryPoint(x=wp_e.x, y=wp_e.y, z=wp_e.z, t=current_time))
 
         return all_traj
 
     def _smooth_trajectory(self, trajectory: List[TrajectoryPoint]) -> List[TrajectoryPoint]:
-        """
-        轨迹平滑：三次样条插值
+        """Smooth positions at fixed times, retaining all original samples.
 
-        对原始网格路径进行空间平滑，减少锯齿，生成连续可飞轨迹。
+        Wait intervals stay verbatim: cubic interpolation could move the vehicle
+        between equal-position endpoints during a required dwell.
         """
         if len(trajectory) < 4:
             return trajectory
-
-        # 提取坐标
         coords = np.array([[p.x, p.y, p.z] for p in trajectory])
         times = np.array([p.t for p in trajectory])
-
-        # 累积弧长参数化
-        dists = np.zeros(len(coords))
-        for i in range(1, len(coords)):
-            dists[i] = dists[i - 1] + np.linalg.norm(coords[i] - coords[i - 1])
-
-        if dists[-1] < 1e-6:
+        if np.any(np.diff(times) <= 0) or np.any(np.linalg.norm(np.diff(coords, axis=0), axis=1) <= 1e-9):
             return trajectory
-
-        # 归一化参数
-        s = dists / dists[-1]
-
-        # 三次样条插值（增加采样点）
-        num_points = min(max(len(trajectory) * 2, 20), 200)
-        s_new = np.linspace(0, 1, num_points)
-
+        # Keeping every original time also retains intermediate task positions.
+        sample_times = np.unique(np.concatenate((times, (times[:-1] + times[1:]) / 2)))
         try:
-            cs_x = CubicSpline(s, coords[:, 0])
-            cs_y = CubicSpline(s, coords[:, 1])
-            cs_z = CubicSpline(s, coords[:, 2])
-
-            x_new = cs_x(s_new)
-            y_new = cs_y(s_new)
-            z_new = cs_z(s_new)
-        except Exception:
-            # 插值失败，返回原始轨迹
+            spline = CubicSpline(times, coords, axis=0)
+            positions = spline(sample_times)
+        except ValueError:
             return trajectory
-
-        # 时间重新分配（按距离 / 平均速度）
-        avg_speed = self.performance.max_speed * 0.7  # 巡航速度取 70% 最大速度
-        total_dist = dists[-1]
-        total_time = total_dist / avg_speed
-
-        smoothed = []
-        for i in range(num_points):
-            t = task_departure = trajectory[0].t + (s_new[i] * total_time)
-            # 计算航向
-            if i > 0:
-                dx = x_new[i] - x_new[i - 1]
-                dy = y_new[i] - y_new[i - 1]
-                heading = float(np.degrees(np.arctan2(dy, dx)))
-            else:
-                heading = trajectory[0].heading
-
-            # 高度约束
-            z = np.clip(z_new[i], self.performance.min_altitude, self.performance.max_altitude)
-
-            smoothed.append(TrajectoryPoint(
-                x=float(x_new[i]),
-                y=float(y_new[i]),
-                z=float(z),
-                t=float(t),
-                heading=heading,
-            ))
-
-        return smoothed
+        originals = {p.t: p for p in trajectory}
+        result = []
+        for timestamp, xyz in zip(sample_times, positions):
+            original = originals.get(float(timestamp))
+            if original is not None:
+                xyz = (original.x, original.y, original.z)
+            result.append(TrajectoryPoint(x=float(xyz[0]), y=float(xyz[1]), z=float(xyz[2]), t=float(timestamp)))
+        return result
 
     def _enforce_performance_constraints(self, trajectory: List[TrajectoryPoint]) -> List[TrajectoryPoint]:
+        """Populate truthful motion metadata without changing geometry or time.
+
+        Feasibility is decided by validation. Changing coordinates to limit a
+        computed speed could silently move the endpoint or cut an obstacle.
         """
-        强制执行飞行器性能约束
+        result = []
+        for i, point in enumerate(trajectory):
+            vx = vy = vz = 0.0
+            heading = point.heading if not result else result[-1].heading
+            if i:
+                previous = trajectory[i - 1]
+                duration = point.t - previous.t
+                if duration > 0:
+                    vx, vy, vz = ((point.x - previous.x) / duration,
+                                  (point.y - previous.y) / duration,
+                                  (point.z - previous.z) / duration)
+                    if np.hypot(vx, vy) > 1e-9:
+                        heading = float(np.degrees(np.arctan2(vy, vx)))
+            result.append(TrajectoryPoint(x=point.x, y=point.y, z=point.z, t=point.t,
+                                          vx=vx, vy=vy, vz=vz, heading=heading))
+        return result
 
-        检查并修正:
-        - 最大速度
-        - 最大爬升/下降率
-        - 最大转弯率
-        """
-        if len(trajectory) < 2:
-            return trajectory
-
-        corrected = [trajectory[0]]
-
-        for i in range(1, len(trajectory)):
-            p_prev = corrected[-1]
-            p_curr = trajectory[i]
-
-            dt = p_curr.t - p_prev.t
-            if dt <= 0:
-                continue
-
-            dx = p_curr.x - p_prev.x
-            dy = p_curr.y - p_prev.y
-            dz = p_curr.z - p_prev.z
-
-            vx = dx / dt
-            vy = dy / dt
-            vz = dz / dt
-
-            # 水平速度约束
-            horizontal_speed = np.sqrt(vx * vx + vy * vy)
-            if horizontal_speed > self.performance.max_speed:
-                scale = self.performance.max_speed / horizontal_speed
-                vx *= scale
-                vy *= scale
-                dx = vx * dt
-                dy = vy * dt
-
-            # 垂直速度约束
-            if vz > self.performance.max_climb_rate:
-                vz = self.performance.max_climb_rate
-                dz = vz * dt
-            elif vz < -self.performance.max_descent_rate:
-                vz = -self.performance.max_descent_rate
-                dz = vz * dt
-
-            # 转弯率约束（简化：限制航向变化）
-            new_heading = float(np.degrees(np.arctan2(vy, vx))) if (abs(vx) > 1e-6 or abs(vy) > 1e-6) else p_prev.heading
-            heading_diff = ((new_heading - p_prev.heading + 180) % 360) - 180
-            max_heading_change = self.performance.max_turn_rate * dt
-            if abs(heading_diff) > max_heading_change:
-                heading_diff = np.sign(heading_diff) * max_heading_change
-                new_heading = p_prev.heading + heading_diff
-
-            corrected.append(TrajectoryPoint(
-                x=p_prev.x + dx,
-                y=p_prev.y + dy,
-                z=np.clip(p_prev.z + dz, self.performance.min_altitude, self.performance.max_altitude),
-                t=p_curr.t,
-                vx=vx,
-                vy=vy,
-                vz=vz,
-                heading=new_heading,
-            ))
-
-        return corrected
+    def _candidate_is_valid(self, trajectory: List[TrajectoryPoint], task: FlightTask) -> bool:
+        if len(trajectory) < 2 or trajectory[0].t != task.departure_time:
+            return False
+        if ((trajectory[0].x, trajectory[0].y, trajectory[0].z) != (task.start.x, task.start.y, task.start.z)
+                or (trajectory[-1].x, trajectory[-1].y, trajectory[-1].z) != (task.end.x, task.end.y, task.end.z)):
+            return False
+        candidate = PlannedRoute(route_id="candidate", task_id=task.task_id,
+                                 aircraft_id=task.aircraft_id, trajectory=trajectory, status="planned")
+        candidate.compute_metrics(self.performance)
+        if (candidate.total_time > self.performance.get_max_flight_time() + 1e-6
+                or candidate.total_distance > self.performance.get_max_range() + 1e-6):
+            return False
+        validation = PathValidator(obstacle_set=self.obstacle_set, grid=self.astar.grid).validate_route(
+            candidate, self.performance)
+        if not validation.is_valid:
+            return False
+        cursor = 0
+        for waypoint in task.waypoints:
+            found = None
+            for index in range(cursor, len(trajectory)):
+                point = trajectory[index]
+                if (point.x, point.y, point.z) == (waypoint.x, waypoint.y, waypoint.z):
+                    found = index
+                    break
+            if found is None:
+                return False
+            arrival = trajectory[found].t
+            if (waypoint.earliest_arrival is not None and arrival < waypoint.earliest_arrival - 1e-6
+                    or waypoint.latest_arrival is not None and arrival > waypoint.latest_arrival + 1e-6):
+                return False
+            cursor = found
+            if waypoint.hover_time > 0:
+                target = arrival + waypoint.hover_time
+                while cursor + 1 < len(trajectory) and trajectory[cursor].t < target - 1e-6:
+                    cursor += 1
+                    if (trajectory[cursor].x, trajectory[cursor].y, trajectory[cursor].z) != (waypoint.x, waypoint.y, waypoint.z):
+                        return False
+                if trajectory[cursor].t < target - 1e-6:
+                    return False
+        return True
 
     def _evaluate_risk(self, route: PlannedRoute):
         """评估航线风险（距障碍物距离）"""
@@ -363,16 +331,10 @@ class RouteOptimizer:
         route.avg_risk = float(np.mean(risks)) if risks else 0.0
 
     def _check_collision(self, trajectory: List[TrajectoryPoint]) -> bool:
-        """检查轨迹是否与静态障碍物碰撞"""
-        for p in trajectory:
-            for obs in self.obstacle_set.static_obstacles:
-                if (
-                    abs(p.x - obs.x) <= obs.width
-                    and abs(p.y - obs.y) <= obs.depth
-                    and obs.z <= p.z <= obs.z + obs.height
-                ):
-                    return True
-        return False
+        """Check continuous static/dynamic obstacles and grid occupancy."""
+        route = PlannedRoute(route_id="collision-check", task_id="collision-check", aircraft_id=self.performance.aircraft_id,
+                             trajectory=trajectory, status="planned")
+        return not PathValidator(obstacle_set=self.obstacle_set, grid=self.astar.grid).validate_route(route).is_valid
 
     def _explain_result(self, route: PlannedRoute, task: FlightTask) -> str:
         """
@@ -408,7 +370,7 @@ class RouteOptimizer:
 
         notes = []
         if route.algorithm.endswith("raw-fallback"):
-            notes.append("样条平滑后与静态障碍物冲突，已回退为原始 A* 路径")
+            notes.append("平滑候选未通过完整安全验证，已回退为原始 A* 路径")
         if route.max_risk > 0.5:
             notes.append(f"存在贴近障碍物的航段（最大风险 {route.max_risk:.2f}），建议复核")
         if margin.get("turn_rate_ratio", 0) > 0.9:
@@ -421,8 +383,8 @@ class RouteOptimizer:
 
         route.explanation = PlanningExplanation(
             summary=(
-                f"四维时空 A* 生成 {len(route.trajectory)} 点初始航路，经多目标平滑与"
-                f"性能约束修正后，综合得分 {weighted_score:.4f}（越低越优）"
+                f"四维时空 A* 生成 {len(route.trajectory)} 点初始航路，经候选平滑和完整"
+                f"安全验证后，综合得分 {weighted_score:.4f}（越低越优）"
             ),
             score=weighted_score,
             objective_breakdown=breakdown,

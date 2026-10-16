@@ -13,7 +13,7 @@
 本算法特点：
 - 四维状态空间 (ix, iy, iz, it)
 - 6/26 邻域空间移动 + 等待动作（每次推进 1 个时间步）
-- 启发函数：曼哈顿距离 × dt（可采纳）
+- 启发函数：6 邻域曼哈顿 / 26 邻域切比雪夫距离 × dt（可采纳）
 - 代价函数：时间步长 + 微小距离惩罚（打破平局）
 - Closed set 避免重复扩展
 - Stale entry 跳过过期条目
@@ -30,7 +30,7 @@ from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 
-from ..models.space import SpaceTimeConfig, SpaceTimeGrid
+from ..models.space import SpaceTimeConfig, SpaceTimeGrid, segment_box_interval, segment_closest_approach
 from ..models.obstacles import ObstacleSet
 from ..models.task import TrajectoryPoint, PlannedRoute
 from ..grid.cost import CostGrid
@@ -110,15 +110,50 @@ class SpaceTimeAStar:
 
     def _resolve_altitude_band(self) -> Tuple[int, int]:
         """飞行器高度包线 ∩ 网格 z 范围 → (iz_min, iz_max)"""
-        iz_min, iz_max = 0, self.config.nz - 1
-        if self.min_altitude is not None:
-            iz_min = max(iz_min, self.config.to_grid(0, 0, self.min_altitude)[2])
-        if self.max_altitude is not None:
-            iz_max = min(iz_max, self.config.to_grid(0, 0, self.max_altitude)[2])
-        if iz_min > iz_max:
-            # 高度包线与可用空域无交集，退回整个 z 范围并交由验证模块报错
-            return 0, self.config.nz - 1
+        low = max(self.config.z_min, self.min_altitude if self.min_altitude is not None else self.config.z_min)
+        high = min(self.config.z_max, self.max_altitude if self.max_altitude is not None else self.config.z_max)
+        # Limits apply to actual centers, not to the containing voxel index.
+        iz_min = max(0, int(np.ceil((low - self.config.z_min) / self.config.dz - 0.5 - 1e-10)))
+        iz_max = min(self.config.nz - 1, int(np.floor((high - self.config.z_min) / self.config.dz - 0.5 + 1e-10)))
         return iz_min, iz_max
+
+    def _connector_steps(self, start: Tuple[float, float, float], end: Tuple[float, float, float]) -> int:
+        delta = np.asarray(end) - np.asarray(start)
+        if np.all(delta == 0):
+            return 0
+        if self.max_speed <= 0:
+            return self.config.nt
+        duration = float(np.linalg.norm(delta)) / self.max_speed
+        rate = self.max_climb_rate if delta[2] > 0 else self.max_descent_rate
+        if delta[2] != 0 and rate is not None:
+            if rate <= 0:
+                return self.config.nt
+            duration = max(duration, abs(float(delta[2])) / rate)
+        return max(1, int(np.ceil(duration / self.config.dt - 1e-10)))
+
+    def _edge_is_free(self, start: Tuple[float, float, float, float], end: Tuple[float, float, float, float]) -> bool:
+        if not self.grid.segment_is_free(start, end, self.occupancy_mask):
+            return False
+        if self.obstacle_set is None:
+            return True
+        for obs in self.obstacle_set.static_obstacles:
+            if segment_box_interval(start[:3], end[:3],
+                    (obs.x - obs.width, obs.y - obs.depth, obs.z),
+                    (obs.x + obs.width, obs.y + obs.depth, obs.z + obs.height)) is not None:
+                return False
+        for obs in self.obstacle_set.dynamic_obstacles:
+            points = obs.trajectory
+            for a, b in list(zip(points, points[1:])) or [(p, p) for p in points]:
+                if start[3] > b[3] or a[3] > end[3]:
+                    continue
+                if any(max(start[axis], end[axis]) + obs.safety_radius < min(a[axis], b[axis])
+                       or max(a[axis], b[axis]) + obs.safety_radius < min(start[axis], end[axis])
+                       for axis in range(3)):
+                    continue
+                closest = segment_closest_approach(start, end, a, b)
+                if closest is not None and closest[0] <= obs.safety_radius:
+                    return False
+        return True
 
     def altitude_error(self, point: Tuple[float, float, float], label: str) -> Optional[str]:
         """检查一个空间点是否落在飞行器高度包线内，返回错误描述或 None"""
@@ -147,16 +182,26 @@ class SpaceTimeAStar:
 
     def _heuristic(self, state: Tuple[int, int, int, int], goal: Tuple[int, int, int, int]) -> float:
         """
-        启发函数: 曼哈顿网格距离 * 时间步长 * 全局最小代价倍率
+        启发函数: 邻域移动步数下界 * 时间步长 * 全局最小代价倍率
 
-        无代价层时 min_cost = 1.0，退化为标准曼哈顿时间下界。
+        无代价层时 min_cost = 1.0，使用标准空间移动时间下界。
         启用代价层时每条边的真实代价 ≥ dt * min_cost，按此缩放后
         启发函数仍然是真实剩余代价的下界，保证最优性不被破坏。
         """
         ix, iy, iz, it = state
         gx, gy, gz, gt = goal
-        manhattan = abs(ix - gx) + abs(iy - gy) + abs(iz - gz)
-        return manhattan * self.config.dt * self._min_cost_scale
+        distances = (abs(ix - gx), abs(iy - gy), abs(iz - gz))
+        moves = max(distances) if self.neighbor_mode == "26" else sum(distances)
+        minimum = self._min_cost_scale
+        estimate = moves * self.config.dt * minimum
+        if moves and self.cost_grid is not None:
+            # Every arrival pays at least one goal-cell step. Accounting for
+            # this unavoidable cost prevents an expensive destination from
+            # causing exhaustive expansion over every earlier time layer.
+            costs = self.cost_grid.lookup_array()
+            goal_cost = float(costs[gx, gy, gz]) if costs.ndim == 3 else float(np.min(costs[gx, gy, gz, :]))
+            estimate += self.config.dt * max(0.0, goal_cost - minimum)
+        return estimate
 
     @property
     def _min_cost_scale(self) -> float:
@@ -211,7 +256,9 @@ class SpaceTimeAStar:
             if dz != 0:
                 dz_m = abs(dz) * self.config.dz
                 rate_limit = self.max_climb_rate if dz > 0 else self.max_descent_rate
-                if rate_limit is not None and rate_limit > 0:
+                if rate_limit is not None and rate_limit <= 0:
+                    continue
+                if rate_limit is not None:
                     steps = max(1, int(np.ceil(dz_m / (rate_limit * self.config.dt) - 1e-9)))
                 nit = it + steps
                 if nit >= self.config.nt:
@@ -286,6 +333,22 @@ class SpaceTimeAStar:
         """
         t0 = time.time()
 
+        def failure(message: str) -> PlannedRoute:
+            return PlannedRoute(route_id=route_id, task_id=task_id, aircraft_id=aircraft_id,
+                                status="failed", message=message, algorithm="SpaceTimeAStar",
+                                planning_time_ms=(time.time() - t0) * 1000)
+
+        for label, point in (("起点", start), ("终点", goal)):
+            if not (np.isfinite(point).all()
+                    and self.config.x_min <= point[0] <= self.config.x_max
+                    and self.config.y_min <= point[1] <= self.config.y_max
+                    and self.config.z_min <= point[2] <= self.config.z_max):
+                return failure(f"{label}超出可用空域")
+        if not np.isfinite(start_time) or not self.config.t_min <= start_time < self.config.t_max:
+            return failure("起飞时间超出可用时间范围")
+        if self._iz_min > self._iz_max:
+            return failure("飞行器高度包线内没有可用网格中心")
+
         # 起点/终点高度可行性预检（在占用检查之前，给出可读的原因）
         for label, point in (("起点", start), ("终点", goal)):
             err = self.altitude_error(point, label)
@@ -303,10 +366,47 @@ class SpaceTimeAStar:
         # 转换为网格坐标
         six, siy, siz = self.config.to_grid(*start)
         gix, giy, giz = self.config.to_grid(*goal)
-        sit = self.config.time_to_step(start_time)
+        siz = min(max(siz, self._iz_min), self._iz_max)
+        giz = min(max(giz, self._iz_min), self._iz_max)
+        departure_step = self.config.time_to_step(start_time)
+        actual_start_cell = (*self.config.to_grid(*start), departure_step)
+        if not self.grid.is_free(*actual_start_cell):
+            return failure("起点被障碍物占用")
+        if self.occupancy_mask is not None and self.occupancy_mask[actual_start_cell]:
+            return failure(f"起点在 t={start_time:.0f}s 被其它飞行器占用（多机冲突，建议延迟起飞）")
+        time_offset = start_time - self.config.step_to_time(departure_step)
+        start_anchor = self.config.to_world(six, siy, siz)
+        goal_anchor = self.config.to_world(gix, giy, giz)
+        entry_steps = self._connector_steps(start, start_anchor)
+        exit_steps = self._connector_steps(goal_anchor, goal)
+        sit = departure_step + entry_steps
+        anchor_time = start_time + entry_steps * self.config.dt
+        if sit >= self.config.nt or not self._edge_is_free((*start, start_time), (*start_anchor, anchor_time)):
+            return failure("无法安全连接精确起点与网格中心")
+        if exit_steps >= self.config.nt:
+            return failure("无法在时间范围内连接精确终点")
+        # A permanently blocked connector cannot be repaired by waiting. Detect
+        # it before spending the entire search budget on unreachable goal times.
+        for ix, iy, iz, _ in self.config.segment_cells((*goal_anchor, start_time),
+                (*goal, start_time + exit_steps * self.config.dt)):
+            if bool(self.grid.occupancy[ix, iy, iz, :].all()):
+                return failure("精确终点连接段被障碍物永久占用")
+        if self.obstacle_set is not None:
+            for obs in self.obstacle_set.static_obstacles:
+                if segment_box_interval(goal_anchor, goal,
+                        (obs.x - obs.width, obs.y - obs.depth, obs.z),
+                        (obs.x + obs.width, obs.y + obs.depth, obs.z + obs.height)) is not None:
+                    return failure("精确终点连接段与静态障碍物相交")
 
         start_state = (six, siy, siz, sit)
         goal_state = (gix, giy, giz, -1)  # 时间步不固定，到达空间即可
+
+        def remaining_steps(state: Tuple[int, int, int, int]) -> int:
+            distances = (abs(state[0] - gix), abs(state[1] - giy), abs(state[2] - giz))
+            return (max(distances) if self.neighbor_mode == "26" else sum(distances)) + exit_steps
+
+        if anchor_time + remaining_steps(start_state) * self.config.dt >= self.config.t_max:
+            return failure("剩余时间不足以到达精确终点")
 
         # 检查起点终点是否可行
         if not self.grid.is_free(six, siy, siz, sit):
@@ -379,14 +479,23 @@ class SpaceTimeAStar:
                 continue
 
             closed_set.add(current)
+            if self.config.step_to_time(current[3]) + time_offset + remaining_steps(current) * self.config.dt >= self.config.t_max:
+                continue
 
             # 检查是否到达目标空间位置
             if current[0] == gix and current[1] == giy and current[2] == giz:
-                found = True
-                break
+                arrival_time = self.config.step_to_time(current[3]) + time_offset
+                final_time = arrival_time + exit_steps * self.config.dt
+                if self._edge_is_free((*goal_anchor, arrival_time), (*goal, final_time)):
+                    found = True
+                    break
 
             for next_state, cost in self._get_neighbors(current):
                 if next_state in closed_set:
+                    continue
+                edge_start = (*self.config.to_world(*current[:3]), self.config.step_to_time(current[3]) + time_offset)
+                edge_end = (*self.config.to_world(*next_state[:3]), self.config.step_to_time(next_state[3]) + time_offset)
+                if not self._edge_is_free(edge_start, edge_end):
                     continue
                 tentative_g = g_score[current] + cost
                 if next_state not in g_score or tentative_g < g_score[next_state]:
@@ -420,10 +529,25 @@ class SpaceTimeAStar:
 
         # 转换为连续坐标轨迹
         trajectory = []
+        if entry_steps:
+            trajectory.append(TrajectoryPoint(x=start[0], y=start[1], z=start[2], t=start_time))
         for ix, iy, iz, it in path_states:
             x, y, z = self.config.to_world(ix, iy, iz)
-            t = self.config.step_to_time(it)
+            t = self.config.step_to_time(it) + time_offset
             trajectory.append(TrajectoryPoint(x=x, y=y, z=z, t=t))
+        trajectory[0].x, trajectory[0].y, trajectory[0].z = start
+        trajectory[0].t = start_time
+        if exit_steps:
+            trajectory.append(TrajectoryPoint(x=goal[0], y=goal[1], z=goal[2],
+                                              t=trajectory[-1].t + exit_steps * self.config.dt))
+        trajectory[-1].x, trajectory[-1].y, trajectory[-1].z = goal
+        # A stationary task still needs an explicit, checked dwell interval.
+        if len(trajectory) == 1:
+            point = trajectory[0]
+            if not self._edge_is_free((point.x, point.y, point.z, point.t),
+                                      (point.x, point.y, point.z, point.t + self.config.dt)):
+                return failure("原地等待时间内存在占用")
+            trajectory.append(TrajectoryPoint(x=point.x, y=point.y, z=point.z, t=point.t + self.config.dt))
 
         # 计算航向角（调度模式 extras=False 时跳过以节省 ~3%）
         if extras:

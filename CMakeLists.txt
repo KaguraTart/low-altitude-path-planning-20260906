@@ -1,0 +1,11 @@
+cmake_minimum_required(VERSION 3.18)
+project(uav_planner_native LANGUAGES CXX)
+
+set(PYBIND11_FINDPYTHON ON)
+find_package(Python COMPONENTS Interpreter Development.Module REQUIRED)
+find_package(pybind11 CONFIG REQUIRED)
+pybind11_add_module(_native MODULE native/planner.cpp)
+target_compile_features(_native PRIVATE cxx_std_17)
+target_compile_options(_native PRIVATE $<$<CXX_COMPILER_ID:GNU,Clang>:-O3;-Wall;-Wextra>)
+install(TARGETS _native LIBRARY DESTINATION uav_planner/v2 RUNTIME DESTINATION uav_planner/v2)
+install(FILES serve.py DESTINATION .)

@@ -1,0 +1,10 @@
+output/
+tests/
+tools/
+internal/
+.git/
+__pycache__/
+*.pyc
+.env
+.env.*
+.venv/

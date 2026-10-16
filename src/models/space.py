@@ -19,9 +19,79 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Tuple
+from itertools import product
+import math
+from typing import Sequence, Tuple
 
 import numpy as np
+
+
+def segment_box_interval(
+    start: Sequence[float], end: Sequence[float], lower: Sequence[float], upper: Sequence[float],
+) -> tuple[float, float] | None:
+    """Closed segment/AABB intersection, expressed as a parameter interval."""
+    enter, leave = 0.0, 1.0
+    for a, b, lo, hi in zip(start, end, lower, upper):
+        delta = b - a
+        if abs(delta) < 1e-12:
+            if a < lo or a > hi:
+                return None
+            continue
+        first, last = sorted(((lo - a) / delta, (hi - a) / delta))
+        enter, leave = max(enter, first), min(leave, last)
+        if enter > leave + 1e-12:
+            return None
+    return enter, leave
+
+
+def segment_closest_approach(
+    a0: Sequence[float], a1: Sequence[float], b0: Sequence[float], b1: Sequence[float],
+    time_window: float = 0.0,
+) -> tuple[float, float, tuple[float, ...], tuple[float, ...]] | None:
+    """Exact linear-segment separation with |time_a - time_b| <= window.
+
+    Minimize a convex quadratic over the clipped unit square of the two
+    segment parameters. At window=0 this is simultaneous relative motion.
+    Single points are represented by equal segment endpoints.
+    """
+    if a0[3] > b1[3] + time_window or b0[3] > a1[3] + time_window:
+        return None
+    a0, a1, b0, b1 = [np.asarray(p, dtype=float) for p in (a0, a1, b0, b1)]
+    if not all(np.isfinite(p).all() for p in (a0, a1, b0, b1)):
+        return None
+    if a1[3] < a0[3] or b1[3] < b0[3] or time_window < 0:
+        return None
+    duration = np.array([a1[3] - a0[3], -(b1[3] - b0[3])])
+    offset = a0[3] - b0[3]
+    polygon = [np.array(p, dtype=float) for p in ((0, 0), (1, 0), (1, 1), (0, 1))]
+    for normal, limit in ((duration, time_window - offset), (-duration, time_window + offset)):
+        clipped = []
+        for previous, current in zip(polygon, polygon[1:] + polygon[:1]):
+            fp, fc = float(normal @ previous - limit), float(normal @ current - limit)
+            inside_previous, inside_current = fp <= 1e-10, fc <= 1e-10
+            if inside_previous:
+                clipped.append(previous)
+            if inside_previous != inside_current:
+                clipped.append(previous + fp / (fp - fc) * (current - previous))
+        polygon = clipped
+        if not polygon:
+            return None
+    relative = a0[:3] - b0[:3]
+    motion = np.column_stack((a1[:3] - a0[:3], -(b1[:3] - b0[:3])))
+    candidates = list(polygon)
+    stationary = np.linalg.lstsq(motion, -relative, rcond=None)[0]
+    if (np.all(stationary >= 0) and np.all(stationary <= 1)
+            and abs(float(duration @ stationary + offset)) <= time_window + 1e-9):
+        candidates.append(stationary)
+    for first, last in zip(polygon, polygon[1:] + polygon[:1]):
+        direction = motion @ (last - first)
+        norm = float(direction @ direction)
+        if norm > 1e-24:
+            fraction = np.clip(-float((relative + motion @ first) @ direction) / norm, 0, 1)
+            candidates.append(first + fraction * (last - first))
+    best = min(candidates, key=lambda p: float(np.linalg.norm(relative + motion @ p)))
+    pa, pb = a0 + best[0] * (a1 - a0), b0 + best[1] * (b1 - b0)
+    return float(np.linalg.norm(pa[:3] - pb[:3])), float(pa[3]), tuple(pa[:3]), tuple(pb[:3])
 
 
 @dataclass
@@ -106,6 +176,84 @@ class SpaceTimeConfig:
     def step_to_time(self, step: int) -> float:
         """时间步 it → 时间 t (秒)（返回步中心时刻）"""
         return self.t_min + (step + 0.5) * self.dt
+
+    def segment_cells(
+        self, start: Sequence[float], end: Sequence[float], radius: float = 0.0, time_padding: float = 0.0,
+    ) -> set[tuple[int, int, int, int]]:
+        """Conservative swept cells, including both ends and voxel boundaries.
+
+        Clip motion to each time bin before testing its spatial segment against
+        radius-expanded voxels. This covers motion between sparse observations
+        without marking the complete spatial bounding box for the entire flight.
+        """
+        if radius == 0 and time_padding == 0:
+            return self._line_cells(start, end)
+        start, end = np.asarray(start, dtype=float), np.asarray(end, dtype=float)
+        if not np.isfinite(start).all() or not np.isfinite(end).all() or end[3] < start[3]:
+            return set()
+        radius, time_padding = max(0.0, radius), max(0.0, time_padding)
+        low_time, high_time = start[3] - time_padding, end[3] + time_padding
+        if high_time < self.t_min or low_time > self.t_max:
+            return set()
+        first = max(0, int(np.floor((low_time - self.t_min) / self.dt)))
+        last = min(self.nt - 1, int(np.floor((high_time - self.t_min) / self.dt)))
+        origin = np.array((self.x_min, self.y_min, self.z_min))
+        size = np.array((self.dx, self.dy, self.dz))
+        shape = np.array((self.nx, self.ny, self.nz))
+        cells = set()
+        for it in range(first, last + 1):
+            lo = self.t_min + it * self.dt - time_padding
+            hi = self.t_min + (it + 1) * self.dt + time_padding
+            if end[3] > start[3]:
+                u = np.clip((lo - start[3]) / (end[3] - start[3]), 0, 1)
+                v = np.clip((hi - start[3]) / (end[3] - start[3]), 0, 1)
+                a = start[:3] + u * (end[:3] - start[:3])
+                b = start[:3] + v * (end[:3] - start[:3])
+            else:
+                a, b = start[:3], end[:3]
+            lower = np.maximum(0, np.floor((np.minimum(a, b) - radius - origin) / size - 1e-10).astype(int))
+            upper = np.minimum(shape - 1, np.floor((np.maximum(a, b) + radius - origin) / size).astype(int))
+            for ix in range(int(lower[0]), int(upper[0]) + 1):
+                for iy in range(int(lower[1]), int(upper[1]) + 1):
+                    for iz in range(int(lower[2]), int(upper[2]) + 1):
+                        box_low = origin + np.array((ix, iy, iz)) * size
+                        if segment_box_interval(a, b, box_low - radius, box_low + size + radius) is not None:
+                            cells.add((ix, iy, iz, it))
+        return cells
+
+    def _line_cells(self, start: Sequence[float], end: Sequence[float]) -> set[tuple[int, int, int, int]]:
+        """Supercover traversal at voxel/time plane crossings, without sampling."""
+        if not all(math.isfinite(v) for v in (*start, *end)) or end[3] < start[3]:
+            return set()
+        origins = (self.x_min, self.y_min, self.z_min, self.t_min)
+        sizes = (self.dx, self.dy, self.dz, self.dt)
+        shape = (self.nx, self.ny, self.nz, self.nt)
+        a = [(value - origin) / size for value, origin, size in zip(start, origins, sizes)]
+        b = [(value - origin) / size for value, origin, size in zip(end, origins, sizes)]
+        fractions = {0.0, 1.0}
+        for first, last, count in zip(a, b, shape):
+            if abs(last - first) <= 1e-12:
+                continue
+            low = max(0, math.ceil(min(first, last)))
+            high = min(count, math.floor(max(first, last)))
+            for boundary in range(low, high + 1):
+                fractions.add(min(1.0, max(0.0, (boundary - first) / (last - first))))
+        ordered = sorted(fractions)
+        probes = ordered + [(lo + hi) / 2 for lo, hi in zip(ordered, ordered[1:])]
+        cells = set()
+        for fraction in probes:
+            choices = []
+            for axis, (first, last, count) in enumerate(zip(a, b, shape)):
+                value = first + fraction * (last - first)
+                index = math.floor(value)
+                indices = [index]
+                # Spatial boundary contact is collision. Time remains a
+                # half-open bin for a singleton; moving segments cover both.
+                if abs(value - round(value)) <= 1e-10 and (axis < 3 or end[3] > start[3]):
+                    indices = [round(value) - 1, round(value)]
+                choices.append([i for i in indices if 0 <= i < count])
+            cells.update(product(*choices))
+        return cells
 
 
 @dataclass
@@ -227,20 +375,28 @@ class SpaceTimeGrid:
             trajectory: [(x, y, z, t), ...] 轨迹点列表
             radius: 安全半径（米，0 表示单格）
         """
-        r_cells = max(1, int(np.ceil(radius / min(self.config.dx, self.config.dy))))
-        for x, y, z, t in trajectory:
-            ix, iy, iz = self.config.to_grid(x, y, z)
-            it = self.config.time_to_step(t)
-            for dx in range(-r_cells, r_cells + 1):
-                for dy in range(-r_cells, r_cells + 1):
-                    for dz in range(-r_cells, r_cells + 1):
-                        nx_, ny_, nz_ = ix + dx, iy + dy, iz + dz
-                        if (
-                            0 <= nx_ < self.config.nx
-                            and 0 <= ny_ < self.config.ny
-                            and 0 <= nz_ < self.config.nz
-                        ):
-                            self.occupancy[nx_, ny_, nz_, it] = True
+        points = list(trajectory)
+        segments = list(zip(points, points[1:])) or [(p, p) for p in points]
+        for start, end in segments:
+            for cell in self.config.segment_cells(start, end, radius=radius):
+                self.occupancy[cell] = True
+
+    def segment_is_free(
+        self, start: Sequence[float], end: Sequence[float], occupancy_mask: np.ndarray | None = None,
+    ) -> bool:
+        """Check the entire timed line against the swept occupancy grid."""
+        for point in (start, end):
+            if not (np.isfinite(point).all()
+                    and self.config.x_min <= point[0] <= self.config.x_max
+                    and self.config.y_min <= point[1] <= self.config.y_max
+                    and self.config.z_min <= point[2] <= self.config.z_max
+                    and self.config.t_min <= point[3] < self.config.t_max):
+                return False
+        cells = self.config.segment_cells(start, end)
+        return bool(cells) and all(
+            not self.occupancy[cell] and not (occupancy_mask is not None and occupancy_mask[cell])
+            for cell in cells
+        )
 
     def is_free(self, ix: int, iy: int, iz: int, it: int) -> bool:
         """检查时空格 (ix, iy, iz, it) 是否空闲（越界视为占用）"""

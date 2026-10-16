@@ -39,7 +39,7 @@ from .adapters import DEFAULT_AIRCRAFT, DEFAULT_CONFIG  # noqa: E402
 from .errors import ErrorCode, PlanningError  # noqa: E402
 from .serializer import dumps_safe, sanitize  # noqa: E402
 
-__version__ = "1.0.0"
+__version__ = "2.0.0"
 
 __all__ = [
     # 核心接口
@@ -59,3 +59,27 @@ __all__ = [
     "dumps_safe",
     "__version__",
 ]
+
+
+# Lazy geographic SDK imports keep the v1 import surface lightweight.
+def register_scene(scene):
+    from .v2.engine import register_scene as implementation
+    return implementation(scene)
+
+def plan_single_v2(**kwargs):
+    from .v2.engine import plan_single_v2 as implementation
+    return implementation(**kwargs)
+
+def plan_batch_v2(**kwargs):
+    from .v2.engine import plan_batch_v2 as implementation
+    return implementation(**kwargs)
+
+def validate_route_v2(**kwargs):
+    from .v2.engine import validate_route_v2 as implementation
+    return implementation(**kwargs)
+
+def convert_coordinates(request):
+    from .v2.coordinates import convert_coordinates as implementation
+    return implementation(request).model_dump(mode="json")
+
+__all__ += ["register_scene", "plan_single_v2", "plan_batch_v2", "validate_route_v2", "convert_coordinates"]

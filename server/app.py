@@ -18,6 +18,8 @@ REST HTTP 服务（FastAPI）
 from __future__ import annotations
 
 import time
+from asyncio import gather, to_thread
+from contextlib import asynccontextmanager
 from typing import Any, Dict
 
 from fastapi import FastAPI, Request
@@ -33,6 +35,7 @@ from uav_planner import (
     plan_single,
     validate_route,
 )
+from uav_planner.v2.native import NativeUnavailableError
 
 from .jobs import JobRegistry
 from .schemas import (
@@ -52,10 +55,23 @@ _ERROR_STATUS: Dict[str, int] = {
     ErrorCode.PLANNING_FAILED: 422,      # 请求合法但无法完成规划
     ErrorCode.TIMEOUT: 504,
     ErrorCode.INTERNAL_ERROR: 500,
+    ErrorCode.JOB_QUEUE_FULL: 429,
 }
 
 _STARTED_AT = time.time()
 _jobs = JobRegistry(max_workers=2)
+
+
+@asynccontextmanager
+async def _lifespan(application: FastAPI):
+    from .v2 import jobs as v2_jobs
+
+    _jobs.start()
+    v2_jobs.start()
+    try:
+        yield
+    finally:
+        await gather(to_thread(_jobs.shutdown, wait=True), to_thread(v2_jobs.shutdown, wait=True))
 
 # ---------------------------------------------------------------- 安全说明
 
@@ -67,7 +83,8 @@ _jobs = JobRegistry(max_workers=2)
 
 app = FastAPI(
     title="低空无人机路径规划算法接口",
-    version="1.0.0",
+    version="2.0.0",
+    lifespan=_lifespan,
     description=(
         "多维时空 A* 路径规划 + 多目标航线优化 + 路径合法性验证。\n\n"
         "- 单任务规划：`POST /api/v1/plan/single`\n"
@@ -92,7 +109,7 @@ app.add_middleware(
 
 @app.exception_handler(PlanningError)
 async def _planning_error_handler(request: Request, exc: PlanningError):
-    status = _ERROR_STATUS.get(exc.code, 500)
+    status = _ERROR_STATUS.get(exc.code, 400 if request.url.path.startswith("/api/v2/") else 500)
     return JSONResponse(status_code=status, content=exc.to_dict())
 
 
@@ -115,6 +132,13 @@ async def _validation_error_handler(request: Request, exc: RequestValidationErro
             }
         },
     )
+
+
+@app.exception_handler(NativeUnavailableError)
+async def _native_unavailable_handler(request: Request, exc: NativeUnavailableError):
+    return JSONResponse(status_code=503, content={
+        "error": {"code": ErrorCode.NATIVE_UNAVAILABLE, "message": str(exc), "detail": {}}
+    })
 
 
 @app.exception_handler(Exception)
@@ -167,7 +191,8 @@ async def api_plan_single(req: PlanSingleRequest) -> Dict[str, Any]:
     航点序列（含中间经停）。**有中间经停时必须用 waypoints**，只给起终点
     会丢掉经停点，规划出一条更短但不合要求的航线。
     """
-    return plan_single(**req.model_dump(exclude_none=True))
+    from starlette.concurrency import run_in_threadpool
+    return await run_in_threadpool(plan_single, **req.model_dump(exclude_none=True))
 
 
 @app.post("/api/v1/plan/batch", tags=["规划"])
@@ -178,7 +203,8 @@ async def api_plan_batch(req: PlanBatchRequest) -> Dict[str, Any]:
     适合中小批量联调。**大批量请改用** ``POST /api/v1/jobs``：
     实测 10000 个任务约需 437 秒，同步请求会被客户端超时掐断。
     """
-    return plan_batch(**req.model_dump(exclude_none=True))
+    from starlette.concurrency import run_in_threadpool
+    return await run_in_threadpool(plan_batch, **req.model_dump(exclude_none=True))
 
 
 @app.post("/api/v1/validate", tags=["验证"])
@@ -188,7 +214,8 @@ async def api_validate(req: ValidateRequest) -> Dict[str, Any]:
 
     航线可由外部系统给出，不限于本算法产出——这是联调时验证对方航线的主要手段。
     """
-    return validate_route(**req.model_dump(exclude_none=True))
+    from starlette.concurrency import run_in_threadpool
+    return await run_in_threadpool(validate_route, **req.model_dump(exclude_none=True))
 
 
 # ---------------------------------------------------------------- 异步作业
@@ -318,3 +345,8 @@ async def example_batch() -> Dict[str, Any]:
         "max_workers": 4,
         "conflict_avoidance": True,
     }
+
+
+# Geographic v2 is a separate contract; v1 routes remain available.
+from .v2 import router as v2_router
+app.include_router(v2_router)

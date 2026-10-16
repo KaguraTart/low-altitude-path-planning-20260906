@@ -1,185 +1,77 @@
-# 交付清单
+# v1 / v2 交付说明
 
-> 本文档回答一个问题：**交付时哪些文件给对方，哪些不给。**
->
-> 本文件本身**不随交付提供**（它与 `DEPLOYMENT.md` 同属内部资料）。
+本文件用于内部交付管理。对接方只需阅读 [`../../docs/API.md`](../../docs/API.md)，字段与规范以同一镜像提供的 `/openapi.json` 为准。v1 保留；软件包和服务版本为 2.0.0。
 
-**版本**：v1.0.0 　|　**更新日期**：2026-10-12
+## 1. 交付内容
 
----
+| 内容 | 路径 / 入口 | 说明 |
+|------|------|------|
+| 唯一对外说明 | `docs/API.md` | v1 原契约、v2 全部字段、20 类规则、示例、迁移和错误 |
+| 机器可读契约 | `docs/openapi.json`、运行端点 `/openapi.json` | 从 `server.app:app` 类型模型生成；Swagger `/docs` 读取规范，Markdown 不参与生成 |
+| Python SDK | `uav_planner/`、`src/` | v1 与 v2 的实际规划、规则、坐标、序列化和验证实现 |
+| 原生内核 | `native/`、`CMakeLists.txt`、构建后的 `uav_planner.v2._native` | C++17 / pybind11；v2 不以 Python 回退掩盖缺扩展 |
+| REST 服务 | `server/`、`serve.py` | `/api/v1` 与 `/api/v2`、类型模型、异步作业、统一错误信封 |
+| 可复现环境 | `pyproject.toml`、依赖文件、Dockerfile、compose.yaml | Python 3.11 多阶段构建；同一镜像包含代码、API 文档与规范 |
+| 功能回归 | `tests/` | 原 v1 用例、v1 安全回归及 v2 坐标/规则/内核/接口/基准契约；用当次 pytest 输出记录用例数，不沿用旧计数 |
+| 示例数据 | `input/`、`GET /api/v1/examples/*`、`GET /api/v2/examples/*` | 无真实外部数据也能完成基本接入 |
+| 固定性能验收 | `input/v2_benchmarks/`、`tools/benchmark_v2.py` | 输入 SHA-256 manifest、独立参考调度、完整 SDK/HTTP 规划与独立验证 |
+| 运维与架构 | `internal/docs/DEPLOYMENT.md`、`internal/docs/V2_ARCHITECTURE.md` | 内部审查与运行手册，不增加第二份对外接口说明 |
 
-## 1. 一句话说明
+`tools/` 中普通规划和可视化脚本仍是开发工具，不构成 HTTP/SDK 调用依赖；验收脚本及冻结输入要随验收包保留。`output/` 为当次结果证据，按交付版本归档，不混入默认示例。课题原始材料、历史归档和个人环境文件不作为调用依赖。
 
-交付**算法本体 + 调用接口 + 接口文档 + 测试用例**。对方拿到后可以部署服务、
-`import` 调用、并用自己的用例验证行为。
+## 2. 对外能力与平台责任
 
-不含我们内部的开发工具、课题材料和运维资料。
+v2 提供版本化场景、WGS84/WKT 与显式高度换算、三种路径模式、20 类规则、运动学建模、连续冲突调度、路径校验及解释。严格模式默认启用；越出航路仅允许显式起终点接驳，失败不自动变更模式。
 
----
+平台提供真实航路、障碍、管制、区域/网格编码、地形、天气/信号场、数据有效期与来源，以及飞机当前电量、剩余航程/续航和 home。算法不采集这些外部数据。RTL 根据当前提交状态生成返航方案，平台负责持续监测、飞控执行和后续重规划。内置 DJI 配置属于明确标注的工程规划默认值。
 
-## 2. 交付物
+高度证据缺失时返回错误；规则引用资源缺失或数据不满足必要值要求时拒绝编译；路线经过相关数据的未覆盖、过期或 nodata 区域时阻断。不得将上述情况在交付说明中描述成“默认满足约束”。
 
-### 2.1 接口文档（唯一一份）
-
-| 路径 | 内容 |
-|------|------|
-| `docs/API.md` | **接口说明文档**：接口列表、输入数据结构、函数说明、返回结构、错误码、调用示例、常见问题、内部变量 |
-
-> 这是**唯一对外的说明文档**，对方读完即可完成接入。接口契约与调用示例合在
-> 一起，不要求对方在两个文件间跳转。
-
-### 2.2 核心算法与调用代码
-
-| 路径 | 内容 | 为什么必须给 |
-|------|------|--------------|
-| `src/` | 算法内核：时空 A\*、多目标优化、并行规划、冲突避免、路径验证、数据融合、可视化 | 接口层的实际实现，**缺了跑不起来** |
-| `uav_planner/` | Python SDK：`plan_single` / `plan_batch` / `plan_from_dir` / `validate_route` / `get_version` | Python 调用入口 |
-| `server/` | REST 服务（FastAPI）：路由、请求模型、异步作业表 | 非 Python 语言的调用入口 |
-| `serve.py` | 服务启动脚本 | 一行命令起服务 |
-
-**依赖方向**（单向，接口层可独立交付）：
-
-```
-server/ ──┐
-serve.py ─┼──→ uav_planner/ ──→ src/
-纯调用方 ─┘
-```
-
-### 2.3 测试用例
-
-| 路径 | 内容 |
-|------|------|
-| `tests/` | **272 个用例**：时空 A\*、代价层、冲突避免、数据融合、SDK 契约、REST 端点、主链路接线 |
-
-对方的用途：
-
-- **验收**：直接跑一遍就是最直接的质量证据；
-- **二次开发**：改动算法后靠它发现回归。
+## 3. 验证与验收口径
 
 ```bash
-pip install -r requirements.txt
+uv pip install -e '.[server,test]' -c requirements-runtime.lock
 python -m pytest tests/ -q
+python tools/benchmark_v2.py --validate-only
 ```
 
-### 2.4 示例数据
+SDK 冒烟应调用 v1 `plan_single` 和 v2 `register_scene/plan_single_v2/plan_batch_v2/validate_route_v2`；HTTP 冒烟应验证两版本 health、examples、同步规划、异步完整结果、v2 坐标转换及错误信封。具体可执行步骤见部署指南。
 
-| 路径 | 内容 |
+验收场景在优化前冻结，使用种子 20261016 与 `input/v2_benchmarks/manifest.json` 中的 SHA-256；不改任务、减少约束或缓存任务答案来制造达标。历史性能验收条件为 strict/mixed/free 三套各 1000 个已知可行任务，在场景预注册后，**8 CPU / 8 GiB、每套 10 轮、每轮 1000 条全部成功并独立验证通过、完整 HTTP 与 JSON 返回 ≤10 秒**。正式默认配额现为 **2 CPU / 2 GiB**，上述性能结果不能用于承诺该配额下 1000 任务仍在 10 秒内完成。脚本另支持 10/100 规模诊断，不计入历史 30 轮性能门槛。
+
+独立验证包括端点/到达窗口、连续几何与规则、从公开运动原语重建的原生运动学证书、连续多机间隔和返回条数。计时包含请求构建、实际规划和完整 JSON；场景编译单独记录；验证发生在计时结束后。异步 202、排队开始、仅原生核耗时、失败任务省略和只看成功任务耗时都不满足验收口径。HTTP 客户端 RSS 不是服务端内存证据，需另存 `docker stats`/容器资源限制。
+
+| 历史证据 | 已归档状态 |
 |------|------|
-| `input/config.json` | 时空网格配置（5000×5000×500 m，50×50×10×120 格） |
-| `input/static_obstacles.json` | 12 个静态障碍物（建筑、塔杆） |
-| `input/dynamic_obstacles.json` | 4 个动态障碍物（轨迹 + 安全半径） |
-| `input/aircraft_config.json` | 5 架飞行器性能参数 |
-| `input/tasks.json` | 5 个飞行任务 |
+| 宿主机 SDK 诊断：每套 1000 条 | 初轮 strict 1.514 s / mixed 4.623 s / free 1.211 s，全部成功；仅诊断 |
+| 8 CPU / 8 GiB 候选镜像、三套十轮完整 HTTP | 30/30 轮通过，每轮 1000/1000；最大 strict/mixed/free 1.454/4.541/1.191 s |
+| 镜像内 v1/v2 冒烟与 OpenAPI 一致性 | 候选与正式服务均通过，源码及规范哈希一致 |
+| 当次正式服务替换 | 18000 端口 API 2.0.0 通过当次烟测；不表示历史镜像仍在本地，回滚改为按 Git SHA 重建 |
 
-> 对方拿到就能跑通，不必等我们提供真实数据。
+完整证据见 [性能报告](../reports/v2-20261016/PERFORMANCE.md)。历史被测/已发布提交为 c14b18677a00abf20b8500f827417dd35aaa0d27，历史镜像 ID 为 sha256:60479a4fd6be59b40defd8e7b146a98522d649b04d134e901d0e8aacd42ada42；原始报告归档提交为 cd4780e，未改变算法代码。552 项完整回归及被测提交当次 GitHub CI 通过，30 轮原始记录与资源证据已归档；当前 main、最新 CI、部署与清理状态通过实时检查核对，不能沿用历史结论。
 
-### 2.5 环境与打包配置
+## 4. 打包与版本一致性
 
-| 路径 | 内容 |
-|------|------|
-| `pyproject.toml` | 打包配置，支持 `pip install -e ".[server]"` |
-| `requirements.txt` | pip 依赖清单 |
-| `environment.yml` | conda 环境复现配置 |
-| `pytest.ini` | 测试配置（跑 `tests/` 需要） |
-| `README.md` | 项目总览、算法简介、命令行用法 |
-
----
-
-## 3. 不交付物
-
-| 路径 | 内容 | 为什么不交 |
-|------|------|------------|
-| `tools/` | 命令行工具（`plan_single.py` / `plan_multi.py`）、压测、两个可视化脚本、环境脚本 | 我们自己的操作工具。它们**调用** SDK，不是接口的一部分 |
-| `internal/docs/DELIVERY.md` | 本文档 | 交付管理材料 |
-| `internal/docs/DEPLOYMENT.md` | 部署运维（Docker、Cloudflare、边缘鉴权） | 我们自己的运维资料 |
-| `internal/docs/archive/` | 旧版 I/O 文档与算法设计说明 | 已被 `docs/API.md` 取代 |
-| `internal/demand.md`、`internal/*.docx` | 课题需求与排期材料 | 课题管理材料 |
-| `output/` | 规划产物（JSON、PNG、HTML） | 生成结果，对方自己跑就有 |
-| `.github/` | CI 配置 | 我们自己的流水线 |
-
----
-
-## 4. 交付前验证
+运行镜像必须由当前 Git SHA 构建原生 wheel，再将 wheel 安装到同版本 Python 3.11 运行层；不要只复制 Python 源文件并漏掉扩展。同一镜像包含 `docs/API.md` 和 `docs/openapi.json`。规范以锁定依赖的 Python 3.11 镜像为准；其他 FastAPI/Pydantic 版本的 schema 拆分可能不同。生成规范只读取模型，不执行规划 handler：
 
 ```bash
-# 1. 测试全绿（对方拿到后也会跑这一条）
-python -m pytest tests/ -q
-
-# 2. SDK 可用
-python -c "from uav_planner import plan_single; \
-print(plan_single({'x':500,'y':500,'z':100},{'x':2500,'y':2500,'z':150})['status'])"
-
-# 3. 服务可起、可调
-python serve.py --host 127.0.0.1 --port 8000 &
-curl -s http://127.0.0.1:8000/api/v1/health
-curl -s -X POST http://127.0.0.1:8000/api/v1/plan/single \
-  -H 'Content-Type: application/json' \
-  -d '{"start":{"x":500,"y":500,"z":100},"goal":{"x":2500,"y":2500,"z":150}}'
-kill %1
+python - <<'PY'
+import json
+from pathlib import Path
+from server.app import app
+Path('docs/openapi.json').write_text(
+    json.dumps(app.openapi(), ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
+PY
 ```
 
-**第 2 步是关键**：它验证接口层**脱离 `tools/` 也能独立工作**。
+镜像内应能导入 `uav_planner.v2._native`，且 `/api/v2/version`、包版本、构建标签与交付记录对应。v1 `/version` 保留其兼容语义，不以 v2 替换既有 v1 请求/返回字段。
 
-再做一次**纯净环境验证**（确认交付物不依赖仓库里的其他东西）：
+## 5. 发布限制与回滚
 
-```bash
-pip wheel . --no-deps -w /tmp/wheel
-pip install --target /tmp/isolated /tmp/wheel/*.whl
-cd /tmp && PYTHONPATH=/tmp/isolated python -c "from uav_planner import plan_single; \
-print(plan_single({'x':500,'y':500,'z':100},{'x':2500,'y':2500,'z':150})['status'])"
-```
+场景与作业表保存在服务进程内存，重启不保留；必须先停止上游新提交、排空 **v1 和 v2 两套** pending/running 作业，再替换容器。平台保留原始场景 JSON，重启后重新注册，不能假定旧 scene_id 继续有效。当前单进程运行；扩展到多进程前需共享持久化状态。
 
----
+正式部署默认配额为 **2 CPU / 2 GiB**，端口保持 `127.0.0.1:18000 → 8000`；候选隔离在 18001。8 CPU / 8 GiB 仅用于复现历史性能验收。旧 v1 镜像 `low-altitude-path-planning:9816f8b` 及 ID `sha256:c03196d8cc7d1952ad29013e9dd70e12323127601615ba5253af7bc7f80e4e89` 仅作历史记录，不要求继续保留，也不声称仍在本地。回滚从选定 Git SHA 及该版本的构建配置重新构建并验收，再按 2 CPU / 2 GiB 切换。
 
-## 5. 必须向对方说明的事
+必要变更全部合入 main 后，清理已整合的旧本地/远端分支及旧镜像；删除分支不能代替必要变更合并。实际 main SHA、运行镜像 ID、容器资源和剩余分支/镜像使用部署指南第 8 节的命令核对，不要求文档永久写死最新部署 SHA。完整构建、验收、切换与重建回滚命令见 [`DEPLOYMENT.md`](DEPLOYMENT.md)。
 
-### 安全
-
-**服务不做认证与限流** —— 能访问到端口就能提交规划任务。部署时须控制暴露范围：
-
-| 范围 | 做法 |
-|------|------|
-| 仅本机 | 绑 `127.0.0.1` |
-| 可信内网 | 绑 `0.0.0.0`，确保在受控网段 |
-| **公网** | **必须在前面加边缘鉴权**（Cloudflare Access / 反向代理 Basic Auth / VPN） |
-
-> ⚠️ **资源限制不等于鉴权**。给容器限 CPU 能防止它拖垮宿主机，但拦不住谁在调用——
-> 访问者照样能把分配的那点 CPU 跑满。
-
-### 已知限制
-
-1. **异步作业表存在服务进程内存** —— 重启后历史作业不可查；
-   若要求持久化需另行改造（换 Redis / 数据库）。
-2. **服务固定单进程**（`serve.py --workers 1`）—— 规划本身是 CPU 密集且内部已
-   多线程并行；且内存态作业表在多进程下会失效。
-3. **CORS 默认放开**（`allow_origins=["*"]`）—— 便于联调期前端直连；
-   生产建议收紧为具体来源。
-
-### 性能特征
-
-| 场景 | 耗时 |
-|------|------|
-| 单任务规划 | 通常 **10–100 ms** |
-| 万级批量（10000 任务） | 实测 **约 437 秒** → 必须走异步接口 `POST /api/v1/jobs` |
-
-同步批量接口 `POST /api/v1/plan/batch` 建议不超过 500 个任务。
-
----
-
-## 6. 目录速查
-
-```
-交付 ──┬── docs/API.md          接口说明（唯一对外文档）
-       ├── src/                 算法内核
-       ├── uav_planner/         Python SDK
-       ├── server/              REST 服务
-       ├── serve.py             服务启动脚本
-       ├── tests/               272 个用例
-       ├── input/               示例数据
-       └── pyproject.toml / requirements.txt / environment.yml / pytest.ini / README.md
-
-不交付 ┬── tools/               命令行工具、压测、可视化
-       ├── internal/            课题材料 + 内部文档 + 旧文档归档
-       ├── output/              生成产物
-       └── .github/             CI 配置
-```
+接口沿用现有无内置鉴权的部署方式；访问控制由已有可信网络、隧道或反向代理负责。CPU/内存配额用于资源隔离，不能代替访问控制。
