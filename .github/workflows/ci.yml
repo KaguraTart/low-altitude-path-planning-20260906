@@ -7,6 +7,13 @@ on:
     branches: [main]
   workflow_dispatch:
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -25,8 +32,9 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e ".[all]" -c requirements-runtime.lock
 
-      - name: 导入冒烟测试
-        run: python -c "import numpy, scipy, matplotlib, plotly, fastapi, uvicorn; print('imports OK')"
+      - name: 导入及原生核冒烟测试
+        run: |
+          python -c "import numpy, scipy, matplotlib, plotly, fastapi, uvicorn; from uav_planner.v2 import native; assert native.available(); print(native.engine_info())"
 
       - name: 单元测试
         run: python -m pytest tests/ -v
@@ -42,31 +50,43 @@ jobs:
 
       - name: REST 服务冒烟（真起服务 + curl，不走 TestClient）
         run: |
-          python serve.py --host 127.0.0.1 --port 8000 &
+          python serve.py --host 127.0.0.1 --port 8000 > /tmp/ci-server.log 2>&1 &
           SERVER_PID=$!
+          trap 'kill "$SERVER_PID" 2>/dev/null || true' EXIT
           # 最多等 30 秒就绪
           for i in $(seq 1 30); do
             curl -sf http://127.0.0.1:8000/api/v1/health > /dev/null && break
             sleep 1
           done
-          echo "--- health ---"
-          curl -sf http://127.0.0.1:8000/api/v1/health && echo
-          echo "--- OpenAPI 可生成 ---"
-          curl -sf http://127.0.0.1:8000/openapi.json -o /dev/null
-          echo "--- 用示例请求体打 /plan/single ---"
-          curl -sf http://127.0.0.1:8000/api/v1/examples/single -o /tmp/ex_single.json
-          curl -sf -X POST http://127.0.0.1:8000/api/v1/plan/single \
-            -H 'Content-Type: application/json' \
-            -d @/tmp/ex_single.json -o /tmp/res_single.json
-          python -c "
-          import json
-          r = json.load(open('/tmp/res_single.json'))
-          assert r['status'] == 'planned', r
-          assert r['route']['metrics']['total_distance_m'] > 0
-          print('REST smoke OK:', r['route']['metrics'])
-          "
+          curl --fail --silent --show-error http://127.0.0.1:8000/api/v1/health
           python tools/smoke_v2.py --base-url http://127.0.0.1:8000
-          kill $SERVER_PID
+
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: rest-service-failure-log
+          path: /tmp/ci-server.log
+
+  docker:
+    name: Docker 镜像与发布契约
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 构建不可变镜像
+        run: docker build --build-arg GIT_SHA="$GITHUB_SHA" -t "uav-ci:$GITHUB_SHA" .
+
+      - name: 启动实际镜像并验证 v1/v2、异步、Swagger 和文档
+        run: bash tools/check_docker_release.sh "uav-ci:$GITHUB_SHA" "$GITHUB_SHA" output/ci-docker
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: docker-release-contract
+          path: output/ci-docker/
 
   stress:
     # 万级规模压测手动触发（耗时约 10 分钟）
@@ -108,7 +128,7 @@ jobs:
           python-version: "3.11"
           cache: pip
 
-      - run: pip install -r requirements.txt
+      - run: pip install -e ".[viz]" -c requirements-runtime.lock
 
       - name: 生成样例规划结果
         run: python tools/plan_single.py --output-dir /tmp/ci-viz

@@ -20,9 +20,11 @@
 | CPU | AMD Ryzen 7 9800X3D 8-Core Processor；Docker NanoCpus=8000000000，8 CPU 额度 |
 | 内存 / swap 上限 | 8589934592 / 8589934592 字节（8 GiB，无额外 swap 额度） |
 | 客户端与独立验算 | Python 3.13.9，Linux x86_64，16 逻辑 CPU 可见 |
-| OpenAPI SHA-256 | `85dd1566c02dd9a2e78c4f0d1eb466f6db032b34957de9995339deefc3af5ad3` |
+| 规范化 OpenAPI SHA-256 | `85dd1566c02dd9a2e78c4f0d1eb466f6db032b34957de9995339deefc3af5ad3` |
 
 镜像内核心源文件的 SHA-256 见 [environment.json](environment.json)，已逐文件核对当前工作区一致。本报告及后续文档/发布证据提交可以晚于被测 revision；它们不改变被测算法代码或要求重建该已验收镜像。部署须选择本表镜像 ID，而非把更新后的文档分支 HEAD 误作新算法镜像。
+
+原始验收报告归档提交为 `cd4780e`，正式镜像仍对应上表的 `c14b186`。OpenAPI 哈希采用 `hashlib.sha256(json.dumps(openapi, sort_keys=True).encode("utf-8")).hexdigest()`，其中 `openapi` 为解析后的 JSON 对象，其他 `json.dumps` 参数使用 Python 默认值。它按键排序后计算语义比对摘要，与带缩进和换行的 `docs/openapi.json` 文件字节摘要不同；原始验收 JSON 中的哈希保持不变。
 
 精确服务依赖见 [runtime-versions.json](runtime-versions.json)：NumPy 2.4.6、SciPy 1.17.1、Pydantic 2.14.1、FastAPI 0.143.2、Shapely 2.2.0、pyproj 3.7.2 / PROJ 9.5.1。benchmark JSON 的 environment.python 是宿主机验算 Python 3.13.9，服务解释器以本文件为准。
 

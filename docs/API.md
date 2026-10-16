@@ -1256,7 +1256,7 @@ fallback；取值一律通过 `get_max_speed()` / `get_max_altitude()` 等 gette
 
 `Waypoint` 必填 `wkt: POINT Z`；可选 `earliest/latest`、`hover_s`（>=0，默认 0）、`hover`（默认 false）。悬停应在业务航点标记；`hover_s` 给明确时长，`hover=true` 可配合 HOVER 规则的 `defaultHoverTime`。时间窗均须带时区。
 
-`AircraftState` 字段均可省略：`at`（timestamp）、`battery_percent`（0–100）、`remaining_flight_time_s`、`remaining_range_m`（均 >=0）、`home_wkt`（`POINT Z`）、`alt_reference`。RTL 启用低电触发时，必须提供电量、剩余飞行时间、剩余航程与 home，不能只给一个低电标志。平台应使用与任务一致的状态高度基准。
+`AircraftState` 字段均可省略：`at`（timestamp）、`battery_percent`（0–100）、`remaining_flight_time_s`、`remaining_range_m`（均 >=0）、`home_wkt`（`POINT Z`）、`alt_reference`。RTL 启用低电触发时，必须提供电量、剩余飞行时间、剩余航程与 home，不能只给一个低电标志。`state.alt_reference` 显式指定时独立解释 home 的高度，可与任务基准不同；省略或为 null 时沿用 `Task.alt_reference`，服务将 home 换算到任务输出基准。
 
 RTL 是**根据提交时当前状态生成的返航方案**：触发后将目标改为 `home_wkt`，生成满足 `rtlAltitude` 的返航路径，并检查当前剩余航程与续航；服务不持续监听电池，也不向无人机下发返航指令。持续储备监测、实际执行与后续重规划由平台负责。
 
@@ -1306,7 +1306,7 @@ RTL 是**根据提交时当前状态生成的返航方案**：触发后将目标
 | `ENDURANCE` | `maxRange,minEndurance` | 米 / 秒，均 >0；minEndurance 是机型容量最低要求；同时检查路径与当前剩余续航/航程 |
 | `PAYLOAD` | `maxPayloadKg` | kg >=0，必填；检查机型载荷能力与实际任务载荷 |
 | `WAYPOINT` | `maxWaypoints,minWaypointInterval` | maxWaypoints 为 >=2 的整数，计起点+业务中间点+终点，不计搜索采样点；间隔为米 >=0 |
-| `RTL` | `rtlAltitude,rtlOnLowBattery,lowBatteryPercent` | 三项必填；米 >=0、boolean、0–100。低电开关启用时要求完整上游状态；达到阈值生成 home 返航方案，并检查当前剩余资源 |
+| `RTL` | `rtlAltitude,rtlOnLowBattery,lowBatteryPercent` | 三项必填；rtlAltitude 为 **MSL 海拔米**且 >=0，其余为 boolean、0–100。低电开关启用时要求完整上游状态；达到阈值生成 home 返航方案，并检查当前剩余资源 |
 
 示例规则（加入上面的严格航路场景即可运行）：
 
@@ -1330,7 +1330,7 @@ RTL 是**根据提交时当前状态生成的返航方案**：触发后将目标
 | 场景注册/查询 | `scene_id`、`scene_version`（SHA-256）、`status="ready"`、`compilation_ms`、`coordinate_context`、`warnings`、`counts`（airways/obstacles/control_zones/rules/datasets 数量） |
 | 坐标转换 | `geometries_wkt`（与输入顺序相同）、`direction`、`alt_reference`、`coordinate_context` |
 | health | `status="ok"/"degraded"`、`api_version`、`native_available`、`jobs`；缺原生扩展时 degraded，不能据此承诺可规划 |
-| version | `api_version`、`engine`（available/engine/version/error）、`default_profile` |
+| version | `api_version`、`engine`（available/engine/version/error/git_sha）、`default_profile`；`engine.git_sha` 为运行镜像的构建 revision，本地未设置时为 `unknown` |
 | capabilities | `api_version/route_modes/default_route_mode/rule_types/altitude_references/geometric_tolerance_m/max_scene_radius_m/grid_formats/scene_lifecycle`；另有 `scene_limits`（§11.2 单场景预算整数对象）、`max_registered_scenes`（默认 8）、`max_registered_scene_bytes`（默认 1073741824，登记合计估算预算） |
 
 `coordinate_context` 包含输入 EPSG:4326、轴序、局部 AEQD CRS、原点、半径、地形/水准面来源与气压修正版本。公开几何容差为 0.1 m；这用于数值和离散近似的保守处理，不允许调用方削减配置的安全距离。
@@ -1376,6 +1376,7 @@ RTL 是**根据提交时当前状态生成的返航方案**：触发后将目标
 | `elapsed_ms` | 本次 SDK 规划墙钟耗时，毫秒；客户端完整 HTTP 耗时还包含传输与序列化 |
 | `engine` | 当前为 `native-v2` |
 | `coordinate_context` | 本批次的投影原点、轴序、半径与高度证据来源，供解释原语局部坐标 |
+| `stage_timings_ms` | 服务阶段耗时对象，单位毫秒：`scene_and_task_parsing/search_motion_and_certificate/reservation_scheduling/final_validation_and_wkt/sdk_response_serialization`；用于诊断，完整 HTTP 耗时以客户端测量为准 |
 
 `validation` 和验证端点返回 `valid:boolean`、`violations:Violation[]`；验证端点另有 `rule_report`。`Violation` 含 `code/message`，可选 `rule_id/time_s` 与 `details`。`RuleReport` 含 `rule_id/rule_type/status/message/details/reasons/dataset_versions`；status 枚举为 `applied/not_applicable/inactive/failed/unsupported`。当前报告的原因及版本证据主要位于 `details.reasons` 和 `details.dataset_versions`，顶层字段为兼容保留；调用方应保存完整报告。
 

@@ -27,7 +27,7 @@ v2 后台队列最多 32 个 pending+running、1 个执行线程；满载或关�
 开发安装会用 CMake 和 C++17 编译器构建 pybind11 扩展：
 
 ```bash
-uv pip install -e '.[server,test]'
+uv pip install -e '.[server,test]' -c requirements-runtime.lock
 python -m pytest tests/ -q
 python -c 'from uav_planner.v2 import native; print(native.engine_info()); assert native.available()'
 python tools/benchmark_v2.py --validate-only
@@ -48,6 +48,17 @@ PY
 也可直接把已验证候选的 `/openapi.json` 保存为快照，再纳入下一个文档提交和镜像。生成规范只导入 ASGI 应用并读类型模型，不执行规划 handler。Swagger `/docs` 是 UI，读取 `/openapi.json`；只改 Markdown 不会改变 Swagger 契约。
 
 ## 3. 分支、PR 与不可变候选镜像
+
+GitHub `CI` 在面向 main 的 PR、main 推送和手动触发时执行完整测试、REST 真服务烟测及可视化。测试通过后，`Docker 镜像与发布契约` 作业从同一 checkout 构建 SHA 标签镜像，运行已安装的 wheel，核对原生核、构建 revision、v1/v2 规划、坐标转换、场景、异步结果、错误信封和 Swagger。镜像内 API.md/OpenAPI 文件必须与 checkout 一致，运行时 OpenAPI 必须与快照一致；日志、镜像元数据和烟测 JSON 保存为 `docker-release-contract` artifact。PR 默认 checkout 为合并测试提交，artifact 中的 revision 因而可能与 PR 分支 HEAD 不同。
+
+本地可对已构建镜像执行同一检查，不占正式服务端口，结束时清理专用临时容器：
+
+```bash
+bash tools/check_docker_release.sh "low-altitude-path-planning:$UAV_BUILD_SHA" \
+  "$UAV_BUILD_SHA" output/ci-docker
+```
+
+该 CI 作业采用 2 CPU / 2 GiB 验证发布功能与打包，不作为第 5 节专用宿主机的性能验收；手动 `stress` 作业仍运行 v1 压测。CI 不自动替换本机正式服务，正式切换按第 6 节排空与发布步骤执行。
 
 先完成代码、文档、回归和固定输入校验，再推送当前 `codex/` 分支创建审查记录。PR 描述必须写实际功能与验证结果；容器性能尚未验证就明确标记待验证。
 
@@ -183,7 +194,7 @@ docker logs low-altitude-path-planning-candidate
 | 8 CPU / 8 GiB 三套十轮 HTTP | 30/30 轮通过；strict/mixed/free 最大 1.454/4.541/1.191 s，每轮 1000/1000 成功、证书通过、冲突 0 |
 | 服务资源 | cgroup memory.peak 281.72 MiB，进程 VmHWM 327.51 MiB，OOM 0；[`service-resources.json`](../reports/v2-20261016/service-resources.json) |
 | 正式替换后双版本复测 | 通过，2026-10-16T11:03:22Z；[`production-smoke.json`](../reports/v2-20261016/production-smoke.json) |
-| GitHub PR #8 收尾 | **待发布负责人完成报告提交并标记 Ready** |
+| GitHub PR #8 收尾 | 历史验收报告提交与 Ready 已完成；PR 待合并，当前 CI 状态以最新检查为准 |
 
 性能、全部 30 轮与阶段统计见 [`../reports/v2-20261016/PERFORMANCE.md`](../reports/v2-20261016/PERFORMANCE.md)。被测且正式运行的镜像为 `low-altitude-path-planning:c14b18677a00abf20b8500f827417dd35aaa0d27`，ID `sha256:60479a4fd6be59b40defd8e7b146a98522d649b04d134e901d0e8aacd42ada42`，8 CPU/8 GiB；正式源文件与 OpenAPI 快照一致。CI 对被测代码的 test（3m37s）与 visualize（35s）通过，手动 stress job 按设计跳过。后续报告/证据提交不改变算法，不以文档分支的新 HEAD 替换已验收镜像。
 

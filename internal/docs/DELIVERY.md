@@ -30,7 +30,7 @@ v2 提供版本化场景、WGS84/WKT 与显式高度换算、三种路径模式�
 ## 3. 验证与验收口径
 
 ```bash
-uv pip install -e '.[server,test]'
+uv pip install -e '.[server,test]' -c requirements-runtime.lock
 python -m pytest tests/ -q
 python tools/benchmark_v2.py --validate-only
 ```
@@ -48,7 +48,7 @@ SDK 冒烟应调用 v1 `plan_single` 和 v2 `register_scene/plan_single_v2/plan_
 | 镜像内 v1/v2 冒烟与 OpenAPI 一致性 | 候选与正式服务均通过，源码及规范哈希一致 |
 | 正式服务替换与回滚确认 | 18000 端口 API 2.0.0 健康；旧镜像已保留，回滚步骤已记录（未执行回滚） |
 
-完整证据见 [性能报告](../reports/v2-20261016/PERFORMANCE.md)。被测/已发布提交为 c14b18677a00abf20b8500f827417dd35aaa0d27，镜像 ID 为 sha256:60479a4fd6be59b40defd8e7b146a98522d649b04d134e901d0e8aacd42ada42；后续报告提交不改变算法代码。552 项完整回归通过，GitHub CI 通过，30 轮原始记录与资源证据已归档。
+完整证据见 [性能报告](../reports/v2-20261016/PERFORMANCE.md)。被测/已发布提交为 c14b18677a00abf20b8500f827417dd35aaa0d27，镜像 ID 为 sha256:60479a4fd6be59b40defd8e7b146a98522d649b04d134e901d0e8aacd42ada42；原始报告归档提交为 cd4780e，未改变算法代码。552 项完整回归及被测提交当次 GitHub CI 通过，30 轮原始记录与资源证据已归档；当前 PR 的 CI 状态以最新检查为准。
 
 ## 4. 打包与版本一致性
 
