@@ -599,12 +599,17 @@ def run_suite(suite: str, repeats: int, scales: list[int], output: Path,
     registration_ms = (time.perf_counter() - started) * 1000
     scene_id = registered["scene_id"]
     local_scene_id = register_scene(workload["scene"])["scene_id"] if base_url else scene_id
+    service_version=None
+    if base_url:
+        with urllib.request.urlopen(base_url.rstrip("/")+"/api/v2/version",timeout=10) as response:
+            service_version=json.load(response)
     output.mkdir(parents=True, exist_ok=True)
     report: dict[str, Any] = {
         "suite": suite, "seed": SEED, "input_sha256": digest,
         "frozen_manifest_sha256": sha256((directory / "manifest.json").read_bytes()),
         "mode": "http" if base_url else "sdk", "scene_registration_ms": registration_ms,
         "scene_version": registered.get("scene_version"), "native": native.engine_info(),
+        "service_version":service_version,
         "reference_validation": reference, "runs": [], "summary": {},
         "environment": {"python": sys.version, "platform": platform.platform(),
                         "cpu_count": __import__("os").cpu_count(),
@@ -623,6 +628,7 @@ def run_suite(suite: str, repeats: int, scales: list[int], output: Path,
             serialized = canonical_bytes(result)
             elapsed_ms = (time.perf_counter() - start) * 1000
             run = {"scale": count, "repeat": repeat, "elapsed_ms": elapsed_ms,
+                   "server_stage_timings_ms": result.get("stage_timings_ms", {}),
                    "success_count": result["success_count"], "failed_count": result["failed_count"],
                    "serialized_bytes": len(serialized), "result_sha256": sha256(serialized),
                    "peak_rss_mib": resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024}

@@ -7,6 +7,7 @@ Times are continuous seconds and positions are metric local coordinates.
 from __future__ import annotations
 
 import importlib
+import os
 from dataclasses import asdict, is_dataclass
 from typing import Any, Iterable, Sequence
 
@@ -43,6 +44,7 @@ def engine_info() -> dict[str, Any]:
         "available": available(),
         "engine": "cpp17-pybind11",
         "version": getattr(_engine, "ENGINE_VERSION", None),
+        "git_sha": os.environ.get("UAV_GIT_SHA", "unknown"),
         "error": str(_import_error) if _import_error else None,
     }
 

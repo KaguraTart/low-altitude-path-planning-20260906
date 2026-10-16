@@ -668,6 +668,7 @@ class BatchResult(StrictModel):
     elapsed_ms: NonNegative
     engine: StrictStr
     coordinate_context: dict[StrictStr, JsonValue] = Field(default_factory=dict)
+    stage_timings_ms: dict[StrictStr, NonNegative] = Field(default_factory=dict)
 
 
 def _ordered_times(start: datetime | None, end: datetime | None, *, equal: bool = False) -> None:

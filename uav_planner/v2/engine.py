@@ -635,6 +635,7 @@ def plan_batch_v2(*,tasks,scene_id=None,scene=None,request_id=None,time_budget_s
     if not task_models or len({t.id for t in task_models})!=len(task_models):
         raise PlanningError(ErrorCode.INVALID_INPUT,"Tasks must be nonempty and have unique ids")
     ordered=sorted(enumerate(task_models),key=lambda it:(-it[1].priority,it[1].latest_arrival or datetime.max.replace(tzinfo=timezone.utc),it[1].id))
+    parsed_at=time.perf_counter()
     results=[None]*len(task_models)
     candidates=[]
     for index,task in ordered:
@@ -711,6 +712,7 @@ def plan_batch_v2(*,tasks,scene_id=None,scene=None,request_id=None,time_budget_s
                            "hi":alternatives[0][1],"windows":alternatives,"latest":latest})
     # A single native batch shares its temporal index across every reservation.
     # Rebuilding that index once per task is cubic and defeats scene preloading.
+    searched_at=time.perf_counter()
     paths=[];timings=[];windows=[];priorities=[]
     for points,times in dynamic_tracks:
         paths.append(points);timings.append(times)
@@ -751,6 +753,7 @@ def plan_batch_v2(*,tasks,scene_id=None,scene=None,request_id=None,time_budget_s
                     scheduled["delays"][dynamic_count+k]=delay
                     fixed_paths.append(c["points"]);fixed_times.append(c["times"]+delay)
                     break
+    scheduled_at=time.perf_counter()
     accepted=[];accepted_times=[];accepted_profiles=[];accepted_tasks=[]
     for k,c in enumerate(candidates):
         task,profile,motion,index=c["task"],c["profile"],c["motion"],c["index"]
@@ -790,11 +793,18 @@ def plan_batch_v2(*,tasks,scene_id=None,scene=None,request_id=None,time_budget_s
                 if t.id in (a,b):
                     results[i]=_failure(t,"SEPARATION","Residual continuous collision")
     count=sum(r["status"]=="planned" for r in results)
+    validated_at=time.perf_counter()
     result=BatchResult.model_validate({"planned_at":datetime.now(timezone.utc),"request_id":request_id or uuid.uuid4().hex,
         "scene_id":scene_id,"scene_version":version,"routes":results,"success_count":count,
         "failed_count":len(results)-count,"conflicts":conflicts,"elapsed_ms":(time.perf_counter()-start)*1000,"engine":"native-v2",
-        "coordinate_context":compiled.frame.context})
-    return result.model_dump(mode="json")
+        "coordinate_context":compiled.frame.context,
+        "stage_timings_ms":{"scene_and_task_parsing":(parsed_at-start)*1000,
+            "search_motion_and_certificate":(searched_at-parsed_at)*1000,
+            "reservation_scheduling":(scheduled_at-searched_at)*1000,
+            "final_validation_and_wkt":(validated_at-scheduled_at)*1000}})
+    output=result.model_dump(mode="json")
+    output["stage_timings_ms"]["sdk_response_serialization"]=(time.perf_counter()-validated_at)*1000
+    return output
 
 
 def plan_single_v2(*,task,scene_id=None,scene=None,time_budget_s=10.0):

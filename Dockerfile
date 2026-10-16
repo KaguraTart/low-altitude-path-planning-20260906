@@ -1,12 +1,13 @@
-ARG BASE_IMAGE=python:3.11-slim
+ARG BASE_IMAGE=public.ecr.aws/docker/library/python:3.11-slim@sha256:e88e9763f943ec1834f992a4b51e0f24500486803e8bc534e5767af9ea65f6ce
 FROM ${BASE_IMAGE} AS builder
 WORKDIR /build
 ENV PIP_DISABLE_PIP_VERSION_CHECK=1
 ARG PIP_INDEX_URL=https://pypi.org/simple
 RUN apt-get update && apt-get install -y --no-install-recommends g++ cmake ninja-build \
     && rm -rf /var/lib/apt/lists/*
-COPY pyproject.toml CMakeLists.txt README.md requirements-runtime.lock ./
+COPY requirements-runtime.lock ./
 RUN python -m pip wheel --no-cache-dir --wheel-dir /wheels -r requirements-runtime.lock
+COPY pyproject.toml CMakeLists.txt README.md ./
 COPY native/ ./native/
 COPY uav_planner/ ./uav_planner/
 COPY server/ ./server/
@@ -24,5 +25,6 @@ COPY --from=builder /wheels /wheels
 RUN python -m pip install --no-cache-dir --no-index --find-links=/wheels uav-path-planning[server] \
     && rm -rf /wheels
 COPY input/ ./input/
+COPY docs/API.md docs/openapi.json ./docs/
 EXPOSE 8000
 CMD ["python", "-m", "serve", "--host", "0.0.0.0", "--port", "8000"]

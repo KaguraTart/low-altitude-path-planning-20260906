@@ -4,7 +4,9 @@
 >
 > **3.25 多维时空大规模并行规划算法** & **3.26 智能飞行线路规划算法**
 >
-> 项目状态：**可用，需优化**  ·  最后更新：2026-10-12
+> 当前版本：**2.0.0**（v1 保留，新增 WKT / WGS84 v2） · 最后更新：2026-10-16
+>
+> v2 容器性能与正式发布验收：**待验证**。下文原有 demo、压测和审计评分为 v1 历史记录，不能用作 v2 验收结果。
 
 ---
 
@@ -18,6 +20,43 @@
 | **要交付**（交什么、不交什么） | [`internal/docs/DELIVERY.md`](internal/docs/DELIVERY.md) |
 | **要跑命令行**（规划 / 压测 / 可视化） | 本文档 §3.3、§3.4；脚本在 [`tools/`](tools/) |
 | **要了解算法** | 本文档 §5；[`internal/docs/archive/algorithm_design.md`](internal/docs/archive/algorithm_design.md) |
+| **要了解 v2 实现与验收边界** | [`internal/docs/V2_ARCHITECTURE.md`](internal/docs/V2_ARCHITECTURE.md)；[`input/v2_benchmarks/`](input/v2_benchmarks/) |
+
+---
+
+## v2 当前实现
+
+v2 在 `/api/v2` 提供强类型 JSON + WKT 接口，外部坐标为 WGS84 经度/纬度和显式高度基准，内部用局部 AEQD 米制坐标计算。v1 原有 URL、SDK 和输入结构继续保留。所有对外字段、20 类规则、完整 v1/v2 示例与迁移方法集中在 [`docs/API.md`](docs/API.md)；Swagger `/docs` 从同一服务的类型模型生成 OpenAPI，Markdown 不参与生成。
+
+- 默认 `route_mode="strict"`：扫掠体须在有效航路或显式起终点接驳体内，无路就失败；`prefer` 允许航路外飞行并在候选图中使用 2 倍航路外基础代价，`free` 不要求航路包含。
+- 场景可预注册，按输入 SHA-256 版本复用不可变编译结果；任务答案不缓存。场景和异步作业存在进程内存，重启后重新注册场景，服务保持单进程。
+- 全部 20 类规则接入搜索筛选和最终验证；天气、信号、地形、区域、风险等数据及当前飞机状态由平台提供，缺少引用或相关场数据不可用会拒绝或阻断路径。
+- C++17 / pybind11 原生内核承担图/网格搜索、连续时间预约、碰撞检测和独立运动学验证。输出含 WKT、逐顶点时间、解析运动原语与关键点；没有原生扩展时明确报服务故障。
+- 内置 DJI Mini 4 Pro 为工程规划配置；平台负责真实包线、环境数据、飞机状态、飞控执行和持续重规划。
+
+```bash
+# 安装时构建 C++17 扩展；需 C++17 编译器与 CMake。
+uv pip install -e '.[server,test]'
+python serve.py --host 127.0.0.1 --port 8000
+curl --fail-with-body -sS http://127.0.0.1:8000/api/v2/health
+curl --fail-with-body -sS http://127.0.0.1:8000/api/v2/examples/single -o /tmp/uav-single-v2.json
+curl --fail-with-body -sS http://127.0.0.1:8000/api/v2/plan/single \
+  -H 'Content-Type: application/json' --data-binary @/tmp/uav-single-v2.json
+```
+
+部署使用仓库根目录多阶段 Dockerfile 构建 Python 3.11 原生包，Compose 为 `127.0.0.1:18000 → 8000`、8 CPU / 8 GB，通过 `UAV_IMAGE_TAG` 选择不可变 Git SHA 镜像。候选端口 18001、双版本作业排空、烟测与回滚命令见 [`internal/docs/DEPLOYMENT.md`](internal/docs/DEPLOYMENT.md)。
+
+固定验收数据已冻结在 [`input/v2_benchmarks`](input/v2_benchmarks)，manifest 记录 SHA-256。`tools/benchmark_v2.py` 对 strict/mixed/free 三套各 1000 个已知可行任务各跑 10 轮；每轮要求全部成功、独立验证通过、完整 HTTP 与 JSON 返回 ≤10 秒。场景预加载和编译另计，不能只测异步提交。
+
+```bash
+python tools/benchmark_v2.py --validate-only
+python tools/benchmark_v2.py --base-url http://127.0.0.1:18001 \
+  --repeats 10 --scales 10 100 1000 --output output/v2_benchmarks/http
+```
+
+当前宿主机 SDK 诊断已跑到每套 1000 条全部成功，strict/mixed/free 首轮约 1.514 / 4.623 / 1.211 秒；**这些不是 8 CPU / 8 GB Docker HTTP 十轮验收结果**。正式容器结果待验证，不提前标记达标。
+
+以下 §1–§9 保留原 v1 项目说明、工具和历史性能记录；其中“不采集气象”不影响 v2 使用上游提供的天气空间场执行规则。
 
 ---
 

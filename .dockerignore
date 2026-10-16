@@ -2,7 +2,6 @@ output/
 tests/
 tools/
 internal/
-docs/
 .git/
 __pycache__/
 *.pyc
