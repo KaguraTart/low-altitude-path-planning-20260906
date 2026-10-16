@@ -1,0 +1,91 @@
+{
+  "scene_id": null,
+  "scene": {
+    "coordinates": {
+      "origin_lon": 104.77,
+      "origin_lat": 29.33,
+      "origin_alt_msl": 0.0,
+      "max_radius_m": 50000.0,
+      "terrain_msl_m": 0.0,
+      "geoid_separation_m": null,
+      "terrain_source": "example-flat-terrain-v1",
+      "geoid_source": null,
+      "height_corrections": []
+    },
+    "bounds": {
+      "x_min": 0.0,
+      "x_max": 1500.0,
+      "y_min": 0.0,
+      "y_max": 500.0,
+      "z_min": 0.0,
+      "z_max": 300.0
+    },
+    "resolution": [
+      25.0,
+      25.0,
+      10.0
+    ],
+    "horizon_s": 3600.0,
+    "time_origin": "2026-10-16T09:00:00+08:00",
+    "airways": [
+      {
+        "id": "demo-airway",
+        "centerLine": "LINESTRING Z (104.771029580333 29.330902187336 80, 104.782354963949 29.33090161953 80)",
+        "widthMeters": 100.0,
+        "minAltitude": 50.0,
+        "maxAltitude": 150.0,
+        "altReference": "MSL",
+        "startGrid": {
+          "minLon": 104.77092958033286,
+          "maxLon": 104.77112958033287,
+          "minLat": 29.330802187335642,
+          "maxLat": 29.331002187335642,
+          "minAlt": 50.0,
+          "maxAlt": 150.0
+        },
+        "endGrid": {
+          "minLon": 104.78225496394877,
+          "maxLon": 104.78245496394878,
+          "minLat": 29.330801619530046,
+          "maxLat": 29.331001619530046,
+          "minAlt": 50.0,
+          "maxAlt": 150.0
+        },
+        "status": "ACTIVE",
+        "direction": "BOTH",
+        "valid_from": null,
+        "valid_to": null,
+        "climbConstraint": null,
+        "turnConstraint": null
+      }
+    ],
+    "connectors": [],
+    "obstacles": [],
+    "dynamic_obstacles": [],
+    "control_zones": [],
+    "rules": [],
+    "datasets": [],
+    "profiles": [],
+    "grid": null
+  },
+  "task": {
+    "id": "demo-v2-001",
+    "start_wkt": "POINT Z (104.771029580333 29.330902187336 80)",
+    "goal_wkt": "POINT Z (104.782354963949 29.33090161953 80)",
+    "departure_time": "2026-10-16T09:00:00+08:00",
+    "alt_reference": "MSL",
+    "route_mode": "prefer",
+    "waypoints": [],
+    "earliest_arrival": null,
+    "latest_arrival": null,
+    "profile_id": "dji_mini_4_pro",
+    "aircraft": null,
+    "state": null,
+    "payload_kg": 0.0,
+    "priority": 0,
+    "start_connector_id": null,
+    "end_connector_id": null,
+    "rule_ids": null
+  },
+  "time_budget_s": 10.0
+}

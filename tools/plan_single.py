@@ -29,6 +29,9 @@ import json
 import os
 import sys
 import time
+from dataclasses import asdict
+from datetime import datetime, timezone
+from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -57,6 +60,7 @@ from src.validator import PathValidator
 
 # 编排逻辑已下沉到 SDK（原先定义在本脚本里，造成 uav_planner 反向依赖命令行脚本）
 from uav_planner.pipeline import run_single_task as plan_single_task
+from tools.planning_archive import archive_planning_result, snapshot_input_files, write_json
 
 
 def main():
@@ -109,6 +113,8 @@ def main():
     print(f"  任务: {len(tasks)} 个")
 
     ensure_output_dir(args.output_dir)
+    capture_directory = Path(args.output_dir) / "planning_data" / datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+    source_snapshot = snapshot_input_files(args.input_dir, capture_directory / "input", vars(args))
 
     # 2. 构建通行代价层（与占用网格正交）
     cost_grid = None
@@ -150,6 +156,11 @@ def main():
           f"续航: {perf.get_max_flight_time()/60:.1f} min")
 
     # 4. 执行规划
+    input_record = write_json(capture_directory / "single_input.json", {
+        "format_version": 1, "git_sha": source_snapshot["git_sha"], "arguments": vars(args),
+        "config": asdict(config), "obstacles": asdict(obstacle_set),
+        "tasks": [asdict(task)], "aircraft_performances": {task.aircraft_id: asdict(perf)},
+    })
     print("\n[3/6] 执行规划...")
     final_route, all_routes, warnings = plan_single_task(
         task, config, obstacle_set, perf,
@@ -185,6 +196,11 @@ def main():
         failed_count=sum(1 for r in all_routes if r.status != "planned"),
     )
     result_file = write_planning_result(result, args.output_dir)
+    write_json(capture_directory / "single_manifest.json", {
+        "format_version": 1, "source_input_manifest": "input/manifest.json", "input": input_record,
+        "final_route_id": final_route.route_id, "warnings": warnings,
+        **archive_planning_result(result, capture_directory, "single"),
+    })
     print(f"  结果: {result_file}")
 
     routes_dir = os.path.join(args.output_dir, "routes")

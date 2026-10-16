@@ -1,0 +1,24 @@
+[
+  {
+    "scale": 2,
+    "success_count": 0,
+    "failed_count": 2,
+    "success_rate": 0.0,
+    "total_planning_time_ms": 62.41,
+    "avg_planning_time_per_task_ms": 31.2,
+    "min_task_time_ms": 0.15,
+    "max_task_time_ms": 62.02,
+    "p50_task_time_ms": 31.08,
+    "p95_task_time_ms": 58.92,
+    "p99_task_time_ms": 61.4,
+    "avg_distance_m": 0.0,
+    "avg_time_s": 0.0,
+    "avg_min_obstacle_dist_m": 0.0,
+    "wall_clock_time_s": 0.06,
+    "throughput_tasks_per_s": 32.04,
+    "residual_conflict_count": 0,
+    "unsafe_route_count": 0,
+    "safety_rate": 100.0,
+    "workers_used": 1
+  }
+]

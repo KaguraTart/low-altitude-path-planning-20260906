@@ -21,7 +21,9 @@ import os
 import random
 import sys
 import time
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import Dict, List, Tuple
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -35,6 +37,7 @@ from src.models.aircraft import (
 )
 from src.models.task import PlannedRoute, PlanningResult
 from src.planners.parallel_planner import ParallelPlanner
+from tools.planning_archive import archive_planning_result, git_revision, snapshot_input_files, write_json
 
 
 # ---------- 随机任务生成 ----------
@@ -236,11 +239,28 @@ def run_scale(
     dispatch: bool = False,
     use_cost_grid: bool = True,
     verbose: bool = True,
+    archive_directory: str | Path | None = None,
 ) -> ScaleResult:
     rng = random.Random(seed + n)
     tasks, performances = generate_random_tasks(n, config, obstacle_set, rng)
 
     mode_label = "DISPATCH" if dispatch else "FULL"
+    archive_stem = f"{mode_label.lower()}_n{n:06d}_seed{seed}"
+    archive_input = None
+    if archive_directory is not None:
+        # Capture before planner-side mutations; disk I/O is outside t0.
+        archive_input = write_json(Path(archive_directory) / f"{archive_stem}_input.json", {
+            "format_version": 1, "git_sha": git_revision(),
+            "request_id": f"stress-{n}",
+            "captured_at": datetime.now(timezone.utc).isoformat(),
+            "parameters": {"scale": n, "seed": seed, "effective_seed": seed + n,
+                           "departure_window_s": 600.0, "mode": mode_label,
+                           "dispatch": dispatch, "workers": max_workers,
+                           "max_iterations": max_iterations, "use_cost_grid": use_cost_grid},
+            "config": asdict(config), "obstacles": asdict(obstacle_set),
+            "tasks": [asdict(task) for task in tasks],
+            "aircraft_performances": {key: asdict(value) for key, value in performances.items()},
+        })
     if verbose:
         print(f"\n{'='*60}", flush=True)
         print(f"  规模 N = {n} [{mode_label}] (seed={seed}, workers={max_workers})", flush=True)
@@ -266,6 +286,12 @@ def run_scale(
         tasks, performances, request_id=f"stress-{n}", dispatch=dispatch,
     )
     wall_clock = time.time() - t0
+    if archive_directory is not None:
+        artifacts = archive_planning_result(result, archive_directory, archive_stem)
+        write_json(Path(archive_directory) / f"{archive_stem}_manifest.json", {
+            "format_version": 1, "input": archive_input, **artifacts,
+            "planning_wall_clock_s": wall_clock, "archive_io_in_planning_time": False,
+        })
     print(f"  [完成 N={n} {mode_label}] 墙钟 {wall_clock:.1f}s, "
           f"成功 {result.success_count}/{n}", flush=True)
 
@@ -385,6 +411,11 @@ def main():
     print(f"通行代价层: {'on' if use_cost_grid else 'off'}")
 
     os.makedirs(args.output, exist_ok=True)
+    capture_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+    capture_directory = Path(args.output) / "planning_data" / capture_id
+    snapshot_input_files(args.data_dir, capture_directory / "input", vars(args), filenames=(
+        "config.json", "static_obstacles.json", "dynamic_obstacles.json",
+    ))
 
     # 决定运行模式：
     #   --compare: 依次跑 FULL + DISPATCH，用于对比提速效果
@@ -412,6 +443,7 @@ def main():
                     max_iterations=args.max_iterations,
                     dispatch=dispatch_flag, use_cost_grid=use_cost_grid,
                     verbose=True,
+                    archive_directory=capture_directory / "runs",
                 )
                 results.append(sr)
                 # 立即写中间结果（每模式一个 JSON 文件，供 visualize_stress.py 复用）

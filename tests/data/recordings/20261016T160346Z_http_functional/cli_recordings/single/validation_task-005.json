@@ -1,0 +1,66 @@
+{
+  "generated_at": "2026-10-17T00:03:00.906473",
+  "is_valid": true,
+  "summary_text": "✓ 合法：共 0 个问题（0 错误, 0 警告, 0 提示）",
+  "summary": {
+    "trajectory_points": 95,
+    "total_distance_m": 4467.390260118746,
+    "total_time_s": 470.0,
+    "n_errors": 0,
+    "n_warnings": 0
+  },
+  "issue_count": 0,
+  "issues": [],
+  "task_id": "task-005",
+  "aircraft_id": "uav-004",
+  "route_id": "opt-task-005",
+  "data_quality": {
+    "registered_sources": 7,
+    "source_details": {
+      "city_gis": {
+        "type": "static_buildings",
+        "priority": 7,
+        "static_count": 8,
+        "dynamic_count": 0
+      },
+      "telecom": {
+        "type": "static_buildings",
+        "priority": 9,
+        "static_count": 2,
+        "dynamic_count": 0
+      },
+      "power_grid": {
+        "type": "static_buildings",
+        "priority": 10,
+        "static_count": 1,
+        "dynamic_count": 0
+      },
+      "dem": {
+        "type": "static_buildings",
+        "priority": 4,
+        "static_count": 1,
+        "dynamic_count": 0
+      },
+      "radar": {
+        "type": "dynamic_uav",
+        "priority": 8,
+        "static_count": 0,
+        "dynamic_count": 2
+      },
+      "flight_plan": {
+        "type": "dynamic_uav",
+        "priority": 8,
+        "static_count": 0,
+        "dynamic_count": 1
+      },
+      "ecological": {
+        "type": "dynamic_uav",
+        "priority": 6,
+        "static_count": 0,
+        "dynamic_count": 1
+      }
+    },
+    "warnings": [],
+    "warning_count": 0
+  }
+}

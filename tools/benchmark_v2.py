@@ -21,6 +21,7 @@ import resource
 import statistics
 import sys
 import time
+import urllib.error
 import urllib.request
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -580,66 +581,196 @@ def validate_result(workload: dict[str, Any], result: dict[str, Any], count: int
             "total_route_vertices": sum(len(r["vertex_times_s"]) for r in routes)}
 
 
-def _http_json(base_url: str, path: str, body: Any, timeout: float) -> dict[str, Any]:
-    request = urllib.request.Request(base_url.rstrip("/") + path, canonical_bytes(body),
-                                     {"Content-Type": "application/json"}, method="POST")
-    with urllib.request.urlopen(request, timeout=timeout) as response:
-        return json.load(response)
+def _exception_body(exc: Exception) -> dict[str, Any]:
+    from uav_planner import PlanningError
+    return exc.to_dict() if isinstance(exc, PlanningError) else {
+        "client_error": {"type": type(exc).__name__, "message": str(exc)}}
+
+
+def _sdk_exchange(body: Any, operation: Any) -> dict[str, Any]:
+    request_bytes = canonical_bytes(body)
+    error = None
+    representation = "canonical_json"
+    try:
+        result = operation(body)
+        serialized = canonical_bytes(result)
+    except Exception as exc:
+        result = _exception_body(exc)
+        serialized = canonical_bytes(result)
+        error = f"{type(exc).__name__}: {exc}"
+        representation = "sdk_exception"
+    return {"input_bytes": request_bytes, "output_bytes": serialized,
+            "canonical_output": serialized, "result": result, "error": error,
+            "method": "SDK", "endpoint": None, "http_status": None, "http_headers": {},
+            "input_representation": "canonical_json", "output_representation": representation,
+            "wire_input": False, "wire_output": False}
+
+
+def _http_exchange(base_url: str, path: str, body: Any, timeout: float,
+                   method: str = "POST") -> dict[str, Any]:
+    url = base_url.rstrip("/") + path
+    headers = {"Content-Type": "application/json"}
+    data = canonical_bytes(body) if method == "POST" else None
+    # A GET has no body; its replayable input archive is request metadata.
+    input_bytes = data if data is not None else canonical_bytes({"method": method, "url": url, "headers": headers})
+    request = urllib.request.Request(url, data, headers, method=method)
+    status = None
+    response_headers: dict[str, str] = {}
+    error = None
+    representation = "http_response_body"
+    wire_output = True
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            status = response.status
+            response_headers = dict(response.headers.items())
+            raw = response.read()
+    except urllib.error.HTTPError as exc:
+        status = exc.code
+        response_headers = dict(exc.headers.items()) if exc.headers is not None else {}
+        with exc:
+            raw = exc.read()
+        error = f"HTTP {status}: {exc.reason}"
+    except Exception as exc:
+        raw = canonical_bytes(_exception_body(exc))
+        error = f"{type(exc).__name__}: {exc}"
+        representation = "client_error"
+        wire_output = False
+    if status is not None and not 200 <= status < 300:
+        error = error or f"HTTP {status}"
+    try:
+        result = json.loads(raw)
+        canonical = canonical_bytes(result)
+    except (ValueError, TypeError) as exc:
+        result, canonical = None, None
+        error = error or f"Response is not finite JSON: {exc}"
+    return {"input_bytes": input_bytes, "output_bytes": raw, "canonical_output": canonical,
+            "result": result, "error": error, "method": method, "endpoint": url,
+            "http_status": status, "http_headers": response_headers,
+            "input_representation": "http_request_body" if data is not None else "http_request_metadata",
+            "output_representation": representation, "wire_input": data is not None,
+            "wire_output": wire_output}
+
+
+def _archive_exchange(output: Path, stem: str, exchange: dict[str, Any]) -> dict[str, Any]:
+    """Write immutable payload bytes only after the measured exchange ends."""
+    descriptors = {}
+    for name in ("input", "output"):
+        raw = exchange[f"{name}_bytes"]
+        relative = Path("payloads") / f"{stem}_{name}.json"
+        with (output / relative).open("xb") as stream:
+            stream.write(raw)
+        canonical = raw if name == "input" else exchange["canonical_output"]
+        descriptors[name] = {
+            "path": relative.as_posix(), "bytes": len(raw), "sha256": sha256(raw),
+            "canonical_sha256": sha256(canonical) if canonical is not None else None,
+            "wire_sha256": sha256(raw) if exchange[f"wire_{name}"] else None,
+            "representation": exchange[f"{name}_representation"],
+        }
+    return {**descriptors, "method": exchange["method"], "endpoint": exchange["endpoint"],
+            "http_status": exchange["http_status"], "http_headers": exchange["http_headers"]}
+
+
+def _report_accepted(report: dict[str, Any], functional_only: bool) -> bool:
+    return (report["scene_registration"]["accepted"] and report.get("service_version_accepted", True)
+            and len(report["runs"]) == report["expected_run_count"] and all(
+                run["accepted"] and (functional_only or run["scale"] != 1000 or run["elapsed_ms"] < 10000)
+                for run in report["runs"]))
 
 
 def run_suite(suite: str, repeats: int, scales: list[int], output: Path,
               time_budget_s: float = 120, base_url: str | None = None,
-              directory: Path = FROZEN_DIRECTORY) -> dict[str, Any]:
+              directory: Path = FROZEN_DIRECTORY, functional_only: bool = False) -> dict[str, Any]:
     from uav_planner.v2 import native
     from uav_planner.v2.engine import plan_batch_v2, register_scene
+    if suite not in SUITES or repeats < 1 or not scales or len(set(scales)) != len(scales):
+        raise ValueError("Use a known suite, positive repeats, and distinct nonempty scales")
+    if any(count not in (10, 100, 1000) for count in scales):
+        raise ValueError("Accepted scales are 10, 100, and 1000")
+    output, directory = Path(output), Path(directory)
+    output.mkdir(parents=True, exist_ok=True)
+    (output / "payloads").mkdir(exist_ok=True)
+    report_path = output / f"{suite}-report.json"
+    stems = [f"{suite}_scene_registration"] + ([f"{suite}_service_version"] if base_url else [])
+    stems += [f"{suite}_n{count}_run{repeat + 1:02d}" for count in scales for repeat in range(repeats)]
+    existing = [path for path in [report_path, *(output / "payloads" / f"{stem}_{kind}.json"
+                for stem in stems for kind in ("input", "output"))] if path.exists()]
+    if existing:
+        raise FileExistsError(f"Refusing to overwrite existing benchmark archive: {existing[0]}")
     workload, digest = load_frozen(suite, directory)
     reference = validate_reference(workload)
-    started = time.perf_counter()
-    registered = (_http_json(base_url, "/api/v2/scenes", workload["scene"], time_budget_s) if base_url
-                  else register_scene(workload["scene"]))
-    registration_ms = (time.perf_counter() - started) * 1000
-    scene_id = registered["scene_id"]
-    local_scene_id = register_scene(workload["scene"])["scene_id"] if base_url else scene_id
-    service_version=None
-    if base_url:
-        with urllib.request.urlopen(base_url.rstrip("/")+"/api/v2/version",timeout=10) as response:
-            service_version=json.load(response)
-    output.mkdir(parents=True, exist_ok=True)
     report: dict[str, Any] = {
         "suite": suite, "seed": SEED, "input_sha256": digest,
         "frozen_manifest_sha256": sha256((directory / "manifest.json").read_bytes()),
-        "mode": "http" if base_url else "sdk", "scene_registration_ms": registration_ms,
-        "scene_version": registered.get("scene_version"), "native": native.engine_info(),
-        "service_version":service_version,
+        "mode": "http" if base_url else "sdk", "native": native.engine_info(),
+        "acceptance_mode": "functional_only" if functional_only else "performance",
+        "performance_gate_enforced": not functional_only, "accepted": False,
+        "expected_run_count": repeats * len(scales), "completed": False,
+        "service_version": None,
         "reference_validation": reference, "runs": [], "summary": {},
         "environment": {"python": sys.version, "platform": platform.platform(),
                         "cpu_count": __import__("os").cpu_count(),
-                        "timed_boundary": "request creation + plan_batch_v2 + complete JSON serialization; scene preloaded; independent validation excluded"},
+                        "timed_boundary": "request creation/serialization + planning + complete response read/JSON serialization; scene preloaded; archive writes and independent validation excluded"},
     }
-    report_path = output / f"{suite}-report.json"
+    # Exclusive creation also prevents concurrent invocations from sharing files.
+    with report_path.open("xb") as stream:
+        stream.write(canonical_bytes(report))
+    started = time.perf_counter()
+    registration = (_http_exchange(base_url, "/api/v2/scenes", workload["scene"], time_budget_s) if base_url
+                    else _sdk_exchange(workload["scene"], register_scene))
+    registration_ms = (time.perf_counter() - started) * 1000
+    registration_payloads = _archive_exchange(output, f"{suite}_scene_registration", registration)
+    registered = registration["result"]
+    registration_ok = (not registration["error"] and isinstance(registered, dict)
+                       and isinstance(registered.get("scene_id"), str) and bool(registered["scene_id"]))
+    report.update(scene_registration_ms=registration_ms,
+                  scene_registration={"accepted": bool(registration_ok), "elapsed_ms": registration_ms,
+                                      "payloads": registration_payloads},
+                  scene_version=registered.get("scene_version") if isinstance(registered, dict) else None)
+    if not registration_ok:
+        report["scene_registration"]["error"] = registration["error"] or "Registration response is missing scene_id"
+        report_path.write_bytes(canonical_bytes(report))
+        return report
+    scene_id = registered["scene_id"]
+    if base_url:
+        version = _http_exchange(base_url, "/api/v2/version", None, 10, method="GET")
+        report["service_version_payloads"] = _archive_exchange(output, f"{suite}_service_version", version)
+        report["service_version"] = version["result"]
+        report["service_version_accepted"] = not bool(version["error"])
+        if version["error"]:
+            report["service_version_error"] = version["error"]
+    report_path.write_bytes(canonical_bytes(report))
+    local_scene_id = register_scene(workload["scene"])["scene_id"] if base_url else scene_id
     for count in scales:
-        if count not in (10, 100, 1000):
-            raise ValueError("Accepted scales are 10, 100, and 1000")
         for repeat in range(repeats):
             start = time.perf_counter()
             request = {"scene_id": scene_id, "tasks": workload["tasks"][:count],
                        "time_budget_s": time_budget_s, "request_id": f"frozen-{suite}-{count}-{repeat}"}
-            result = (_http_json(base_url, "/api/v2/plan/batch", request, time_budget_s + 10) if base_url
-                      else plan_batch_v2(**request))
-            serialized = canonical_bytes(result)
+            exchange = (_http_exchange(base_url, "/api/v2/plan/batch", request, time_budget_s + 10) if base_url
+                        else _sdk_exchange(request, lambda value: plan_batch_v2(**value)))
             elapsed_ms = (time.perf_counter() - start) * 1000
+            payloads = _archive_exchange(output, f"{suite}_n{count}_run{repeat + 1:02d}", exchange)
+            result = exchange["result"]
+            serialized = exchange["canonical_output"]
+            fields = result if isinstance(result, dict) else {}
             run = {"scale": count, "repeat": repeat, "elapsed_ms": elapsed_ms,
-                   "server_stage_timings_ms": result.get("stage_timings_ms", {}),
-                   "success_count": result["success_count"], "failed_count": result["failed_count"],
-                   "serialized_bytes": len(serialized), "result_sha256": sha256(serialized),
+                   "server_stage_timings_ms": fields.get("stage_timings_ms", {}),
+                   "success_count": fields.get("success_count"), "failed_count": fields.get("failed_count"),
+                   "serialized_bytes": len(serialized) if serialized is not None else None,
+                   "result_sha256": sha256(serialized) if serialized is not None else None,
+                   "result_sha256_representation": "canonical_json", "payloads": payloads,
                    "peak_rss_mib": resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024}
             try:
+                if exchange["error"]:
+                    raise ValueError(exchange["error"])
+                if not isinstance(result, dict):
+                    raise ValueError("Planning response must be a JSON object")
                 run["validation"] = validate_result(workload, result, count, local_scene_id)
                 run["accepted"] = True
-            except (AssertionError, ValueError) as exc:
+            except Exception as exc:
                 run["accepted"] = False; run["error"] = str(exc)
-                (output / f"{suite}-{count}-{repeat}-failed.json").write_bytes(serialized)
             report["runs"].append(run)
+            report["completed"] = len(report["runs"]) == report["expected_run_count"]
+            report["accepted"] = _report_accepted(report, functional_only)
             report_path.write_bytes(canonical_bytes(report))
             print(json.dumps({"suite": suite, **run}, ensure_ascii=False), flush=True)
         runs = [run for run in report["runs"] if run["scale"] == count]
@@ -665,6 +796,8 @@ def main() -> int:
     parser.add_argument("--time-budget-s", type=float, default=120)
     parser.add_argument("--base-url", help="Optional HTTP API origin; SDK is the default")
     parser.add_argument("--validate-only", action="store_true")
+    parser.add_argument("--functional-only", action="store_true",
+                        help="Archive and independently validate every route without enforcing the 1000-task 10s performance gate")
     args = parser.parse_args()
     if args.freeze:
         print(json.dumps(freeze(args.input_directory), indent=2)); return 0
@@ -677,9 +810,12 @@ def main() -> int:
             print(json.dumps({"suite": suite, "sha256": digest, **validate_reference(workload)}, ensure_ascii=False))
         else:
             report = run_suite(suite, args.repeats, args.scales, args.output,
-                               args.time_budget_s, args.base_url, args.input_directory)
-            accepted &= all(run["accepted"] and (run["scale"] != 1000 or run["elapsed_ms"] < 10000)
+                               args.time_budget_s, args.base_url, args.input_directory,
+                               functional_only=args.functional_only)
+            accepted &= report["scene_registration"]["accepted"] and bool(report["runs"]) and all(
+                run["accepted"] and (args.functional_only or run["scale"] != 1000 or run["elapsed_ms"] < 10000)
                             for run in report["runs"])
+            accepted &= report.get("service_version_accepted", True)
     return 0 if accepted else 1
 
 

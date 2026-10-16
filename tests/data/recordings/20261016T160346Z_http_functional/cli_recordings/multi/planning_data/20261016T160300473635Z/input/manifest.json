@@ -1,0 +1,49 @@
+{
+  "format_version": 1,
+  "captured_at": "2026-10-16T16:03:00.473870+00:00",
+  "git_sha": "d52c60a8761ec07bd21b73e82eb0a56a825450e6",
+  "arguments": {
+    "input_dir": "./input",
+    "output_dir": "/tmp/uav-v1-archive-check/multi",
+    "workers": 2,
+    "dispatch": false,
+    "max_iterations": 200000,
+    "no_validation": false,
+    "no_avoid_conflicts": false,
+    "conflict_check": true,
+    "validate": true,
+    "no_cost_grid": false,
+    "clearance": 200.0,
+    "clearance_cost": 3.0,
+    "min_separation": 10.0,
+    "conflict_sample": 0
+  },
+  "files": [
+    {
+      "path": "config.json",
+      "bytes": 176,
+      "sha256": "d639e28016ab7b3b597dd05a1b537d08603210fa31ab8919b54a48bb412a7412"
+    },
+    {
+      "path": "static_obstacles.json",
+      "bytes": 2776,
+      "sha256": "454aee0f3f1d17f943e72a10bf901369fab64ea8d3da4bc704bf6b220ece1d6a"
+    },
+    {
+      "path": "dynamic_obstacles.json",
+      "bytes": 2282,
+      "sha256": "57accfc45b2903086ff611353fec08f22c70344e15eb3cd778e088ac4784d595"
+    },
+    {
+      "path": "aircraft_config.json",
+      "bytes": 6483,
+      "sha256": "0340fd374794bbd27d3eb6e4ca1f05efa355d22415beaf28eef72caa7a93824c"
+    },
+    {
+      "path": "tasks.json",
+      "bytes": 4377,
+      "sha256": "f4cb4218c45da10fe3ffc12ac61f3b55d335a814cf87562433f793a937e3c3e2"
+    }
+  ],
+  "missing_files": []
+}

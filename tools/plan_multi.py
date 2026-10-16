@@ -32,6 +32,9 @@ import json
 import os
 import sys
 import time
+from dataclasses import asdict
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import Dict, List, Tuple
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -61,6 +64,7 @@ from uav_planner.pipeline import (
     run_batch as plan_batch,
     validate_tasks_with_aircraft,
 )
+from tools.planning_archive import archive_planning_result, snapshot_input_files, write_json
 
 
 def main():
@@ -125,6 +129,8 @@ def main():
     print(f"  任务: {len(tasks)} 个")
 
     ensure_output_dir(args.output_dir)
+    capture_directory = Path(args.output_dir) / "planning_data" / datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+    source_snapshot = snapshot_input_files(args.input_dir, capture_directory / "input", vars(args))
 
     # 2. 校验
     if not args.no_validation:
@@ -154,6 +160,12 @@ def main():
     print(f"\n[3/5] 并行规划 ({mode}, workers={args.workers}, "
           f"代价层={'on' if use_cost_grid else 'off'}, "
           f"冲突避免={'on' if avoidance else 'OFF'})...")
+    input_record = write_json(capture_directory / "multi_input.json", {
+        "format_version": 1, "git_sha": source_snapshot["git_sha"], "arguments": vars(args),
+        "config": asdict(config), "obstacles": asdict(obstacle_set),
+        "tasks": [asdict(task) for task in tasks],
+        "aircraft_performances": {key: asdict(value) for key, value in performances.items()},
+    })
     t0 = time.time()
     result, planner = plan_batch(
         tasks, performances, config, obstacle_set,
@@ -249,6 +261,10 @@ def main():
     # 5. 保存结果
     print("\n[5/5] 保存结果...")
     result_file = write_planning_result(result, args.output_dir)
+    write_json(capture_directory / "multi_manifest.json", {
+        "format_version": 1, "source_input_manifest": "input/manifest.json", "input": input_record,
+        **archive_planning_result(result, capture_directory, "multi"),
+    })
     print(f"  结果: {result_file}")
 
     routes_dir = os.path.join(args.output_dir, "routes")

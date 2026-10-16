@@ -22,6 +22,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: 保存本次原始输入及提交版本
+        run: |
+          mkdir -p /tmp/ci-planning-data
+          cp -R input /tmp/ci-planning-data/input
+          printf '{"git_sha":"%s","run_id":"%s"}\n' "$GITHUB_SHA" "$GITHUB_RUN_ID" > /tmp/ci-planning-data/context.json
+
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
@@ -40,13 +46,13 @@ jobs:
         run: python -m pytest tests/ -v
 
       - name: 单机规划端到端
-        run: python tools/plan_single.py --output-dir /tmp/ci-single
+        run: python tools/plan_single.py --input-dir /tmp/ci-planning-data/input --output-dir /tmp/ci-planning-data/output/single
 
       - name: 多机规划端到端（含冲突检测与合法性验证）
-        run: python tools/plan_multi.py --output-dir /tmp/ci-multi --conflict-check --validate --workers 2
+        run: python tools/plan_multi.py --input-dir /tmp/ci-planning-data/input --output-dir /tmp/ci-planning-data/output/multi --conflict-check --validate --workers 2
 
       - name: 小规模压测
-        run: python tools/run_stress_test.py --scales 10 50 --seed 20260906 --workers 2 --output /tmp/ci-stress
+        run: python tools/run_stress_test.py --data-dir /tmp/ci-planning-data/input --scales 10 50 --seed 20260906 --workers 2 --output /tmp/ci-planning-data/output/stress
 
       - name: REST 服务冒烟（真起服务 + curl，不走 TestClient）
         run: |
@@ -60,6 +66,12 @@ jobs:
           done
           curl --fail --silent --show-error http://127.0.0.1:8000/api/v1/health
           python tools/smoke_v2.py --base-url http://127.0.0.1:8000
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: planning-inputs-and-results
+          path: /tmp/ci-planning-data/
 
       - uses: actions/upload-artifact@v4
         if: failure()
@@ -97,6 +109,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: 保存压测原始输入及提交版本
+        run: |
+          mkdir -p output/stress
+          cp -R input output/stress/input
+          printf '{"git_sha":"%s","run_id":"%s"}\n' "$GITHUB_SHA" "$GITHUB_RUN_ID" > output/stress/context.json
+
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
@@ -107,11 +125,13 @@ jobs:
       - name: 万级规模压测
         run: |
           python tools/run_stress_test.py \
+            --data-dir ./output/stress/input \
             --scales 10 100 1000 10000 \
             --seed 20260906 --workers 4 --compare \
             --output ./output/stress
 
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: stress-results
           path: output/stress/
@@ -123,6 +143,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: 保存可视化输入及提交版本
+        run: |
+          mkdir -p /tmp/ci-viz
+          cp -R input /tmp/ci-viz/input
+          printf '{"git_sha":"%s","run_id":"%s"}\n' "$GITHUB_SHA" "$GITHUB_RUN_ID" > /tmp/ci-viz/context.json
+
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
@@ -131,7 +157,7 @@ jobs:
       - run: pip install -e ".[viz]" -c requirements-runtime.lock
 
       - name: 生成样例规划结果
-        run: python tools/plan_single.py --output-dir /tmp/ci-viz
+        run: python tools/plan_single.py --input-dir /tmp/ci-viz/input --output-dir /tmp/ci-viz
 
       - name: 可视化冒烟测试
         run: python tools/visualize.py --input /tmp/ci-viz
@@ -140,4 +166,4 @@ jobs:
         if: always()
         with:
           name: visualizations
-          path: /tmp/ci-viz/visualizations/
+          path: /tmp/ci-viz/

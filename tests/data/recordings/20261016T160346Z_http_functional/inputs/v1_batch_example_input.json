@@ -1,0 +1,5 @@
+{
+  "method": "GET",
+  "endpoint": "/api/v1/examples/batch",
+  "body": null
+}

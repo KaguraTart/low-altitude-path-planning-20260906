@@ -58,6 +58,8 @@ python tools/benchmark_v2.py --base-url http://127.0.0.1:18001 \
 
 历史部署记录：`c14b18677a00abf20b8500f827417dd35aaa0d27` 曾在正式端口通过 v1/v2、坐标往返及异步完整结果烟测，镜像 ID 为 `sha256:60479a4fd6be59b40defd8e7b146a98522d649b04d134e901d0e8aacd42ada42`；该记录不表示镜像仍保留在本地。详见报告中的版本说明。当前 main、运行 revision、2 CPU / 2 GiB 实际配额和分支/镜像清单，使用部署指南的实时核对命令查询，不在历史报告中持续改写部署 SHA。
 
+完整测试请求与实际响应保存在 [`tests/data/`](tests/data/README.md)，覆盖接口示例和三套各 1000 条航线。每组包含原始输入、全部输出字段、场景依赖、运行环境和文件校验和，可离线检查并重跑；未来基准运行也会完整保存每一轮请求与响应。
+
 以下 §1–§9 保留原 v1 项目说明、工具和历史性能记录；其中“不采集气象”不影响 v2 使用上游提供的天气空间场执行规则。
 
 ---
@@ -191,7 +193,7 @@ python tools/plan_multi.py  --dispatch       # DISPATCH 模式
 python tools/plan_multi.py  --workers 8      # 自定义线程数
 ```
 
-> **本机多 Python 环境说明**：系统自带 Python 3.14 当前未安装 `plotly`；其他 conda 环境（`DLNN`/`LLM`/`Python13`/`UAV_platform`/`air`/`simlingo`/`yolo`）当前也未安装本项目所需依赖。**始终使用 `uav_path_planning` 环境**最稳。
+> **本机多 Python 环境说明**：系统自带 Python 3.14 当前未安装 `plotly`；其他 conda 环境当前也未安装本项目所需依赖。**始终使用 `uav_path_planning` 环境**最稳。
 
 ### 3.4 压力测试
 

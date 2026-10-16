@@ -1,0 +1,21 @@
+{
+  "format_version": 1,
+  "source_input_manifest": "input/manifest.json",
+  "input": {
+    "path": "single_input.json",
+    "bytes": 11248,
+    "sha256": "9004a9fb95d357511d5d3796a10a4a50619a32ab2bde21c7b088e0ea0e1e7417"
+  },
+  "output": {
+    "path": "single_output.json",
+    "bytes": 21791,
+    "sha256": "12d29d48ff221657c4ea38ca1f6942b6278e5e4ce7015052f133006845350baa"
+  },
+  "output_state": {
+    "path": "single_output_state.json",
+    "bytes": 38226,
+    "sha256": "740ef024abc03c27fc01f8138e946d146e7e59116ad37bad4d9f55aac1039c41"
+  },
+  "output_format": "PlanningResult.summary",
+  "output_state_format": "dataclasses.asdict"
+}
