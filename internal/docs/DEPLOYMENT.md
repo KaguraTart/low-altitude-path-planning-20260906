@@ -33,7 +33,7 @@ python -c 'from uav_planner.v2 import native; print(native.engine_info()); asser
 python tools/benchmark_v2.py --validate-only
 ```
 
-Dockerfile 使用构建层制作原生 wheel，在 Python 3.11 运行层安装包与 REST 依赖；文档和 OpenAPI 随同代码放入该镜像。任何模型变化后先重新生成快照：
+Dockerfile 使用构建层制作原生 wheel，在 Python 3.11 运行层安装包与 REST 依赖；文档和 OpenAPI 随同代码放入该镜像。规范快照以锁定依赖的 Python 3.11 镜像为准；其他 FastAPI/Pydantic 版本可能生成不同的 input/output schema 拆分。任何模型变化后在同版本环境重新生成快照：
 
 ```bash
 python - <<'PY'
@@ -45,7 +45,7 @@ Path('docs/openapi.json').write_text(
 PY
 ```
 
-生成规范只导入 ASGI 应用并读类型模型，不执行规划 handler。Swagger `/docs` 是 UI，读取 `/openapi.json`；只改 Markdown 不会改变 Swagger 契约。
+也可直接把已验证候选的 `/openapi.json` 保存为快照，再纳入下一个文档提交和镜像。生成规范只导入 ASGI 应用并读类型模型，不执行规划 handler。Swagger `/docs` 是 UI，读取 `/openapi.json`；只改 Markdown 不会改变 Swagger 契约。
 
 ## 3. 分支、PR 与不可变候选镜像
 
