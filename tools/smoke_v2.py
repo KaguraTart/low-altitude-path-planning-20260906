@@ -8,6 +8,8 @@ import urllib.error
 import urllib.request
 from typing import Any
 
+from shapely import from_wkt
+
 
 def request(base_url: str, path: str, body: Any = None) -> Any:
     data=None if body is None else json.dumps(body,allow_nan=False).encode()
@@ -28,6 +30,15 @@ def smoke(base_url: str) -> dict:
     old_result=request(base_url,"/api/v1/plan/single",old)
     assert old_result["status"]=="planned",old_result
     sample=request(base_url,"/api/v2/examples/single")
+    conversion={"coordinates":sample["scene"]["coordinates"],"alt_reference":"MSL",
+                "at":sample["task"]["departure_time"],"geometries_wkt":[sample["task"]["start_wkt"]],
+                "direction":"wgs84_to_local"}
+    local=request(base_url,"/api/v2/coordinates/convert",conversion)
+    point=from_wkt(local["geometries_wkt"][0])
+    assert max(abs(a-b) for a,b in zip(point.coords[0],(100,100,80)))<1e-5
+    roundtrip=request(base_url,"/api/v2/coordinates/convert",{
+        **conversion,"direction":"local_to_wgs84","geometries_wkt":local["geometries_wkt"]})
+    assert from_wkt(roundtrip["geometries_wkt"][0]).equals_exact(from_wkt(sample["task"]["start_wkt"]),1e-10)
     result=request(base_url,"/api/v2/plan/single",sample)
     assert result["status"]=="planned" and result["validation"]["valid"],result
     validation={**sample,"trajectory_wkt":result["trajectory_wkt"],"vertex_times_s":result["vertex_times_s"],
@@ -62,6 +73,7 @@ def smoke(base_url: str) -> dict:
     else:
         raise AssertionError("Unknown constraint field was silently accepted")
     results.update(status="passed",base_url=base_url,api_version=version["api_version"],
+                   git_sha=version["engine"].get("git_sha"),coordinate_roundtrip=True,
                    native_available=True,openapi_paths=len(spec["paths"]),scene_id=scene["scene_id"],
                    batch_success_count=completed["success_count"],async_job_id=submitted["job_id"],
                    checked_at=time.strftime("%Y-%m-%dT%H:%M:%SZ",time.gmtime()))

@@ -545,11 +545,12 @@ def validate_result(workload: dict[str, Any], result: dict[str, Any], count: int
         certify_exported_motion(route, compiled.rules.limits(task, profile))
         points = np.asarray(compiled.frame.to_local(route["trajectory_wkt"], task.alt_reference, task.departure_time).coords)
         times = np.asarray(route["vertex_times_s"], float)
-        errors = compiled.check_path(points, times, task, profile)
+        rtl = compiled.rules.rtl_requirements(task, profile)
+        errors = compiled.check_path(points, times, task, profile,
+                                     phase="rtl" if rtl and rtl["required"] else "route")
         if errors:
             raise AssertionError(f"Independent route revalidation failed: {task.id}: {errors[:3]}")
         expected_start = np.asarray(compiled.frame.to_local(task.start_wkt, task.alt_reference, task.departure_time).coords[0])
-        rtl = compiled.rules.rtl_requirements(task, profile)
         effective_goal = task.state.home_wkt if rtl and rtl["required"] else task.goal_wkt
         expected_end = np.asarray(compiled.frame.to_local(effective_goal, task.alt_reference, task.departure_time).coords[0])
         if np.linalg.norm(points[0] - expected_start) > .01 or np.linalg.norm(points[-1] - expected_end) > .01:

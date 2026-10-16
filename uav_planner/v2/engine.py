@@ -575,6 +575,135 @@ def _report(compiled,task,violations,times=None):
     return [r.model_dump(mode="json") if hasattr(r,"model_dump") else r for r in reports]
 
 
+def _arc_boundary_fractions(p, geometry):
+    """Intersect the actual horizontal circle with a polygon's linear boundary."""
+    fractions=[]
+    if geometry is None or geometry.is_empty:
+        return fractions
+    def lines(part):
+        if hasattr(part,"geoms"):
+            for child in part.geoms:
+                yield from lines(child)
+        elif hasattr(part,"coords"):
+            yield np.asarray(part.coords,dtype=float)[:,:2]
+    angle0=math.atan2(p.start[1]-p.center[1],p.start[0]-p.center[0])
+    for line in lines(geometry.boundary):
+        for a,b in zip(line,line[1:]):
+            d=b-a;relative=a-p.center[:2]
+            aa=float(d@d)
+            if aa<=1e-24:
+                continue
+            bb=2*float(relative@d);cc=float(relative@relative)-p.radius**2
+            discriminant=bb*bb-4*aa*cc
+            if discriminant<0:
+                continue
+            for u in ((-bb-math.sqrt(discriminant))/(2*aa),(-bb+math.sqrt(discriminant))/(2*aa)):
+                if not -1e-9<=u<=1+1e-9:
+                    continue
+                point=a+u*d
+                angle=math.atan2(point[1]-p.center[1],point[0]-p.center[0])
+                delta=(angle-angle0)%(2*math.pi) if p.sweep>0 else -((angle0-angle)%(2*math.pi))
+                f=delta/p.sweep
+                if -1e-9<=f<=1+1e-9:
+                    fractions.append(float(np.clip(f,0,1)))
+    return fractions
+
+
+def _primitive_airway_intervals(compiled, p, start, airway, profile, boundaries):
+    horizontal,vertical=compiled.clearance(profile)
+    end=start+p.duration
+    cuts={0.0,p.duration}
+    cuts.update(b-start for b in boundaries if start<b<end)
+    if p.kind=="arc" and p.length>1e-12:
+        # Bound the preliminary geometric chords, then partition them at exact
+        # circle/footprint crossings and classify actual analytic positions.
+        step=2*math.acos(max(-1,min(1,1-.05/max(p.radius,.05))))
+        count=max(1,math.ceil(abs(p.sweep)/max(step,1e-8)))
+        fractions={i/count for i in range(count+1)}
+        fractions.update(_arc_boundary_fractions(p,compiled._buffered(airway,-horizontal)))
+        offsets={0.0}
+        if airway.alt_reference in {"AGL","QNE","QNH"}:
+            from .safety import _datum_regions
+            regions=_datum_regions(compiled,compiled.model,airway.alt_reference)
+            offsets={r.offset-compiled.origin_alt_msl for r in regions if r.offset is not None}
+            for region in regions:
+                if region.start<=end and region.end>=start:
+                    fractions.update(_arc_boundary_fractions(p,region.geometry))
+        dz=float(p.end[2]-p.start[2])
+        if abs(dz)>1e-12:
+            for offset in offsets:
+                for height in (airway.min_altitude+vertical+offset,airway.max_altitude-vertical+offset):
+                    f=(height-p.start[2])/dz
+                    if 0<f<1:
+                        fractions.add(float(f))
+        cuts.update(p.time_at(f*p.length) for f in fractions)
+    output=[]
+    for a,b in zip(sorted(cuts),sorted(cuts)[1:]):
+        if b-a<=1e-9:
+            continue
+        middle=start+(a+b)/2
+        s0,s1=p.distance_at(a),p.distance_at(b)
+        x,y=p.position(s0),p.position(s1)
+        if airway.direction!="BOTH" and np.linalg.norm(y[:2]-x[:2])>1e-7:
+            first,last=airway.centerline.project(Point(x[:2])),airway.centerline.project(Point(y[:2]))
+            if ((airway.direction=="FORWARD" and last<first-1e-7)
+                    or (airway.direction=="REVERSE" and last>first+1e-7)):
+                continue
+        if p.kind=="arc" or p.length<=1e-12:
+            point=p.position(p.distance_at((a+b)/2))
+            if compiled.volume_intervals(airway,point,point,middle,middle,
+                    horizontal=horizontal,vertical=vertical,inside=True):
+                output.append((start+a,start+b))
+            continue
+        for lo,hi in compiled.volume_intervals(airway,x,y,middle,middle,
+                horizontal=horizontal,vertical=vertical,inside=True):
+            if hi-lo>1e-9:
+                output.append((start+p.time_at(s0+lo*(s1-s0)),start+p.time_at(s0+hi*(s1-s0))))
+    return output
+
+
+def _airway_switch_events(compiled, motion, profile, segments):
+    """Retain a chosen airway until coverage ends; hand off by stable id.
+
+    Handoffs are evaluated on the analytic law and can fall between exported
+    WKT vertices. This annotates the route without changing its geometry/timing.
+    """
+    used={rid for segment in segments for rid in segment["airway_ids"]}
+    if any(p.kind=="arc" for p in motion.primitives):
+        for p in motion.primitives:
+            if p.kind=="arc":
+                lo=p.center.copy();hi=p.center.copy()
+                lo[:2]-=p.radius;hi[:2]+=p.radius
+                used.update(a.id for a in compiled._query(compiled._airway_tree,compiled.airways,lo,hi)
+                            if a.status=="ACTIVE")
+    if len(used)<=1:
+        return []
+    from .safety import temporal_breakpoints
+    boundaries=temporal_breakpoints(compiled,compiled.model)
+    coverage={rid:[] for rid in used}
+    for p,start in zip(motion.primitives,motion.starts):
+        for rid in used:
+            airway=compiled.resources[rid]
+            if airway.valid_to_s<start or airway.valid_from_s>start+p.duration:
+                continue
+            coverage[rid].extend(_primitive_airway_intervals(compiled,p,start,airway,profile,boundaries))
+    cuts=sorted({t for intervals in coverage.values() for interval in intervals for t in interval})
+    current=None;events=[]
+    for a,b in zip(cuts,cuts[1:]):
+        if b-a<=1e-8:
+            continue
+        middle=(a+b)/2
+        active=sorted(rid for rid,intervals in coverage.items() if any(lo<=middle<=hi for lo,hi in intervals))
+        if current in active:
+            continue
+        previous=current;current=active[0] if active else None
+        if previous is not None and current is not None:
+            i=max(0,min(len(motion.primitives)-1,int(np.searchsorted(motion.starts,a,side="right")-1)))
+            p=motion.primitives[i]
+            events.append((float(a),p.position(p.distance_at(a-motion.starts[i]))))
+    return events
+
+
 def _result(compiled,model,task,profile,motion,wait=0):
     from .models import RouteResult
     wkt=_timed_geographic(compiled,motion.points,motion.times,task.alt_reference,model)
@@ -588,28 +717,48 @@ def _result(compiled,model,task,profile,motion,wait=0):
             "start_speed_mps":p.v0,"end_speed_mps":p.v1,"acceleration_mps2":p.accel,
             "profile":{"peak_speed_mps":p.peak,"deceleration_mps2":p.decel,"accel_time_s":p.ta,
                        "cruise_time_s":p.tc,"decel_time_s":p.td,"sweep_angle_deg":math.degrees(p.sweep)}})
-    keypoints=[]
-    labels={}
+    events=[]
     for index,types in motion.events:
-        labels.setdefault(index,set()).update(types)
-    for index,types in sorted(labels.items()):
-        point=motion.points[index]
-        bounds=model.bounds
-        grid=np.floor((point-np.array([bounds.x_min,bounds.y_min,bounds.z_min]))/model.resolution).astype(int)
-        code=None
-        if model.grid:
-            code=model.grid.codes.get(",".join(map(str,grid)))
-        keypoints.append({"types":sorted(types),"wkt":_timed_geographic(compiled,[point],[motion.times[index]],task.alt_reference,model),
-                          "time_s":float(motion.times[index]),"grid_indices":grid.tolist(),"grid_code":code})
+        events.append((float(motion.times[index]),motion.points[index],list(types),None))
     passages=_waypoint_passages(motion,task,compiled) or []
     for waypoint_index,(waypoint,passed) in enumerate(zip(task.waypoints,passages)):
-        point=_local(compiled,waypoint.wkt,task)
-        if passed is not None:
-            b=model.bounds
-            index=np.floor((point-np.array([b.x_min,b.y_min,b.z_min]))/model.resolution).astype(int)
-            keypoints.append({"types":["WAYPOINT"],"wkt":_timed_geographic(compiled,[point],[passed],task.alt_reference,model),
-                              "time_s":passed,"grid_indices":index.tolist(),"waypoint_index":waypoint_index})
-    keypoints.sort(key=lambda key:key["time_s"])
+        events.append((passed,_local(compiled,waypoint.wkt,task),["WAYPOINT"],waypoint_index))
+    for passed,point in _airway_switch_events(compiled,motion,profile,segments):
+        events.append((passed,point,["AIRWAY_SWITCH"],None))
+    merged=[]
+    for passed,point,types,waypoint_index in sorted(events,key=lambda item:item[0]):
+        previous=merged[-1] if merged else None
+        if (previous is not None and abs(previous[0]-passed)<=1e-7
+                and np.linalg.norm(previous[1]-point)<=1e-6
+                and (previous[3] is None or waypoint_index is None or previous[3]==waypoint_index)):
+            previous[2].update(types)
+            if waypoint_index is not None:
+                previous[3]=waypoint_index
+        else:
+            merged.append([passed,point,set(types),waypoint_index])
+    keypoints=[]
+    grid_origin=np.asarray([model.bounds.x_min,model.bounds.y_min,model.bounds.z_min])
+    grid_resolution=np.asarray(model.resolution)
+    def grid_index(point,origin,resolution):
+        coordinate=(point-origin)/resolution
+        nearest=np.rint(coordinate)
+        coordinate=np.where(np.abs(coordinate-nearest)<=1e-7,nearest,coordinate)
+        return np.floor(coordinate).astype(int)
+    for passed,point,types,waypoint_index in merged:
+        index=grid_index(point,grid_origin,grid_resolution)
+        code=None
+        if model.grid:
+            original_index=grid_index(point,np.asarray(model.grid.origin),np.asarray(model.grid.resolution))
+            code=model.grid.codes.get(",".join(map(str,original_index)))
+        if model.grid and code is None:
+            for cell in model.grid.cells:
+                b=cell.bounds
+                if (cell.code is not None and b.x_min<=point[0]<=b.x_max
+                        and b.y_min<=point[1]<=b.y_max and b.z_min<=point[2]<=b.z_max):
+                    code=cell.code
+                    break
+        keypoints.append({"types":sorted(types),"wkt":_timed_geographic(compiled,[point],[passed],task.alt_reference,model),
+                          "time_s":passed,"grid_indices":index.tolist(),"grid_code":code,"waypoint_index":waypoint_index})
     result={"task_id":task.id,"status":"planned","route_mode":task.route_mode,
         "start_wkt":task.start_wkt,"goal_wkt":task.goal_wkt,"departure_time":task.departure_time,
         "time_origin":model.time_origin,"action":"return_to_home" if (compiled.rules.rtl_requirements(task,profile) or {}).get("required") else "mission",

@@ -3,10 +3,14 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import math
+import re
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pytest
+from shapely import from_wkt, get_coordinates
 
 from uav_planner.v2 import native
 from uav_planner.v2.models import RULE_TYPES, Scene
@@ -18,6 +22,64 @@ assert SPEC and SPEC.loader
 benchmark = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(benchmark)
 
+WKT_PREFIX = re.compile(
+    r"^\s*(?:POINT|LINESTRING|POLYGON|MULTIPOINT|MULTILINESTRING|MULTIPOLYGON|GEOMETRYCOLLECTION)"
+    r"(?:\s+(?:ZM|Z|M))?\s*(?:\(|EMPTY\b)",
+    re.IGNORECASE,
+)
+FLOAT_ABSOLUTE_TOLERANCE = 1e-9
+WKT_ABSOLUTE_TOLERANCE = 2e-11
+
+
+def _geometry_structure(geometry: Any) -> tuple:
+    """Retain component/ring order as well as coordinate dimension and type."""
+    signature = (geometry.geom_type, geometry.has_z, getattr(geometry, "has_m", False))
+    if hasattr(geometry, "geoms"):
+        return (*signature, tuple(_geometry_structure(part) for part in geometry.geoms))
+    if geometry.geom_type == "Polygon":
+        return (*signature, len(geometry.exterior.coords),
+                tuple(len(ring.coords) for ring in geometry.interiors))
+    return (*signature, len(geometry.coords))
+
+
+def assert_portable_generation_equal(expected: Any, actual: Any, path: str = "$") -> None:
+    """Allow only tiny regeneration roundoff; frozen bytes remain authoritative."""
+    __tracebackhide__ = True
+    # NumPy float64 is emitted as a JSON floating-point number by the generator.
+    same_json_float_type = isinstance(expected, float) and isinstance(actual, float)
+    if type(expected) is not type(actual) and not same_json_float_type:
+        raise AssertionError(f"{path}: type differs ({type(expected).__name__} vs {type(actual).__name__})")
+    if isinstance(expected, dict):
+        if expected.keys() != actual.keys():
+            raise AssertionError(f"{path}: object keys differ")
+        for key in expected:
+            assert_portable_generation_equal(expected[key], actual[key], f"{path}.{key}")
+    elif isinstance(expected, list):
+        if len(expected) != len(actual):
+            raise AssertionError(f"{path}: list lengths differ ({len(expected)} vs {len(actual)})")
+        for index, (left, right) in enumerate(zip(expected, actual)):
+            assert_portable_generation_equal(left, right, f"{path}[{index}]")
+    elif isinstance(expected, float):
+        if not math.isfinite(expected) or not math.isfinite(actual) or abs(expected - actual) > FLOAT_ABSOLUTE_TOLERANCE:
+            raise AssertionError(f"{path}: numeric difference exceeds {FLOAT_ABSOLUTE_TOLERANCE:g}")
+    elif isinstance(expected, str) and WKT_PREFIX.match(expected) and WKT_PREFIX.match(actual):
+        try:
+            left, right = from_wkt(expected), from_wkt(actual)
+        except Exception as exc:
+            raise AssertionError(f"{path}: invalid WKT ({type(exc).__name__})") from None
+        if _geometry_structure(left) != _geometry_structure(right):
+            raise AssertionError(f"{path}: WKT type, dimension, or ordered component/ring structure differs")
+        left_coords = get_coordinates(left, include_z=left.has_z)
+        right_coords = get_coordinates(right, include_z=right.has_z)
+        if left_coords.shape != right_coords.shape:
+            raise AssertionError(f"{path}: WKT coordinate array shapes differ")
+        differences = np.abs(left_coords - right_coords)
+        if not np.isfinite(differences).all() or np.any(differences > WKT_ABSOLUTE_TOLERANCE):
+            index = tuple(int(i) for i in np.argwhere(~np.isfinite(differences) | (differences > WKT_ABSOLUTE_TOLERANCE))[0])
+            raise AssertionError(f"{path}: WKT coordinate{index} difference exceeds {WKT_ABSOLUTE_TOLERANCE:g}")
+    elif expected != actual:
+        raise AssertionError(f"{path}: scalar value differs")
+
 
 @pytest.fixture(scope="module", params=benchmark.SUITES)
 def workload(request):
@@ -25,8 +87,9 @@ def workload(request):
 
 
 def test_frozen_generation_is_reproducible_and_schema_valid(workload):
-    data = benchmark.canonical_bytes(benchmark.generate_suite(workload["suite"]))
-    assert data == (benchmark.FROZEN_DIRECTORY / f"{workload['suite']}.json").read_bytes()
+    # workload was loaded through the mandatory exact-byte SHA-256 guard above.
+    # PROJ/GEOS builds may round the final WKT decimal differently on CI.
+    assert_portable_generation_equal(workload, benchmark.generate_suite(workload["suite"]))
     model = Scene.model_validate(workload["scene"])
     assert len(workload["tasks"]) == len(workload["reference_trajectories"]) == 1000
     assert len({task["id"] for task in workload["tasks"]}) == 1000
@@ -41,6 +104,43 @@ def test_frozen_generation_is_reproducible_and_schema_valid(workload):
     assert all(len(task["waypoints"]) <= 2 for task in workload["tasks"])
     assert workload["construction"]["reference_uses_planner"] is False
     assert workload["construction"]["ground_wait_occupies_airspace"] is False
+
+
+def test_portable_comparison_accepts_only_tiny_projection_and_numeric_roundoff():
+    expected = {"scene": {"wkt": "LINESTRING Z (104.78 29.34 100, 104.79 29.35 101)",
+                          "profile": {"speed": 4.0}, "seed": 20261016,
+                          "enabled": True, "modes": ["strict", "free"]}}
+    actual = {"scene": {"wkt": "LINESTRING Z (104.780000000001 29.34 100, 104.79 29.349999999999 101)",
+                        "profile": {"speed": 4.0000000005}, "seed": 20261016,
+                        "enabled": True, "modes": ["strict", "free"]}}
+    assert_portable_generation_equal(expected, actual)
+
+
+@pytest.mark.parametrize(("expected", "actual", "location"), [
+    ({"scene": {"wkt": "POINT Z (104.78 29.34 100)"}},
+     {"scene": {"wkt": "POINT Z (104.78000001 29.34 100)"}}, r"\$\.scene\.wkt"),
+    ({"scene": {"wkt": "POINT Z (104.78 29.34 100)"}},
+     {"scene": {"wkt": "POINT Z (104.78 29.34 100.00000001)"}}, r"\$\.scene\.wkt"),
+    ({"scene": {"wkt": "LINESTRING Z (104.78 29.34 100, 104.79 29.35 101)"}},
+     {"scene": {"wkt": "LINESTRING Z (104.79 29.35 101, 104.78 29.34 100)"}}, r"\$\.scene\.wkt"),
+    ({"scene": {"wkt": "POINT Z (104.78 29.34 100)"}},
+     {"scene": {"wkt": "POINT (104.78 29.34)"}}, r"\$\.scene\.wkt"),
+    ({"scene": {"wkt": "POINT Z (104.78 29.34 100)"}},
+     {"scene": {"wkt": "MULTIPOINT Z ((104.78 29.34 100))"}}, r"\$\.scene\.wkt"),
+    ({"scene": {"resolution": [25.0, 25.0, 10.0]}},
+     {"scene": {"resolution": [25.00001, 25.0, 10.0]}}, r"\$\.scene\.resolution\[0\]"),
+    ({"scene": {"horizon_s": 3600}}, {"scene": {"horizon_s": 3599}}, r"\$\.scene\.horizon_s"),
+    ({"scene": {"horizon_s": 3600}}, {"scene": {"horizon_s": 3600.0}}, r"\$\.scene\.horizon_s"),
+    ({"scene": {"enabled": True}}, {"scene": {"enabled": 1}}, r"\$\.scene\.enabled"),
+    ({"scene": {"mode": "strict"}}, {"scene": {"mode": "prefer"}}, r"\$\.scene\.mode"),
+    ({"scene": {"modes": ["strict", "free"]}},
+     {"scene": {"modes": ["free", "strict"]}}, r"\$\.scene\.modes\[0\]"),
+    ({"scene": {"mode": "strict"}}, {"scene": {}}, r"\$\.scene"),
+])
+def test_portable_comparison_rejects_meaningful_or_structural_changes(expected, actual, location):
+    with pytest.raises(AssertionError, match=location) as caught:
+        assert_portable_generation_equal(expected, actual)
+    assert len(str(caught.value)) < 180
 
 
 def test_frozen_hash_tampering_is_rejected(tmp_path):

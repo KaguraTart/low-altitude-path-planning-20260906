@@ -1361,7 +1361,7 @@ RTL 是**根据提交时当前状态生成的返航方案**：触发后将目标
 
 模型还保留 `distance_m/points/times_s/max_speed_mps/deceleration_mps2/peak_speed_mps/accel_time_s/cruise_time_s/decel_time_s/sweep_angle_deg` 可选描述字段；应以服务实际填充的原语和 profile 值重建运动。WKT 折线是原语的有限误差采样视图；折线顶点本身不能证明采样间加速度、圆弧峰值或偏航满足包线，执行平台应保留原语时间律。
 
-`Keypoint` 含 `types:string[]`、`wkt`、`time_s`、可空 `grid_indices:[i,j,k]`、`grid_code` 与 `waypoint_index`。业务 `WAYPOINT` 事件的 waypoint_index 对应 Task.waypoints 的从 0 开始的索引，其他事件通常为 null。同一点可有多个事件；航点、悬停、爬升/下降与转弯的起止由事件类型标记。
+`Keypoint` 含 `types:string[]`、`wkt`、`time_s`、可空 `grid_indices:[i,j,k]`、`grid_code` 与 `waypoint_index`。业务 `WAYPOINT` 事件的 waypoint_index 对应 Task.waypoints 的从 0 开始的索引，其他事件通常为 null。同一点可有多个事件；航点、悬停、爬升/下降与转弯的起止由事件类型标记。`AIRWAY_SWITCH` 表示当前航路覆盖结束后的确定性交接：重叠区继续保留原航路，再按稳定 ID 选择接续航路。切换关键点使用解析运动的准确位置和时刻，可以位于两个导出 WKT 顶点之间，不改变运动时间律。`grid_indices` 始终对应 Scene.bounds/resolution 的内部规划网格；`grid_code` 另按上游 GridSpec 的原点和分辨率或显式网格单元匹配。
 
 ### 13.3 批量、验证与规则报告
 

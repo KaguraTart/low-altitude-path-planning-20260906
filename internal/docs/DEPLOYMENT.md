@@ -63,13 +63,13 @@ gh pr create --title '新增 WKT/WGS84 v2 约束规划接口并保留 v1' --body
 
 ```bash
 UAV_BUILD_SHA=$(git rev-parse HEAD)
-docker build --label org.opencontainers.image.revision="$UAV_BUILD_SHA" \
+docker build --build-arg GIT_SHA="$UAV_BUILD_SHA" --label org.opencontainers.image.revision="$UAV_BUILD_SHA" \
   -t "low-altitude-path-planning:$UAV_BUILD_SHA" .
 docker image inspect "low-altitude-path-planning:$UAV_BUILD_SHA" \
   --format '{{.Id}} {{json .Config.Labels}}'
 docker image inspect low-altitude-path-planning:9816f8b --format '{{.Id}}'
 docker run -d --name low-altitude-path-planning-candidate \
-  --cpus=8 --memory=8g -p 127.0.0.1:18001:8000 \
+  --cpus=8 --memory=8g --memory-swap=8g -p 127.0.0.1:18001:8000 \
   "low-altitude-path-planning:$UAV_BUILD_SHA"
 ```
 
@@ -232,6 +232,9 @@ services:
     image: low-altitude-path-planning:9816f8b
     cpus: 2
     mem_limit: 2g
+    memswap_limit: 2g
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/v1/health', timeout=5)"]
 YAML
 UAV_IMAGE_TAG=9816f8b docker compose -f compose.yaml -f /tmp/uav-rollback.yaml \
   up -d --no-build --force-recreate app

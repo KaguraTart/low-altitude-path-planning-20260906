@@ -7,6 +7,20 @@ files were written at **2026-10-16 09:58:23 UTC**, before this generator's first
 planner execution. `--freeze` regenerates the deterministic bytes and refuses
 to overwrite any differing existing fixture or manifest.
 
+The checked-in fixture bytes and manifest hashes are authoritative on every
+platform. Loading a workload always checks those exact hashes. Regenerating a
+scene with a different Python/PROJ/GEOS build can change the final WKT decimal
+through floating-point roundoff, so the portability test compares generated
+data semantically: keys, list order, scalar strings, integers and booleans stay
+exact; floating-point JSON numbers may differ by at most 1e-9 absolute. WKT
+geometry type, Z dimension, component/ring structure and coordinate order stay
+exact, with at most 2e-11 absolute difference in each longitude, latitude or Z
+coordinate. This is micrometre-scale horizontal tolerance, not a planning
+geometry tolerance. Failures identify the affected JSON location concisely.
+This regeneration-only comparison does not relax fixture integrity:
+`--freeze` still refuses any byte difference in an existing file and never
+rewrites the authoritative files to match another platform's rounding.
+
 Each suite contains 1,000 task IDs in a 5 km × 5 km × 300 m scene, with
 25/25/10 m resolution, a 3,600 s horizon, four engineering aircraft profiles,
 100 shared airways, 100 buildings and 20 control zones. No task has more than
