@@ -4,6 +4,8 @@ scipy>=1.10.0
 matplotlib>=3.7.0
 plotly>=5.15.0
 pydantic>=2.0.0
+shapely>=2.0
+pyproj>=3.6
 
 # 接口服务（REST API）
 # 仅在使用 serve.py 起服务或跑 tests/test_api.py 时需要；
