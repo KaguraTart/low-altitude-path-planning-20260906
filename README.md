@@ -16,6 +16,7 @@
 | 交付检查 | [`internal/docs/DELIVERY.md`](internal/docs/DELIVERY.md) |
 | 测试目录与运行命令 | [`tests/README.md`](tests/README.md) |
 | 完整测试输入与输出 | [`tests/data/README.md`](tests/data/README.md) |
+| 可独立交付的公网接口测试包 | [`test_api/README.md`](test_api/README.md) |
 
 ## 规划能力
 
@@ -92,6 +93,8 @@ bash tools/check_docker_release.sh "low-altitude-path-planning:$UAV_BUILD_SHA" \
 发布前暂停新提交，并等待已有作业完成。保存原始场景和完整作业结果。按部署指南切换镜像，并重新注册场景。场景与作业保存在进程内存中，重启后清空。
 
 ## 测试与数据
+
+向对接方提供整个 [`test_api/`](test_api/README.md) 目录。对方使用 Python 3.11 或更新版本运行 `python run_tests.py`，即可测试 `https://api.kaguratart.com` 的全部接口和三套各 1000 个任务。目录内附完整输入和公网实测报告。
 
 测试按接口、规划、原生核和集成流程分类。目录说明与分类运行命令见 [`tests/README.md`](tests/README.md)。
 

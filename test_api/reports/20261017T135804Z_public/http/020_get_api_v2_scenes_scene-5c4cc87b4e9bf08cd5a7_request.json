@@ -1,0 +1,10 @@
+{
+  "method": "GET",
+  "url": "https://api.kaguratart.com/api/v2/scenes/scene-5c4cc87b4e9bf08cd5a7",
+  "path": "/api/v2/scenes/scene-5c4cc87b4e9bf08cd5a7",
+  "headers": {
+    "User-Agent": "UAV-API-Test/1.0",
+    "Accept": "application/json"
+  },
+  "body_path": null
+}

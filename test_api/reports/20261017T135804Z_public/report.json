@@ -1,0 +1,1294 @@
+{
+  "base_url": "https://api.kaguratart.com",
+  "started_at": "2026-10-17T13:58:04.706Z",
+  "finished_at": "2026-10-17T14:01:38.570Z",
+  "status": "passed",
+  "service_version": {
+    "api_version": "2.0.0",
+    "engine": {
+      "available": true,
+      "engine": "cpp17-pybind11",
+      "version": "2.0.0",
+      "git_sha": "47195483ff9e2a469dffdb0aa6960f65a5943665",
+      "error": null
+    },
+    "default_profile": {
+      "id": "dji_mini_4_pro",
+      "name": "DJI Mini 4 Pro (engineering planning profile)",
+      "max_speed_mps": 12.0,
+      "cruise_speed_mps": 6.0,
+      "climb_speed_mps": 3.0,
+      "descent_speed_mps": 3.0,
+      "max_yaw_rate_deg_s": 60.0,
+      "acceleration_mps2": 2.0,
+      "deceleration_mps2": 2.0,
+      "min_turn_radius_m": 0.0,
+      "radius_m": 0.3,
+      "height_m": 0.2,
+      "safety_margin_m": 5.0,
+      "endurance_s": 2040.0,
+      "max_range_m": 18000.0,
+      "payload_kg": 0.0,
+      "rtl_altitude_m": 20.0,
+      "can_hover": true,
+      "supported_bands": [
+        "2.4GHz",
+        "5.8GHz"
+      ],
+      "low_battery_percent": 20.0,
+      "engineering_values": [
+        "max_speed_mps",
+        "cruise_speed_mps",
+        "climb_speed_mps",
+        "descent_speed_mps",
+        "max_yaw_rate_deg_s",
+        "acceleration_mps2",
+        "deceleration_mps2",
+        "min_turn_radius_m",
+        "radius_m",
+        "height_m",
+        "safety_margin_m",
+        "rtl_altitude_m",
+        "low_battery_percent"
+      ]
+    }
+  },
+  "checks": [
+    {
+      "name": "服务健康",
+      "method": "GET",
+      "path": "/api/v2/health",
+      "status": "passed",
+      "message": "检查通过。",
+      "elapsed_ms": 2837.197
+    },
+    {
+      "name": "作业状态统计",
+      "method": "GET",
+      "path": "/api/v2/health/jobs",
+      "status": "passed",
+      "message": "检查通过。",
+      "elapsed_ms": 1600.963
+    },
+    {
+      "name": "服务版本",
+      "method": "GET",
+      "path": "/api/v2/version",
+      "status": "passed",
+      "message": "检查通过。",
+      "elapsed_ms": 2958.337
+    },
+    {
+      "name": "接口能力",
+      "method": "GET",
+      "path": "/api/v2/capabilities",
+      "status": "passed",
+      "message": "检查通过。",
+      "elapsed_ms": 1917.946
+    },
+    {
+      "name": "OpenAPI 文档",
+      "method": "GET",
+      "path": "/openapi.json",
+      "status": "passed",
+      "message": "检查通过。",
+      "elapsed_ms": 5319.158
+    },
+    {
+      "name": "Swagger 页面",
+      "method": "GET",
+      "path": "/docs",
+      "status": "passed",
+      "message": "检查通过。",
+      "elapsed_ms": 2565.068
+    },
+    {
+      "name": "在线单机示例及验证",
+      "status": "passed",
+      "message": "检查通过。",
+      "elapsed_ms": 6542.281
+    },
+    {
+      "name": "在线批量示例",
+      "status": "passed",
+      "message": "检查通过。",
+      "elapsed_ms": 4556.863
+    },
+    {
+      "name": "strict 单机规划及验证",
+      "status": "passed",
+      "message": "检查通过。",
+      "elapsed_ms": 6488.971
+    },
+    {
+      "name": "prefer 单机规划及验证",
+      "status": "passed",
+      "message": "检查通过。",
+      "elapsed_ms": 5007.103
+    },
+    {
+      "name": "free 单机规划及验证",
+      "status": "passed",
+      "message": "检查通过。",
+      "elapsed_ms": 3044.026
+    },
+    {
+      "name": "完整内嵌批量请求",
+      "status": "passed",
+      "message": "检查通过。",
+      "elapsed_ms": 1440.208
+    },
+    {
+      "name": "场景登记、查询及引用规划",
+      "status": "passed",
+      "message": "检查通过。",
+      "elapsed_ms": 10044.741
+    },
+    {
+      "name": "坐标双向转换",
+      "status": "passed",
+      "message": "检查通过。",
+      "elapsed_ms": 2468.624
+    },
+    {
+      "name": "归档运动段独立验证",
+      "status": "passed",
+      "message": "检查通过。",
+      "elapsed_ms": 1670.224
+    },
+    {
+      "name": "异步提交及结果轮询",
+      "status": "passed",
+      "message": "检查通过。",
+      "elapsed_ms": 2852.259
+    },
+    {
+      "name": "未知字段返回 400",
+      "status": "passed",
+      "message": "检查通过。",
+      "elapsed_ms": 1128.667
+    },
+    {
+      "name": "未知场景返回 404",
+      "status": "passed",
+      "message": "检查通过。",
+      "elapsed_ms": 1133.389
+    },
+    {
+      "name": "未知作业返回 404",
+      "status": "passed",
+      "message": "检查通过。",
+      "elapsed_ms": 1270.059
+    },
+    {
+      "name": "strict 1000 任务规划及验证",
+      "status": "passed",
+      "message": "检查通过。",
+      "elapsed_ms": 35779.023
+    },
+    {
+      "name": "mixed 1000 任务规划及验证",
+      "status": "passed",
+      "message": "检查通过。",
+      "elapsed_ms": 76017.882
+    },
+    {
+      "name": "free 1000 任务规划及验证",
+      "status": "passed",
+      "message": "检查通过。",
+      "elapsed_ms": 37220.103
+    }
+  ],
+  "coverage": [
+    {
+      "method": "GET",
+      "path": "/api/v2/health",
+      "status": "passed"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v2/health/jobs",
+      "status": "passed"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v2/version",
+      "status": "passed"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v2/capabilities",
+      "status": "passed"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v2/examples/single",
+      "status": "passed"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v2/examples/batch",
+      "status": "passed"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v2/scenes",
+      "status": "passed"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v2/scenes/{scene_id}",
+      "status": "passed"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v2/coordinates/convert",
+      "status": "passed"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v2/plan/single",
+      "status": "passed"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v2/plan/batch",
+      "status": "passed"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v2/validate",
+      "status": "passed"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v2/jobs",
+      "status": "passed"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v2/jobs/{job_id}",
+      "status": "passed"
+    }
+  ],
+  "benchmarks": [
+    {
+      "suite": "strict",
+      "task_count": 1000,
+      "success_count": 1000,
+      "failed_count": 0,
+      "conflict_count": 0,
+      "elapsed_ms": 27574.303,
+      "response_path": "http/032_post_api_v2_plan_batch_output.json",
+      "status": "passed"
+    },
+    {
+      "suite": "mixed",
+      "task_count": 1000,
+      "success_count": 1000,
+      "failed_count": 0,
+      "conflict_count": 0,
+      "elapsed_ms": 54643.749,
+      "response_path": "http/035_post_api_v2_plan_batch_output.json",
+      "status": "passed"
+    },
+    {
+      "suite": "free",
+      "task_count": 1000,
+      "success_count": 1000,
+      "failed_count": 0,
+      "conflict_count": 0,
+      "elapsed_ms": 23816.11,
+      "response_path": "http/038_post_api_v2_plan_batch_output.json",
+      "status": "passed"
+    }
+  ],
+  "exchanges": [
+    {
+      "method": "GET",
+      "path": "/api/v2/health",
+      "request_path": "http/001_get_api_v2_health_request.json",
+      "expected_status": 200,
+      "elapsed_ms": 2836.901,
+      "http_status": 200,
+      "headers": {
+        "Content-Type": "application/json",
+        "Content-Length": "129",
+        "Date": "Sat, 17 Oct 2026 13:58:07 GMT",
+        "Server": "cloudflare"
+      },
+      "output": {
+        "path": "001_get_api_v2_health_output.json",
+        "bytes": 129,
+        "sha256": "2563536a58da33393be1b754910eb0ee28dcb9054d4b63e657be672a74f20209"
+      },
+      "response_path": "http/001_get_api_v2_health_output.json",
+      "status": "passed"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v2/health/jobs",
+      "request_path": "http/002_get_api_v2_health_jobs_request.json",
+      "expected_status": 200,
+      "elapsed_ms": 1600.652,
+      "http_status": 200,
+      "headers": {
+        "Content-Type": "application/json",
+        "Content-Length": "60",
+        "Date": "Sat, 17 Oct 2026 13:58:09 GMT",
+        "Server": "cloudflare"
+      },
+      "output": {
+        "path": "002_get_api_v2_health_jobs_output.json",
+        "bytes": 60,
+        "sha256": "a0d208ffbe54553c52daa06a7f098d2a0209b145b6c2e686074088b1eb7f1a9c"
+      },
+      "response_path": "http/002_get_api_v2_health_jobs_output.json",
+      "status": "passed"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v2/version",
+      "request_path": "http/003_get_api_v2_version_request.json",
+      "expected_status": 200,
+      "elapsed_ms": 2958.095,
+      "http_status": 200,
+      "headers": {
+        "Content-Type": "application/json",
+        "Content-Length": "918",
+        "Date": "Sat, 17 Oct 2026 13:58:10 GMT",
+        "Server": "cloudflare"
+      },
+      "output": {
+        "path": "003_get_api_v2_version_output.json",
+        "bytes": 918,
+        "sha256": "60cae47096d441b2b79bceccc9a5891ac030cd13a62952242d4fb093c54b13f5"
+      },
+      "response_path": "http/003_get_api_v2_version_output.json",
+      "status": "passed"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v2/capabilities",
+      "request_path": "http/004_get_api_v2_capabilities_request.json",
+      "expected_status": 200,
+      "elapsed_ms": 1917.707,
+      "http_status": 200,
+      "headers": {
+        "Content-Type": "application/json",
+        "Content-Length": "918",
+        "Date": "Sat, 17 Oct 2026 13:58:13 GMT",
+        "Server": "cloudflare"
+      },
+      "output": {
+        "path": "004_get_api_v2_capabilities_output.json",
+        "bytes": 918,
+        "sha256": "0675c3f25d10f9082ce1cac21f1b3471f30e5391aec106c43fbb0590d4af0a79"
+      },
+      "response_path": "http/004_get_api_v2_capabilities_output.json",
+      "status": "passed"
+    },
+    {
+      "method": "GET",
+      "path": "/openapi.json",
+      "request_path": "http/005_get_openapi_json_request.json",
+      "expected_status": 200,
+      "elapsed_ms": 5318.571,
+      "http_status": 200,
+      "headers": {
+        "Content-Type": "application/json",
+        "Content-Length": "51828",
+        "Date": "Sat, 17 Oct 2026 13:58:18 GMT",
+        "Server": "cloudflare"
+      },
+      "output": {
+        "path": "005_get_openapi_json_output.json",
+        "bytes": 51828,
+        "sha256": "7e3007361be03df66d6cb01b137f3ad17f8c9ee3adf694552d8b225e9a44684b"
+      },
+      "response_path": "http/005_get_openapi_json_output.json",
+      "status": "passed"
+    },
+    {
+      "method": "GET",
+      "path": "/docs",
+      "request_path": "http/006_get_docs_request.json",
+      "expected_status": 200,
+      "elapsed_ms": 2564.758,
+      "http_status": 200,
+      "headers": {
+        "Content-Type": "text/html; charset=utf-8",
+        "Date": "Sat, 17 Oct 2026 13:58:20 GMT",
+        "Server": "cloudflare"
+      },
+      "output": {
+        "path": "006_get_docs_output.html",
+        "bytes": 1038,
+        "sha256": "c14e4ac7d6253718eac2b13e85b1d8bb98a1d37e14434458cade7d57f55b659d"
+      },
+      "response_path": "http/006_get_docs_output.html",
+      "status": "passed"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v2/examples/single",
+      "request_path": "http/007_get_api_v2_examples_single_request.json",
+      "expected_status": 200,
+      "elapsed_ms": 1239.964,
+      "http_status": 200,
+      "headers": {
+        "Content-Type": "application/json",
+        "Content-Length": "1675",
+        "Date": "Sat, 17 Oct 2026 13:58:23 GMT",
+        "Server": "cloudflare"
+      },
+      "output": {
+        "path": "007_get_api_v2_examples_single_output.json",
+        "bytes": 1675,
+        "sha256": "43d818cbfbf7e63563fcf0d376cdd96b283ca9913e20b7fd9baaee146eadea7b"
+      },
+      "response_path": "http/007_get_api_v2_examples_single_output.json",
+      "status": "passed"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v2/plan/single",
+      "request_path": "http/008_post_api_v2_plan_single_request.json",
+      "expected_status": 200,
+      "input": {
+        "path": "008_post_api_v2_plan_single_input.json",
+        "bytes": 1821,
+        "sha256": "01b238c3f79e2fa9360823bf38dd57750454572a2efdf302e335e71a641b4a60"
+      },
+      "input_path": "http/008_post_api_v2_plan_single_input.json",
+      "elapsed_ms": 2075.469,
+      "http_status": 200,
+      "headers": {
+        "Content-Type": "application/json",
+        "Content-Length": "1727",
+        "Date": "Sat, 17 Oct 2026 13:58:25 GMT",
+        "Server": "cloudflare"
+      },
+      "output": {
+        "path": "008_post_api_v2_plan_single_output.json",
+        "bytes": 1727,
+        "sha256": "50ddde133332299e838984e94ea01320901782f5aaab9966c7f7e051f7a402dd"
+      },
+      "response_path": "http/008_post_api_v2_plan_single_output.json",
+      "status": "passed"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v2/validate",
+      "request_path": "http/009_post_api_v2_validate_request.json",
+      "expected_status": 200,
+      "input": {
+        "path": "009_post_api_v2_validate_input.json",
+        "bytes": 2797,
+        "sha256": "0c429fce8ca72f38f7f2e5fef3c5016188b5980bb56a60b3d207fe415ae69202"
+      },
+      "input_path": "http/009_post_api_v2_validate_input.json",
+      "elapsed_ms": 3225.545,
+      "http_status": 200,
+      "headers": {
+        "Content-Type": "application/json",
+        "Content-Length": "47",
+        "Date": "Sat, 17 Oct 2026 13:58:28 GMT",
+        "Server": "cloudflare"
+      },
+      "output": {
+        "path": "009_post_api_v2_validate_output.json",
+        "bytes": 47,
+        "sha256": "58648c922bf7daac87e5b6217d2ff47b239bc9340537ec6b06c7ac45110cf5a8"
+      },
+      "response_path": "http/009_post_api_v2_validate_output.json",
+      "status": "passed"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v2/examples/batch",
+      "request_path": "http/010_get_api_v2_examples_batch_request.json",
+      "expected_status": 200,
+      "elapsed_ms": 1916.501,
+      "http_status": 200,
+      "headers": {
+        "Content-Type": "application/json",
+        "Content-Length": "2151",
+        "Date": "Sat, 17 Oct 2026 13:58:30 GMT",
+        "Server": "cloudflare"
+      },
+      "output": {
+        "path": "010_get_api_v2_examples_batch_output.json",
+        "bytes": 2151,
+        "sha256": "dbe7b25d988a6a871934c13469134f834fa6d868ddfe27df83754565acfb8acb"
+      },
+      "response_path": "http/010_get_api_v2_examples_batch_output.json",
+      "status": "passed"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v2/plan/batch",
+      "request_path": "http/011_post_api_v2_plan_batch_request.json",
+      "expected_status": 200,
+      "input": {
+        "path": "011_post_api_v2_plan_batch_input.json",
+        "bytes": 2333,
+        "sha256": "78a72c352c863239add9b74eb9a052181d8ddf34b2210274323059b72a777461"
+      },
+      "input_path": "http/011_post_api_v2_plan_batch_input.json",
+      "elapsed_ms": 2639.592,
+      "http_status": 200,
+      "headers": {
+        "Content-Type": "application/json",
+        "Content-Length": "4530",
+        "Date": "Sat, 17 Oct 2026 13:58:32 GMT",
+        "Server": "cloudflare"
+      },
+      "output": {
+        "path": "011_post_api_v2_plan_batch_output.json",
+        "bytes": 4530,
+        "sha256": "7011e3baac4b1f4485f5817bfe70ece14dda810c209784a436bd0db93f1cd193"
+      },
+      "response_path": "http/011_post_api_v2_plan_batch_output.json",
+      "status": "passed"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v2/plan/single",
+      "request_path": "http/012_post_api_v2_plan_single_request.json",
+      "expected_status": 200,
+      "input": {
+        "path": "012_post_api_v2_plan_single_input.json",
+        "bytes": 1803,
+        "sha256": "5ebc7db4ba8a5c7810ad215db45b7514dad2ea2e18f0b7d6d3e7becb8d9113e5"
+      },
+      "input_path": "http/012_post_api_v2_plan_single_input.json",
+      "elapsed_ms": 2157.563,
+      "http_status": 200,
+      "headers": {
+        "Content-Type": "application/json",
+        "Content-Length": "1727",
+        "Date": "Sat, 17 Oct 2026 13:58:35 GMT",
+        "Server": "cloudflare"
+      },
+      "output": {
+        "path": "012_post_api_v2_plan_single_output.json",
+        "bytes": 1727,
+        "sha256": "50ddde133332299e838984e94ea01320901782f5aaab9966c7f7e051f7a402dd"
+      },
+      "response_path": "http/012_post_api_v2_plan_single_output.json",
+      "status": "passed"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v2/validate",
+      "request_path": "http/013_post_api_v2_validate_request.json",
+      "expected_status": 200,
+      "input": {
+        "path": "013_post_api_v2_validate_input.json",
+        "bytes": 2779,
+        "sha256": "6692d63ce4fe06f4a90567bb43ab711a3c71a40b9a594f2622cd5a3ebd292202"
+      },
+      "input_path": "http/013_post_api_v2_validate_input.json",
+      "elapsed_ms": 4330.573,
+      "http_status": 200,
+      "headers": {
+        "Content-Type": "application/json",
+        "Content-Length": "47",
+        "Date": "Sat, 17 Oct 2026 13:58:39 GMT",
+        "Server": "cloudflare"
+      },
+      "output": {
+        "path": "013_post_api_v2_validate_output.json",
+        "bytes": 47,
+        "sha256": "58648c922bf7daac87e5b6217d2ff47b239bc9340537ec6b06c7ac45110cf5a8"
+      },
+      "response_path": "http/013_post_api_v2_validate_output.json",
+      "status": "passed"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v2/plan/single",
+      "request_path": "http/014_post_api_v2_plan_single_request.json",
+      "expected_status": 200,
+      "input": {
+        "path": "014_post_api_v2_plan_single_input.json",
+        "bytes": 1803,
+        "sha256": "649cb5e29a51826eb083f013c3af36830e04b2fbb6c373d2a2e994ac5b6c4f7b"
+      },
+      "input_path": "http/014_post_api_v2_plan_single_input.json",
+      "elapsed_ms": 2415.806,
+      "http_status": 200,
+      "headers": {
+        "Content-Type": "application/json",
+        "Content-Length": "1727",
+        "Date": "Sat, 17 Oct 2026 13:58:41 GMT",
+        "Server": "cloudflare"
+      },
+      "output": {
+        "path": "014_post_api_v2_plan_single_output.json",
+        "bytes": 1727,
+        "sha256": "7b1e98eeb1265b884d0b2df437ec065d5a35c6dee9d06735fa6dc38a2858a642"
+      },
+      "response_path": "http/014_post_api_v2_plan_single_output.json",
+      "status": "passed"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v2/validate",
+      "request_path": "http/015_post_api_v2_validate_request.json",
+      "expected_status": 200,
+      "input": {
+        "path": "015_post_api_v2_validate_input.json",
+        "bytes": 2779,
+        "sha256": "bc12bdde05f4b76bf4180dc9b0e44f6c97fbc2e087a6c0fce394b8c2150c1a2c"
+      },
+      "input_path": "http/015_post_api_v2_validate_input.json",
+      "elapsed_ms": 2590.561,
+      "http_status": 200,
+      "headers": {
+        "Content-Type": "application/json",
+        "Content-Length": "47",
+        "Date": "Sat, 17 Oct 2026 13:58:44 GMT",
+        "Server": "cloudflare"
+      },
+      "output": {
+        "path": "015_post_api_v2_validate_output.json",
+        "bytes": 47,
+        "sha256": "58648c922bf7daac87e5b6217d2ff47b239bc9340537ec6b06c7ac45110cf5a8"
+      },
+      "response_path": "http/015_post_api_v2_validate_output.json",
+      "status": "passed"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v2/plan/single",
+      "request_path": "http/016_post_api_v2_plan_single_request.json",
+      "expected_status": 200,
+      "input": {
+        "path": "016_post_api_v2_plan_single_input.json",
+        "bytes": 1801,
+        "sha256": "66a51abbb14a1fbcce0bcaf0778b8cca4415db0f3322b4505b9c4f98643c1239"
+      },
+      "input_path": "http/016_post_api_v2_plan_single_input.json",
+      "elapsed_ms": 1638.838,
+      "http_status": 200,
+      "headers": {
+        "Content-Type": "application/json",
+        "Content-Length": "1725",
+        "Date": "Sat, 17 Oct 2026 13:58:46 GMT",
+        "Server": "cloudflare"
+      },
+      "output": {
+        "path": "016_post_api_v2_plan_single_output.json",
+        "bytes": 1725,
+        "sha256": "db7eafb598b6f236d97c6458616d77bf88cd9e452aa023e2db79a8dd054d1c22"
+      },
+      "response_path": "http/016_post_api_v2_plan_single_output.json",
+      "status": "passed"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v2/validate",
+      "request_path": "http/017_post_api_v2_validate_request.json",
+      "expected_status": 200,
+      "input": {
+        "path": "017_post_api_v2_validate_input.json",
+        "bytes": 2777,
+        "sha256": "f7764b2bcf9f2184f8dc938d2ab5cb584b9af1cb8fd286050b558dc5a47f1d89"
+      },
+      "input_path": "http/017_post_api_v2_validate_input.json",
+      "elapsed_ms": 1404.495,
+      "http_status": 200,
+      "headers": {
+        "Content-Type": "application/json",
+        "Content-Length": "47",
+        "Date": "Sat, 17 Oct 2026 13:58:47 GMT",
+        "Server": "cloudflare"
+      },
+      "output": {
+        "path": "017_post_api_v2_validate_output.json",
+        "bytes": 47,
+        "sha256": "58648c922bf7daac87e5b6217d2ff47b239bc9340537ec6b06c7ac45110cf5a8"
+      },
+      "response_path": "http/017_post_api_v2_validate_output.json",
+      "status": "passed"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v2/plan/batch",
+      "request_path": "http/018_post_api_v2_plan_batch_request.json",
+      "expected_status": 200,
+      "input": {
+        "path": "018_post_api_v2_plan_batch_input.json",
+        "bytes": 2315,
+        "sha256": "32107f3c456c03e8610a4755dc530bea3517ca2f9e034cc186836de28e2a299f"
+      },
+      "input_path": "http/018_post_api_v2_plan_batch_input.json",
+      "elapsed_ms": 1439.783,
+      "http_status": 200,
+      "headers": {
+        "Content-Type": "application/json",
+        "Content-Length": "4527",
+        "Date": "Sat, 17 Oct 2026 13:58:48 GMT",
+        "Server": "cloudflare"
+      },
+      "output": {
+        "path": "018_post_api_v2_plan_batch_output.json",
+        "bytes": 4527,
+        "sha256": "445f099d7a8552d2a6fff163aa62489cf6c1ed39853fe4d7c5badcfe9966c490"
+      },
+      "response_path": "http/018_post_api_v2_plan_batch_output.json",
+      "status": "passed"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v2/scenes",
+      "request_path": "http/019_post_api_v2_scenes_request.json",
+      "expected_status": 200,
+      "input": {
+        "path": "019_post_api_v2_scenes_input.json",
+        "bytes": 1283,
+        "sha256": "4d7268eac2eb70349172672c73e47d1a5415beb71b2faeed08b81bda5f2a30bb"
+      },
+      "input_path": "http/019_post_api_v2_scenes_input.json",
+      "elapsed_ms": 2609.472,
+      "http_status": 200,
+      "headers": {
+        "Content-Type": "application/json",
+        "Content-Length": "706",
+        "Date": "Sat, 17 Oct 2026 13:58:51 GMT",
+        "Server": "cloudflare"
+      },
+      "output": {
+        "path": "019_post_api_v2_scenes_output.json",
+        "bytes": 706,
+        "sha256": "8991e425cf1a6279a44515ed149b9a20926d02e850b92fe8ceed8c2e24209769"
+      },
+      "response_path": "http/019_post_api_v2_scenes_output.json",
+      "status": "passed"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v2/scenes/scene-5c4cc87b4e9bf08cd5a7",
+      "request_path": "http/020_get_api_v2_scenes_scene-5c4cc87b4e9bf08cd5a7_request.json",
+      "expected_status": 200,
+      "elapsed_ms": 3103.062,
+      "http_status": 200,
+      "headers": {
+        "Content-Type": "application/json",
+        "Content-Length": "706",
+        "Date": "Sat, 17 Oct 2026 13:58:54 GMT",
+        "Server": "cloudflare"
+      },
+      "output": {
+        "path": "020_get_api_v2_scenes_scene-5c4cc87b4e9bf08cd5a7_output.json",
+        "bytes": 706,
+        "sha256": "8991e425cf1a6279a44515ed149b9a20926d02e850b92fe8ceed8c2e24209769"
+      },
+      "response_path": "http/020_get_api_v2_scenes_scene-5c4cc87b4e9bf08cd5a7_output.json",
+      "status": "passed"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v2/plan/single",
+      "request_path": "http/021_post_api_v2_plan_single_request.json",
+      "expected_status": 200,
+      "input": {
+        "path": "021_post_api_v2_plan_single_input.json",
+        "bytes": 528,
+        "sha256": "34d9584fa73cdb34c46c2a63f5df4360295f8d13aaa71eb0ed1a2671f1b6f9b3"
+      },
+      "input_path": "http/021_post_api_v2_plan_single_input.json",
+      "elapsed_ms": 1415.272,
+      "http_status": 200,
+      "headers": {
+        "Content-Type": "application/json",
+        "Content-Length": "1727",
+        "Date": "Sat, 17 Oct 2026 13:58:56 GMT",
+        "Server": "cloudflare"
+      },
+      "output": {
+        "path": "021_post_api_v2_plan_single_output.json",
+        "bytes": 1727,
+        "sha256": "50ddde133332299e838984e94ea01320901782f5aaab9966c7f7e051f7a402dd"
+      },
+      "response_path": "http/021_post_api_v2_plan_single_output.json",
+      "status": "passed"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v2/validate",
+      "request_path": "http/022_post_api_v2_validate_request.json",
+      "expected_status": 200,
+      "input": {
+        "path": "022_post_api_v2_validate_input.json",
+        "bytes": 1527,
+        "sha256": "8cb91dc14478273d1dd76c521ea6ffe5ffe0ff26fc09c53125651259588f8342"
+      },
+      "input_path": "http/022_post_api_v2_validate_input.json",
+      "elapsed_ms": 2915.803,
+      "http_status": 200,
+      "headers": {
+        "Content-Type": "application/json",
+        "Content-Length": "47",
+        "Date": "Sat, 17 Oct 2026 13:58:58 GMT",
+        "Server": "cloudflare"
+      },
+      "output": {
+        "path": "022_post_api_v2_validate_output.json",
+        "bytes": 47,
+        "sha256": "58648c922bf7daac87e5b6217d2ff47b239bc9340537ec6b06c7ac45110cf5a8"
+      },
+      "response_path": "http/022_post_api_v2_validate_output.json",
+      "status": "passed"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v2/coordinates/convert",
+      "request_path": "http/023_post_api_v2_coordinates_convert_request.json",
+      "expected_status": 200,
+      "input": {
+        "path": "023_post_api_v2_coordinates_convert_input.json",
+        "bytes": 410,
+        "sha256": "5e30942cdb14bdb2ca28485ba8f7fe9ae480864831bd355ce4e49dd48a3309cd"
+      },
+      "input_path": "http/023_post_api_v2_coordinates_convert_input.json",
+      "elapsed_ms": 1263.476,
+      "http_status": 200,
+      "headers": {
+        "Content-Type": "application/json",
+        "Content-Length": "558",
+        "Date": "Sat, 17 Oct 2026 13:59:00 GMT",
+        "Server": "cloudflare"
+      },
+      "output": {
+        "path": "023_post_api_v2_coordinates_convert_output.json",
+        "bytes": 558,
+        "sha256": "36e52ecc302ea85d92a42a4dfc4db22d565a79a944bec59909b18eecfea22fa0"
+      },
+      "response_path": "http/023_post_api_v2_coordinates_convert_output.json",
+      "status": "passed"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v2/coordinates/convert",
+      "request_path": "http/024_post_api_v2_coordinates_convert_request.json",
+      "expected_status": 200,
+      "input": {
+        "path": "024_post_api_v2_coordinates_convert_input.json",
+        "bytes": 411,
+        "sha256": "b15ee8b609d23bc477dd3ca114d8ce8f6128b329ab4a35408c5f815f84b05879"
+      },
+      "input_path": "http/024_post_api_v2_coordinates_convert_input.json",
+      "elapsed_ms": 1204.542,
+      "http_status": 200,
+      "headers": {
+        "Content-Type": "application/json",
+        "Content-Length": "557",
+        "Date": "Sat, 17 Oct 2026 13:59:01 GMT",
+        "Server": "cloudflare"
+      },
+      "output": {
+        "path": "024_post_api_v2_coordinates_convert_output.json",
+        "bytes": 557,
+        "sha256": "67115d6b53acc221c5cc324fc3ef717e40b6f962092c70e89ce2ab8f87a3360f"
+      },
+      "response_path": "http/024_post_api_v2_coordinates_convert_output.json",
+      "status": "passed"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v2/validate",
+      "request_path": "http/025_post_api_v2_validate_request.json",
+      "expected_status": 200,
+      "input": {
+        "path": "025_post_api_v2_validate_input.json",
+        "bytes": 2779,
+        "sha256": "6692d63ce4fe06f4a90567bb43ab711a3c71a40b9a594f2622cd5a3ebd292202"
+      },
+      "input_path": "http/025_post_api_v2_validate_input.json",
+      "elapsed_ms": 1669.793,
+      "http_status": 200,
+      "headers": {
+        "Content-Type": "application/json",
+        "Content-Length": "47",
+        "Date": "Sat, 17 Oct 2026 13:59:03 GMT",
+        "Server": "cloudflare"
+      },
+      "output": {
+        "path": "025_post_api_v2_validate_output.json",
+        "bytes": 47,
+        "sha256": "58648c922bf7daac87e5b6217d2ff47b239bc9340537ec6b06c7ac45110cf5a8"
+      },
+      "response_path": "http/025_post_api_v2_validate_output.json",
+      "status": "passed"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v2/jobs",
+      "request_path": "http/026_post_api_v2_jobs_request.json",
+      "expected_status": 202,
+      "input": {
+        "path": "026_post_api_v2_jobs_input.json",
+        "bytes": 2315,
+        "sha256": "32107f3c456c03e8610a4755dc530bea3517ca2f9e034cc186836de28e2a299f"
+      },
+      "input_path": "http/026_post_api_v2_jobs_input.json",
+      "elapsed_ms": 1617.543,
+      "http_status": 202,
+      "headers": {
+        "Content-Type": "application/json",
+        "Content-Length": "91",
+        "Date": "Sat, 17 Oct 2026 13:59:04 GMT",
+        "Server": "cloudflare"
+      },
+      "output": {
+        "path": "026_post_api_v2_jobs_output.json",
+        "bytes": 91,
+        "sha256": "72f68e4e83b039e98ae76edeb9408f9e37bb8c5a846e4505bc35cda763472820"
+      },
+      "response_path": "http/026_post_api_v2_jobs_output.json",
+      "status": "passed"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v2/jobs/d877fe14f8bb42e5",
+      "request_path": "http/027_get_api_v2_jobs_d877fe14f8bb42e5_request.json",
+      "expected_status": 200,
+      "elapsed_ms": 1233.774,
+      "http_status": 200,
+      "headers": {
+        "Content-Type": "application/json",
+        "Content-Length": "4728",
+        "Date": "Sat, 17 Oct 2026 13:59:05 GMT",
+        "Server": "cloudflare"
+      },
+      "output": {
+        "path": "027_get_api_v2_jobs_d877fe14f8bb42e5_output.json",
+        "bytes": 4728,
+        "sha256": "fc447f37014b6f1579c025c25e9ab6199d52fa75d5690dde18063647c1357505"
+      },
+      "response_path": "http/027_get_api_v2_jobs_d877fe14f8bb42e5_output.json",
+      "status": "passed"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v2/plan/single",
+      "request_path": "http/028_post_api_v2_plan_single_request.json",
+      "expected_status": 400,
+      "input": {
+        "path": "028_post_api_v2_plan_single_input.json",
+        "bytes": 1826,
+        "sha256": "f910192ca644b2008b3f7e5d68567f867b6901ac078fdaadc18d919436370ba3"
+      },
+      "input_path": "http/028_post_api_v2_plan_single_input.json",
+      "elapsed_ms": 1128.4,
+      "http_status": 400,
+      "headers": {
+        "Content-Type": "application/json",
+        "Content-Length": "163",
+        "Date": "Sat, 17 Oct 2026 13:59:07 GMT",
+        "Server": "cloudflare"
+      },
+      "output": {
+        "path": "028_post_api_v2_plan_single_output.json",
+        "bytes": 163,
+        "sha256": "dd648636edfab7a03c45ace8fa19e03ee0c53246576052552cefb133e5dba3db"
+      },
+      "response_path": "http/028_post_api_v2_plan_single_output.json",
+      "status": "passed"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v2/scenes/test-api-missing-scene",
+      "request_path": "http/029_get_api_v2_scenes_test-api-missing-scene_request.json",
+      "expected_status": 404,
+      "elapsed_ms": 1133.141,
+      "http_status": 404,
+      "headers": {
+        "Content-Type": "application/json",
+        "Content-Length": "137",
+        "Date": "Sat, 17 Oct 2026 13:59:08 GMT",
+        "Server": "cloudflare"
+      },
+      "output": {
+        "path": "029_get_api_v2_scenes_test-api-missing-scene_output.json",
+        "bytes": 137,
+        "sha256": "7b112096188786fe52f873d37e4b5c1b4937f02c4500df23362cf34a6de58df5"
+      },
+      "response_path": "http/029_get_api_v2_scenes_test-api-missing-scene_output.json",
+      "status": "passed"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v2/jobs/test-api-missing-job",
+      "request_path": "http/030_get_api_v2_jobs_test-api-missing-job_request.json",
+      "expected_status": 404,
+      "elapsed_ms": 1269.853,
+      "http_status": 404,
+      "headers": {
+        "Content-Type": "application/json",
+        "Content-Length": "105",
+        "Date": "Sat, 17 Oct 2026 13:59:09 GMT",
+        "Server": "cloudflare"
+      },
+      "output": {
+        "path": "030_get_api_v2_jobs_test-api-missing-job_output.json",
+        "bytes": 105,
+        "sha256": "010272bf1adce0af7c1bb1a6c82ef8966632ea110eb109cefb2e048b0f4f30f2"
+      },
+      "response_path": "http/030_get_api_v2_jobs_test-api-missing-job_output.json",
+      "status": "passed"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v2/scenes",
+      "request_path": "http/031_post_api_v2_scenes_request.json",
+      "expected_status": 200,
+      "input": {
+        "path": "031_post_api_v2_scenes_input.json",
+        "bytes": 96139,
+        "sha256": "4af47f84e103efcd0b217f037129fc7030bd22d22645777ffafa2e8538702dae"
+      },
+      "input_path": "http/031_post_api_v2_scenes_input.json",
+      "elapsed_ms": 5966.417,
+      "http_status": 200,
+      "headers": {
+        "Content-Type": "application/json",
+        "Content-Length": "710",
+        "Date": "Sat, 17 Oct 2026 13:59:15 GMT",
+        "Server": "cloudflare"
+      },
+      "output": {
+        "path": "031_post_api_v2_scenes_output.json",
+        "bytes": 710,
+        "sha256": "75e524eb8f3aa30cedde16284aff1a11caa62b709c85502312e5c1cce0b4d1f0"
+      },
+      "response_path": "http/031_post_api_v2_scenes_output.json",
+      "status": "passed"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v2/plan/batch",
+      "request_path": "http/032_post_api_v2_plan_batch_request.json",
+      "expected_status": 200,
+      "input": {
+        "path": "032_post_api_v2_plan_batch_input.json",
+        "bytes": 371696,
+        "sha256": "a08ce916b81e44658141823a017f95b61794dc33a370368748d94693254c9aa8"
+      },
+      "input_path": "http/032_post_api_v2_plan_batch_input.json",
+      "elapsed_ms": 27561.439,
+      "http_status": 200,
+      "headers": {
+        "Content-Type": "application/json",
+        "Content-Length": "1829338",
+        "Date": "Sat, 17 Oct 2026 13:59:37 GMT",
+        "Server": "cloudflare"
+      },
+      "output": {
+        "path": "032_post_api_v2_plan_batch_output.json",
+        "bytes": 1829338,
+        "sha256": "a3007f56c75bf9bdd4348aa356dc9fd1f60eb11300ada85a800eea4a9e1c10ad"
+      },
+      "response_path": "http/032_post_api_v2_plan_batch_output.json",
+      "status": "passed"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v2/validate",
+      "request_path": "http/033_post_api_v2_validate_request.json",
+      "expected_status": 200,
+      "input": {
+        "path": "033_post_api_v2_validate_input.json",
+        "bytes": 1473,
+        "sha256": "ce4a166203b25e2dddce779bbe2dc34a7e0ab95c565bba7534fa5a17086b7e79"
+      },
+      "input_path": "http/033_post_api_v2_validate_input.json",
+      "elapsed_ms": 2223.218,
+      "http_status": 200,
+      "headers": {
+        "Content-Type": "application/json",
+        "Content-Length": "47",
+        "Date": "Sat, 17 Oct 2026 13:59:44 GMT",
+        "Server": "cloudflare"
+      },
+      "output": {
+        "path": "033_post_api_v2_validate_output.json",
+        "bytes": 47,
+        "sha256": "58648c922bf7daac87e5b6217d2ff47b239bc9340537ec6b06c7ac45110cf5a8"
+      },
+      "response_path": "http/033_post_api_v2_validate_output.json",
+      "status": "passed"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v2/scenes",
+      "request_path": "http/034_post_api_v2_scenes_request.json",
+      "expected_status": 200,
+      "input": {
+        "path": "034_post_api_v2_scenes_input.json",
+        "bytes": 378901,
+        "sha256": "8c063b9ffeb194c8357e346d4a83bdea61f2ff81551be0c96cb43aade6a6462f"
+      },
+      "input_path": "http/034_post_api_v2_scenes_input.json",
+      "elapsed_ms": 17810.11,
+      "http_status": 200,
+      "headers": {
+        "Content-Type": "application/json",
+        "Content-Length": "711",
+        "Date": "Sat, 17 Oct 2026 14:00:03 GMT",
+        "Server": "cloudflare"
+      },
+      "output": {
+        "path": "034_post_api_v2_scenes_output.json",
+        "bytes": 711,
+        "sha256": "557adbca3c556e299e693a15f343a1384d4c5617473df3b5b2a87776c3aed35a"
+      },
+      "response_path": "http/034_post_api_v2_scenes_output.json",
+      "status": "passed"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v2/plan/batch",
+      "request_path": "http/035_post_api_v2_plan_batch_request.json",
+      "expected_status": 200,
+      "input": {
+        "path": "035_post_api_v2_plan_batch_input.json",
+        "bytes": 571185,
+        "sha256": "1a9fbef4b0265792d61f35ead7a3778250da4bc910c999c27fc6123b7f809c7c"
+      },
+      "input_path": "http/035_post_api_v2_plan_batch_input.json",
+      "elapsed_ms": 54603.293,
+      "http_status": 200,
+      "headers": {
+        "Content-Type": "application/json",
+        "Content-Length": "7494778",
+        "Date": "Sat, 17 Oct 2026 14:00:40 GMT",
+        "Server": "cloudflare"
+      },
+      "output": {
+        "path": "035_post_api_v2_plan_batch_output.json",
+        "bytes": 7494778,
+        "sha256": "566a749a868b8e60697fd2ca4feb6da986cea951b0fa7ac1ebe4b6d13505b926"
+      },
+      "response_path": "http/035_post_api_v2_plan_batch_output.json",
+      "status": "passed"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v2/validate",
+      "request_path": "http/036_post_api_v2_validate_request.json",
+      "expected_status": 200,
+      "input": {
+        "path": "036_post_api_v2_validate_input.json",
+        "bytes": 1649,
+        "sha256": "675f3aa866ef50c5f5f7240df51e28d5f1a60ec99268f77ae40d8f966d5b9f44"
+      },
+      "input_path": "http/036_post_api_v2_validate_input.json",
+      "elapsed_ms": 3535.621,
+      "http_status": 200,
+      "headers": {
+        "Content-Type": "application/json",
+        "Content-Length": "5396",
+        "Date": "Sat, 17 Oct 2026 14:01:00 GMT",
+        "Server": "cloudflare"
+      },
+      "output": {
+        "path": "036_post_api_v2_validate_output.json",
+        "bytes": 5396,
+        "sha256": "dcb6233f9085b5a07c6c5396db766a24ae32c877ac4fd8ad508edc0b8c9d0c48"
+      },
+      "response_path": "http/036_post_api_v2_validate_output.json",
+      "status": "passed"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v2/scenes",
+      "request_path": "http/037_post_api_v2_scenes_request.json",
+      "expected_status": 200,
+      "input": {
+        "path": "037_post_api_v2_scenes_input.json",
+        "bytes": 96139,
+        "sha256": "4af47f84e103efcd0b217f037129fc7030bd22d22645777ffafa2e8538702dae"
+      },
+      "input_path": "http/037_post_api_v2_scenes_input.json",
+      "elapsed_ms": 10228.684,
+      "http_status": 200,
+      "headers": {
+        "Content-Type": "application/json",
+        "Content-Length": "710",
+        "Date": "Sat, 17 Oct 2026 14:01:11 GMT",
+        "Server": "cloudflare"
+      },
+      "output": {
+        "path": "037_post_api_v2_scenes_output.json",
+        "bytes": 710,
+        "sha256": "75e524eb8f3aa30cedde16284aff1a11caa62b709c85502312e5c1cce0b4d1f0"
+      },
+      "response_path": "http/037_post_api_v2_scenes_output.json",
+      "status": "passed"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v2/plan/batch",
+      "request_path": "http/038_post_api_v2_plan_batch_request.json",
+      "expected_status": 200,
+      "input": {
+        "path": "038_post_api_v2_plan_batch_input.json",
+        "bytes": 367694,
+        "sha256": "fa5167a55c79a87a8a1b13efe7f1a3294f6150d28230fd00d85ce204fb9aa9f9"
+      },
+      "input_path": "http/038_post_api_v2_plan_batch_input.json",
+      "elapsed_ms": 23803.779,
+      "http_status": 200,
+      "headers": {
+        "Content-Type": "application/json",
+        "Content-Length": "1825339",
+        "Date": "Sat, 17 Oct 2026 14:01:25 GMT",
+        "Server": "cloudflare"
+      },
+      "output": {
+        "path": "038_post_api_v2_plan_batch_output.json",
+        "bytes": 1825339,
+        "sha256": "5a4cfc114988cbc8615b19415dc83e3e3346ef0a0be734f81f841b52cb3436fd"
+      },
+      "response_path": "http/038_post_api_v2_plan_batch_output.json",
+      "status": "passed"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v2/validate",
+      "request_path": "http/039_post_api_v2_validate_request.json",
+      "expected_status": 200,
+      "input": {
+        "path": "039_post_api_v2_validate_input.json",
+        "bytes": 1469,
+        "sha256": "37b56ae48971e94a1428917f1c72fa7f39d93ffced67f8904dfdd2db42cd83dc"
+      },
+      "input_path": "http/039_post_api_v2_validate_input.json",
+      "elapsed_ms": 3157.974,
+      "http_status": 200,
+      "headers": {
+        "Content-Type": "application/json",
+        "Content-Length": "47",
+        "Date": "Sat, 17 Oct 2026 14:01:38 GMT",
+        "Server": "cloudflare"
+      },
+      "output": {
+        "path": "039_post_api_v2_validate_output.json",
+        "bytes": 47,
+        "sha256": "58648c922bf7daac87e5b6217d2ff47b239bc9340537ec6b06c7ac45110cf5a8"
+      },
+      "response_path": "http/039_post_api_v2_validate_output.json",
+      "status": "passed"
+    }
+  ],
+  "summary": {
+    "passed": 22,
+    "failed": 0,
+    "operation_count": 14,
+    "covered_operations": 14
+  }
+}

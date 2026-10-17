@@ -40,6 +40,7 @@ Thumbs.db
 # Output
 output/
 results/
+test_api/results/
 *.log
 
 # Jupyter
