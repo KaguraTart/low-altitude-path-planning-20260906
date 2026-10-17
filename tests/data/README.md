@@ -20,6 +20,8 @@
 
 已保存的首套归档为 [`recordings/20261016T160346Z_http_functional/`](recordings/20261016T160346Z_http_functional/manifest.json)，共 127 份数据文件，约 17.8 MB，包含 21 次示例接口交换和三套各 1000 条结果。目录时间 `2026-10-16 16:03:46 UTC` 对应北京时间 `2026-10-17 00:03:46`。具体文件清单及独立验证记录见该目录的 manifest 与报告。
 
+当前 v2 归档为 [`recordings/20261017T112414Z_http_functional/`](recordings/20261017T112414Z_http_functional/manifest.json)。它保存 15 次示例接口交换、三套各 1000 条完整结果及 57 份数据文件，约 17.4 MB。采集版本为 `52c12be`，容器资源为 2 CPU / 2 GiB。三套均有 1000 条成功结果，独立验证通过，连续冲突为 0。
+
 历史录制中的旧接口和 CLI 数据保持原字节，不用于当前服务调用。历史 8 CPU / 8 GiB 的 30 轮性能报告继续保存在 `internal/reports/v2-20261016/`。当时成功响应正文未留存，本目录记录新的实际采集结果。当前采集使用正式 2 CPU / 2 GiB 服务，标记为 `functional_replay_capture`；路线安全性与完整性均独立验证，耗时按实记录。固定性能验收条件见原报告。
 
 校验已保存数据，不调用服务：
