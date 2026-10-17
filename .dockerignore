@@ -1,5 +1,6 @@
 output/
 tests/
+test_api/
 tools/
 internal/
 .git/

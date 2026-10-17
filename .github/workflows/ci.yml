@@ -58,6 +58,7 @@ jobs:
           done
           curl --fail --silent --show-error http://127.0.0.1:8000/api/v2/health > /tmp/ci-v2/health.json
           python tools/smoke_v2.py --base-url http://127.0.0.1:8000 --expected-git-sha "$GITHUB_SHA" --archive-dir /tmp/ci-v2/output/http-smoke > /tmp/ci-v2/smoke.json
+          python -S test_api/run_tests.py --base-url http://127.0.0.1:8000 --examples-only --output /tmp/ci-v2/output/test-api > /tmp/ci-v2/test-api.log
           python tools/benchmark_v2.py --base-url http://127.0.0.1:8000 --scales 10 100 --repeats 1 --functional-only --input-directory /tmp/ci-v2/input/v2_benchmarks --output /tmp/ci-v2/output/benchmarks > /tmp/ci-v2/benchmark.log
 
       - uses: actions/upload-artifact@v4

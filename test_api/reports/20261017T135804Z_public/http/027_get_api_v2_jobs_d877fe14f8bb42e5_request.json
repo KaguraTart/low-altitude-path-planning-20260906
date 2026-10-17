@@ -1,0 +1,10 @@
+{
+  "method": "GET",
+  "url": "https://api.kaguratart.com/api/v2/jobs/d877fe14f8bb42e5",
+  "path": "/api/v2/jobs/d877fe14f8bb42e5",
+  "headers": {
+    "User-Agent": "UAV-API-Test/1.0",
+    "Accept": "application/json"
+  },
+  "body_path": null
+}
