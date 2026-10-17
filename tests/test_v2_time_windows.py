@@ -116,14 +116,15 @@ def test_every_sampled_allowed_departure_passes_calendar_evaluator():
             assert end.strftime("%H:%M")<=content["latestArrival"]
 
 
-def test_horizon_and_maximum_alternative_count_are_bounded():
+def test_every_legal_alternative_is_preserved_within_declared_horizon():
     origin=datetime.fromisoformat("2026-10-16T09:00:00+08:00")
     rules=[{"id":f"time-{i}","rule_type":"TIME","content":{"earliestDeparture":"23:59"},
         "effective_start":origin+timedelta(seconds=i*600+300),
         "effective_end":origin+timedelta(seconds=i*600+400)} for i in range(20)]
     compiled,task,motion=setup({},rules=rules,horizon_s=20000)
     windows=departure_windows(compiled,task,motion,0,20000)
-    assert len(windows)==10
+    assert len(windows)==21
     assert windows==sorted(windows)
+    assert windows[-1][1]==19940
     compiled,task,motion=setup({"dailyStart":"09:05","dailyEnd":"09:10"},horizon_s=360)
     assert departure_windows(compiled,task,motion,0,1000)==[(300,300)]

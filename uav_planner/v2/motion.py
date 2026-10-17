@@ -11,9 +11,6 @@ from dataclasses import dataclass, field
 import numpy as np
 
 
-MAX_MOTION_SAMPLES = 100_000
-
-
 class MotionError(ValueError):
     """A candidate cannot satisfy its geometric or dynamic constraints."""
 
@@ -99,12 +96,10 @@ class Motion:
                 acc = max(p.accel, p.decel, p.peak ** 2 / max(p.radius, 1e-9) if p.kind == "arc" else 0)
                 step = min(2.0, math.sqrt(8 * error / max(acc * 2, 1e-9)))
                 requested = p.duration / step if step > 0 else math.inf
-                if not math.isfinite(requested) or requested + len(points) + 4 > MAX_MOTION_SAMPLES:
-                    raise MotionError("Certified motion sample budget exceeded (100000 samples)")
+                if not math.isfinite(requested):
+                    raise OverflowError("Collision sample count exceeds finite arithmetic")
                 ts = sorted(set([0.0, p.ta, p.ta + p.tc, p.duration] +
                                 [min(p.duration, i * step) for i in range(1, math.ceil(p.duration / step))]))
-            if len(points) + len(ts) > MAX_MOTION_SAMPLES:
-                raise MotionError("Certified motion sample budget exceeded (100000 samples)")
             for t in ts:
                 if times and abs(start + t - times[-1]) < 1e-9:
                     continue
@@ -271,19 +266,13 @@ def build_motion(points, limits: dict, start_time: float = 0.0, *, tolerance: fl
             if p.kind == "arc":
                 angle_step=2*math.acos(max(-1, min(1,1-tolerance/max(p.radius, tolerance))))
                 count=max(1,math.ceil(abs(p.sweep)/max(angle_step,1e-8)))
-                if count + len(vertices) + len(cuts) > MAX_MOTION_SAMPLES:
-                    raise MotionError("Exported motion sample budget exceeded (100000 samples)")
                 cuts += [p.length*j/count for j in range(1,count)]
-            if len(vertices) + len(cuts) > MAX_MOTION_SAMPLES:
-                raise MotionError("Exported motion sample budget exceeded (100000 samples)")
             for s in sorted(set(cuts)):
                 ts=t+p.time_at(s)
                 if times and abs(ts-times[-1])<1e-8:
                     continue
                 vertices.append(p.position(s));times.append(ts)
         else:
-            if len(vertices) + 2 > MAX_MOTION_SAMPLES:
-                raise MotionError("Exported motion sample budget exceeded (100000 samples)")
             if not times or abs(t-times[-1])>1e-8:
                 vertices.append(p.start);times.append(t)
             vertices.append(p.end);times.append(t+p.duration)

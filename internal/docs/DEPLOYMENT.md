@@ -1,30 +1,30 @@
-# v1 / v2 部署与回滚
+# 部署与回滚
 
-对外字段与示例统一见 [`../../docs/API.md`](../../docs/API.md)。本文件是内部运行手册，命令中的 SHA 必须来自本次实际构建；不把宿主机 SDK 诊断当作 Docker 发布验收。
+接口字段与示例见 [`../../docs/API.md`](../../docs/API.md)。服务仅提供 `/api/v2`。本文件说明构建、验证、发布和回滚步骤。
 
-## 1. 运行配置与基线
+## 1. 运行配置
 
-| 项目 | 当前正式部署默认配置 | 原 v1 历史记录（不代表本地仍有镜像） |
-|------|------|------|
-| Python / 包 | 3.11 / 2.0.0，含 C++17 扩展 | 原 v1 镜像 |
-| 镜像标签 | `low-altitude-path-planning:<Git SHA>`，`UAV_IMAGE_TAG` 选择 | `low-altitude-path-planning:9816f8b` |
-| 镜像 ID | 构建后记录 | `sha256:c03196d8cc7d1952ad29013e9dd70e12323127601615ba5253af7bc7f80e4e89` |
-| 正式容器 | `low-altitude-path-planning-api` | 同名 |
-| 正式映射 | `127.0.0.1:18000:8000` | 相同 |
-| 资源 | 2 CPU / 2 GiB（Compose `cpus: 2`、`mem_limit: 2g`） | 当时为 2 CPU / 2 GiB |
-| 候选容器 | `low-altitude-path-planning-candidate`，`127.0.0.1:18001:8000` | 不占正式端口 |
+| 项目 | 配置 |
+|------|------|
+| Python / 软件包 | 3.11 / 2.0.0，含 C++17 原生扩展 |
+| 镜像 | `low-altitude-path-planning:<Git SHA>` |
+| 正式容器 | `low-altitude-path-planning-api` |
+| 正式端口 | `127.0.0.1:18000 → 8000` |
+| 正式资源 | 2 CPU / 2 GiB |
+| 候选容器 | `low-altitude-path-planning-candidate` |
+| 候选端口 | `127.0.0.1:18001 → 8000` |
 
-服务保持单进程。规划核内部并行，不通过增加 ASGI worker 共享进程内场景和作业表；多 worker 会导致 scene/job 查询落到没有记录的进程。容器内监听 `0.0.0.0:8000`，宿主机仅绑定回环，继续接入现有反向代理/隧道。服务不内置认证，公网访问沿用边缘鉴权与限流；限流范围须覆盖 `/api/v1/*` 和 `/api/v2/*`。
+服务使用单进程。场景和作业保存在进程内存中，重启后清空。后台作业使用 1 个执行线程，其他作业排队等待。服务默认不限制场景、队列、历史数量或结果存储，也不自动淘汰。
 
-场景在编译前执行 `uav_planner/v2/budgets.py` 预算检查：单场景最多 200 航路、1000 障碍、20 管制区、1000 接驳、1000 规则、32 配置、100 数据集和 50000 WKT 顶点；格场/外部网格条目各最多 1200000，外部网格节点乘积最多 4000000，单场景估算存储最多 512 MiB。登记表最多 8 场景、合计估算存储 1 GiB，以 LRU 淘汰；新场景编译串行执行。估算量不是实际 RSS 硬上限，不能代替正式容器 2 GiB 资源限制；按实际场景与并发负载监测服务内存。当前镜像的限额通过 `/api/v2/capabilities` 核对。
+场景、WKT 顶点、格子、网格节点、任务、航点、验证数据和采样不设固定数量上限。`time_budget_s` 省略或为 null 时持续计算。调用方可传正有限秒数设置计算时限。`horizon_s` 是飞行时域，默认 3600 秒。`max_radius_m` 是场景覆盖半径，默认 50000 m。后二者可设置更大的正数。
 
-时域 `horizon_s` 默认 3600、最大 86400 秒；单任务最多 256 个中间业务航点；SDK/HTTP 批量均为 1–10000 个任务。验证时间数组和解析原语分别最多 100000 项；每路线的认证碰撞采样与导出顶点也分别限制 100000 项，超额返回明确预算错误，不输出截断的成功路线。
+内存分配失败返回 HTTP 503、`RESOURCE_EXHAUSTED`。异步作业记录 failed 和同名错误码。系统 OOM 直接终止进程时，连接可能断开。Docker 记录 OOM 并按重启策略重启服务。正式配额保持 2 CPU / 2 GiB。
 
-v2 后台队列最多 32 个 pending+running、1 个执行线程；满载或关闭时拒绝新提交，返回 HTTP 429/JOB_QUEUE_FULL。已完成结果合计保留预算 128 MiB（Python 对象估算），按历史数量/字节预算淘汰；单结果超限则作业 failed/JOB_RESULT_TOO_LARGE。v1 共享相同保留与关闭机制，默认队列容量 200、执行线程 2。平台在取回完整结果后保存，不能依赖内存作业表长期留存。原生内核不可用为 HTTP 503/NATIVE_UNAVAILABLE，其他模型校验错误使用 HTTP 400 的统一错误信封；v2 OpenAPI 不声明自动 422 校验响应。
+容器监听 `0.0.0.0:8000`，宿主机绑定回环地址。公网访问使用现有反向代理或隧道。访问控制由平台提供。
 
-## 2. 本地安装与构建
+## 2. 安装与接口规范
 
-开发安装会用 CMake 和 C++17 编译器构建 pybind11 扩展：
+构建需要 C++17 编译器和 CMake。
 
 ```bash
 uv pip install -e '.[server,test]' -c requirements-runtime.lock
@@ -33,7 +33,7 @@ python -c 'from uav_planner.v2 import native; print(native.engine_info()); asser
 python tools/benchmark_v2.py --validate-only
 ```
 
-Dockerfile 使用构建层制作原生 wheel，在 Python 3.11 运行层安装包与 REST 依赖；文档和 OpenAPI 随同代码放入该镜像。规范快照以锁定依赖的 Python 3.11 镜像为准；其他 FastAPI/Pydantic 版本可能生成不同的 input/output schema 拆分。任何模型变化后在同版本环境重新生成快照：
+Dockerfile 先构建原生 wheel，再安装到 Python 3.11 运行层。镜像包含 `docs/API.md` 和 `docs/openapi.json`。模型变更后，在锁定依赖的 Python 3.11 环境重新生成规范：
 
 ```bash
 python - <<'PY'
@@ -45,225 +45,130 @@ Path('docs/openapi.json').write_text(
 PY
 ```
 
-也可直接把已验证候选的 `/openapi.json` 保存为快照，再纳入下一个文档提交和镜像。生成规范只导入 ASGI 应用并读类型模型，不执行规划 handler。Swagger `/docs` 是 UI，读取 `/openapi.json`；只改 Markdown 不会改变 Swagger 契约。
+Swagger `/docs` 读取 `/openapi.json`。更新 Markdown 后，也要核对模型、规范快照和运行服务。
 
-## 3. 分支、PR 与不可变候选镜像
+## 3. 构建与 CI
 
-GitHub `CI` 在面向 main 的 PR、main 推送和手动触发时执行完整测试、REST 真服务烟测及可视化。测试通过后，`Docker 镜像与发布契约` 作业从同一 checkout 构建 SHA 标签镜像，运行已安装的 wheel，核对原生核、构建 revision、v1/v2 规划、坐标转换、场景、异步结果、错误信封和 Swagger。镜像内 API.md/OpenAPI 文件必须与 checkout 一致，运行时 OpenAPI 必须与快照一致；日志、镜像元数据和烟测 JSON 保存为 `docker-release-contract` artifact。PR 默认 checkout 为合并测试提交，artifact 中的 revision 因而可能与 PR 分支 HEAD 不同。
-
-本地可对已构建镜像执行同一检查，不占正式服务端口，结束时清理专用临时容器：
-
-```bash
-bash tools/check_docker_release.sh "low-altitude-path-planning:$UAV_BUILD_SHA" \
-  "$UAV_BUILD_SHA" output/ci-docker
-```
-
-该 CI 作业采用 2 CPU / 2 GiB 验证发布功能与打包，不作为第 5 节专用宿主机的性能验收；手动 `stress` 作业仍运行 v1 压测。CI 不自动替换本机正式服务，正式切换按第 6 节排空与发布步骤执行。
-
-先完成代码、文档、回归和固定输入校验，再推送当前功能开发分支创建审查记录。PR 描述必须写实际功能与验证结果；容器性能尚未验证就明确标记待验证。
+先完成代码、文档和回归。将实际变更及测试结果写入 PR。
 
 ```bash
 git status --short
 git diff --check
 git push -u origin HEAD
-# 先将本次准确的变更与测试结果写入 /tmp/uav-v2-pr.md。
-gh pr create --title '新增 WKT/WGS84 v2 约束规划接口并保留 v1' --body-file /tmp/uav-v2-pr.md
+# 将 PR 正文写入 /tmp/uav-release-pr.md。
+gh pr create --title '更新航路规划服务' --body-file /tmp/uav-release-pr.md
 ```
 
-必要变更合入 main 并通过最新 CI 后，从实际验收的 main SHA 构建并核对镜像 ID。完成整合后删除旧本地/远端分支，保留 main、Git 提交历史与发布证据；使用第 8 节命令查询实际状态。
+GitHub CI 检查测试、真实服务调用和 Docker 发布契约。Docker 检查从同一提交构建镜像，核对原生核、提交 SHA、规划、场景、坐标、异步结果、错误和 Swagger。镜像内文档与规范需和提交一致。运行时规范需和快照一致。日志、镜像元数据和烟测结果保存在 `docker-release-contract` artifact。
 
-以下 18001 候选容器的 **8 CPU / 8 GiB 仅供第 5 节专门性能验收**，不是正式默认配额。日常发布功能核对使用上面的 `check_docker_release.sh`（2 CPU / 2 GiB）。重新运行专用性能验收时可使用：
+构建不可变镜像，并执行同一发布检查：
 
 ```bash
 UAV_BUILD_SHA=$(git rev-parse HEAD)
-docker build --build-arg GIT_SHA="$UAV_BUILD_SHA" --label org.opencontainers.image.revision="$UAV_BUILD_SHA" \
+docker build --build-arg GIT_SHA="$UAV_BUILD_SHA" \
   -t "low-altitude-path-planning:$UAV_BUILD_SHA" .
 docker image inspect "low-altitude-path-planning:$UAV_BUILD_SHA" \
   --format '{{.Id}} {{json .Config.Labels}}'
+bash tools/check_docker_release.sh "low-altitude-path-planning:$UAV_BUILD_SHA" \
+  "$UAV_BUILD_SHA" output/ci-docker
+```
+
+发布检查使用 2 CPU / 2 GiB。CI 不自动替换本机正式服务。PR 合入 main 后，核对 main 的 CI，并从 main 的实际提交构建发布镜像。
+
+## 4. 候选验证
+
+在独立端口启动已构建的镜像：
+
+```bash
 docker run -d --name low-altitude-path-planning-candidate \
-  --cpus=8 --memory=8g --memory-swap=8g -p 127.0.0.1:18001:8000 \
+  --cpus=2 --memory=2g --memory-swap=2g -p 127.0.0.1:18001:8000 \
   "low-altitude-path-planning:$UAV_BUILD_SHA"
-```
-
-如使用镜像仓库，把同一构建按实际仓库名称加 `<完整 SHA>` 标签后 push；正式机拉取并核对 digest，不用浮动 latest 代替本次验收镜像。当前本机 Compose 可直接使用上述本地 SHA 标签。
-
-## 4. 候选烟测：端口 18001
-
-正式服务在 18000 继续运行。先检查候选原生核、版本、资源与文档：
-
-```bash
-docker inspect low-altitude-path-planning-candidate \
-  --format 'image={{.Image}} cpus={{.HostConfig.NanoCpus}} memory={{.HostConfig.Memory}}'
-docker exec low-altitude-path-planning-candidate python -c \
-  'import uav_planner; from uav_planner.v2 import native; print(uav_planner.__version__, native.engine_info()); assert native.available()'
-curl --fail-with-body -sS http://127.0.0.1:18001/api/v1/health
 curl --fail-with-body -sS http://127.0.0.1:18001/api/v2/health
-curl --fail-with-body -sS http://127.0.0.1:18001/api/v2/version
-curl --fail-with-body -sS http://127.0.0.1:18001/api/v2/capabilities
-curl --fail-with-body -sS http://127.0.0.1:18001/openapi.json -o /tmp/uav-candidate-openapi.json
-docker exec low-altitude-path-planning-candidate test -s /app/docs/API.md
-docker exec low-altitude-path-planning-candidate test -s /app/docs/openapi.json
+python tools/smoke_v2.py --base-url http://127.0.0.1:18001 \
+  --expected-git-sha "$UAV_BUILD_SHA" --openapi-snapshot docs/openapi.json
 ```
 
-下面脚本用标准库进行双版本真实规划与异步完整结果烟测；不是只检验端口或 202。v2 还检查场景复用、坐标转换、验证端点和错误信封。
+烟测执行真实规划、坐标往返、场景复用、批量和异步作业，并核对验证结果与错误信封。移动轨迹验证需提交规划返回的 `motion_segments`、`trajectory_wkt` 和 `vertex_times_s`。
+
+检查候选容器的状态和资源：
 
 ```bash
-python - <<'PY'
-import json
-import time
-import urllib.error
-import urllib.request
-
-base = 'http://127.0.0.1:18001'
-def call(path, data=None):
-    body = None if data is None else json.dumps(data).encode()
-    request = urllib.request.Request(base + path, body, {'Content-Type':'application/json'})
-    with urllib.request.urlopen(request, timeout=120) as response:
-        return json.load(response)
-
-v1 = call('/api/v1/examples/single')
-planned_v1 = call('/api/v1/plan/single', v1)
-assert planned_v1['status'] == 'planned', planned_v1
-assert planned_v1['validation']['is_valid'], planned_v1
-
-example = call('/api/v2/examples/single')
-registered = call('/api/v2/scenes', example['scene'])
-scene_id = registered['scene_id']
-assert call('/api/v2/scenes/' + scene_id)['scene_version'] == registered['scene_version']
-task = example['task']
-route = call('/api/v2/plan/single', {'scene_id':scene_id, 'task':task})
-assert route['status'] == 'planned' and route['validation']['valid'], route
-checked = call('/api/v2/validate', {'scene_id':scene_id, 'task':task,
-    'trajectory_wkt':route['trajectory_wkt'], 'vertex_times_s':route['vertex_times_s'],
-    'motion_segments':route['motion_segments']})
-assert checked['valid'], checked
-missing_motion = call('/api/v2/validate', {'scene_id':scene_id, 'task':task,
-    'trajectory_wkt':route['trajectory_wkt'], 'vertex_times_s':route['vertex_times_s']})
-assert not missing_motion['valid'], missing_motion
-assert any(v['code'] == 'MOTION_MODEL_REQUIRED' for v in missing_motion['violations'])
-converted = call('/api/v2/coordinates/convert', {'coordinates':example['scene']['coordinates'],
-    'direction':'wgs84_to_local', 'alt_reference':'MSL', 'geometries_wkt':[task['start_wkt']]})
-assert len(converted['geometries_wkt']) == 1, converted
-
-for version in ('v1', 'v2'):
-    payload = call(f'/api/{version}/examples/batch')
-    submitted = call(f'/api/{version}/jobs', payload)
-    deadline = time.monotonic() + 120
-    while True:
-        job = call(submitted['poll_url'])
-        if job['status'] == 'failed':
-            raise AssertionError(job)
-        if job['status'] == 'succeeded':
-            assert job['result']['success_count'] > 0, job
-            if version == 'v2':
-                assert job['result']['failed_count'] == 0, job
-            break
-        if time.monotonic() >= deadline:
-            raise TimeoutError(job)
-        time.sleep(0.2)
-
-try:
-    call('/api/v2/plan/single', {'unexpected':True})
-    raise AssertionError('Expected HTTP 400')
-except urllib.error.HTTPError as error:
-    assert error.code == 400
-    assert json.load(error)['error']['code'] == 'INVALID_INPUT'
-print('v1/v2 candidate smoke passed')
-PY
+docker stats --no-stream low-altitude-path-planning-candidate
+docker inspect low-altitude-path-planning-candidate \
+  --format 'status={{.State.Status}} oom={{.State.OOMKilled}} restarts={{.RestartCount}} cpus={{.HostConfig.NanoCpus}} memory={{.HostConfig.Memory}}'
+docker logs low-altitude-path-planning-candidate
 ```
 
-验证移动航线必须同时提交 route.motion_segments；模型允许字段省略，但缺失会返回 valid:false、MOTION_MODEL_REQUIRED。POINT Z 单个时刻的零持续时间静止状态可省略；持续等待用重复坐标 LINESTRING Z、递增时间和 hover 原语。发布必须核对镜像内规范快照和运行 `/openapi.json` 相同，不只检查 Markdown 文件存在。
+## 5. 性能与完整数据
 
-## 5. 历史固定性能验收与复现
+在正式配额下重跑完整功能：
 
-历史性能验收条件为：场景预注册后，三套 strict/mixed/free，各 1000 个任务各 10 轮，在专用候选容器 **8 CPU / 8 GiB** 上要求每轮全部成功、独立验证通过且完整 HTTP/JSON ≤10 秒。重跑同一性能门槛仍须使用该配额；正式默认 **2 CPU / 2 GiB 不承诺 1000 任务 10 秒达标**，其实际耗时单独记录。冻结输入、SHA 校验、参考可行性与 ALL20 反事实检查由 runner 执行；不能换掉失败输入、删规则或复用任务答案。
+```bash
+python tools/benchmark_v2.py --functional-only --base-url http://127.0.0.1:18001 \
+  --scales 1000 --repeats 1 --output output/v2-functional
+```
+
+保存完整请求、响应、输入校验和、场景版本、成功数量、冲突、阶段耗时与输出大小。服务内存使用容器监测值。客户端 RSS 另行记录。
+
+历史 10 秒性能验收使用专用 8 CPU / 8 GiB 容器。strict/mixed/free 三套各运行 10 轮，每轮 1000 条路线。复现时使用相同资源和冻结输入：
 
 ```bash
 python tools/benchmark_v2.py --validate-only
 python tools/benchmark_v2.py --base-url http://127.0.0.1:18001 \
-  --repeats 10 --scales 10 100 1000 --output output/v2_benchmarks/docker-http
-docker stats --no-stream low-altitude-path-planning-candidate
-docker logs low-altitude-path-planning-candidate
+  --repeats 10 --scales 1000 --output output/v2-performance
 ```
 
-计时包括请求创建、真实规划与完整返回 JSON；场景注册另计，独立验算在计时外。runner 报告中的 HTTP RSS 属于本地验算进程，服务内存需从容器监测另存。保留每轮结果、input/result SHA、场景版本、成功/失败数、运动学证书数、冲突数、min/median/p95/max、输出字节数、镜像 ID 与资源限制。异步提交的耗时不满足这一门槛。
+2026-10-16 的 30 轮记录见 [`../reports/v2-20261016/PERFORMANCE.md`](../reports/v2-20261016/PERFORMANCE.md)。这些记录按当时版本保存。当前版本的测试和实际耗时以本次输出为准。
 
-| 历史验收项目 | 当次已归档结果 |
-|------|------|
-| 完整功能回归 | 552 项通过，40.77 s |
-| 候选镜像双版本烟测 | 通过；[`candidate-smoke.json`](../reports/v2-20261016/candidate-smoke.json) |
-| 8 CPU / 8 GiB 三套十轮 HTTP | 30/30 轮通过；strict/mixed/free 最大 1.454/4.541/1.191 s，每轮 1000/1000 成功、证书通过、冲突 0 |
-| 服务资源 | cgroup memory.peak 281.72 MiB，进程 VmHWM 327.51 MiB，OOM 0；[`service-resources.json`](../reports/v2-20261016/service-resources.json) |
-| 正式替换后双版本复测 | 通过，2026-10-16T11:03:22Z；[`production-smoke.json`](../reports/v2-20261016/production-smoke.json) |
-| GitHub PR #8 历史记录 | 历史验收报告提交与 Ready 已记录；当前 main 与分支状态通过第 8 节命令核对 |
+完整测试输入与输出见 [`../../tests/data/README.md`](../../tests/data/README.md)。新采集使用独立目录，保存完整 JSON 和校验和。
 
-性能、全部 30 轮与阶段统计见 [`../reports/v2-20261016/PERFORMANCE.md`](../reports/v2-20261016/PERFORMANCE.md)。历史被测并曾发布的镜像为 `low-altitude-path-planning:c14b18677a00abf20b8500f827417dd35aaa0d27`，ID `sha256:60479a4fd6be59b40defd8e7b146a98522d649b04d134e901d0e8aacd42ada42`，当次配额为 8 CPU / 8 GiB，源码与 OpenAPI 快照一致。CI 对当次被测代码的 test（3m37s）与 visualize（35s）通过，手动 stress job 按设计跳过。这些历史记录不表示相关镜像仍在本地，也不能代替本轮 main 与 2 CPU / 2 GiB 正式服务的验证。
+## 6. 正式切换
 
-## 6. 排空与正式切换
-
-先在已有平台/代理处暂停新的同步规划和异步提交，再等待两个版本的 pending/running 均为 0；同时确认平台没有尚未完成的同步调用。服务没有内置维护开关，不存在可调用的“自动排空”端点。
+暂停上游新提交。等待同步请求完成，并确认 pending/running 作业均为 0。保存完整作业结果和原始场景 JSON。
 
 ```bash
-curl --fail-with-body -sS http://127.0.0.1:18000/api/v1/health/jobs
 curl --fail-with-body -sS http://127.0.0.1:18000/api/v2/health/jobs
 ```
 
-若当前旧 v1 镜像没有 `/api/v2/health/jobs`，404 表示没有 v2 作业表；后续 v2→v2 发布必须排空两套表。不要仅查看 v1 健康后就中断 v2 作业。
-
-应用关闭流程停止两版本接纳、将尚未执行的 pending 作业标为 JOB_CANCELLED，并等待 running 作业结束。它不替代切换前的上游暂停与排空；只有看到两套 pending/running 均为 0，才进入正常发布切换。
-
-正式配额的功能、打包与接口烟测通过后，用**验收过的同一 SHA 镜像**切换 Compose，保持 **2 CPU / 2 GiB** 和正式回环端口：
+使用验收通过的 main 镜像切换服务。将 `UAV_RELEASE_SHA` 设为该镜像的完整提交 SHA：
 
 ```bash
-UAV_RELEASE_SHA=$(git rev-parse HEAD)
+: "${UAV_RELEASE_SHA:?Set the tested main Git SHA}"
 UAV_IMAGE_TAG="$UAV_RELEASE_SHA" docker compose config
 UAV_IMAGE_TAG="$UAV_RELEASE_SHA" docker compose up -d --no-build --force-recreate app
-curl --fail-with-body -sS http://127.0.0.1:18000/api/v1/health
-curl --fail-with-body -sS http://127.0.0.1:18000/api/v2/health
-curl --fail-with-body -sS http://127.0.0.1:18000/api/v2/version
+python tools/smoke_v2.py --base-url http://127.0.0.1:18000 \
+  --expected-git-sha "$UAV_RELEASE_SHA" --openapi-snapshot docs/openapi.json
 docker inspect low-altitude-path-planning-api \
   --format 'image={{.Image}} cpus={{.HostConfig.NanoCpus}} memory={{.HostConfig.Memory}}'
 ```
 
-如果当前 HEAD 已变化，将 `UAV_RELEASE_SHA` 设为第 3 节记录并验收通过的原 SHA；不能重新取一个未经测试的镜像。生产重复第 4 节烟测（base 改为 18000），重新注册平台保存的原始场景 JSON，然后恢复流量。重启会丢失内存中的场景与历史作业，旧 scene_id 不可作为恢复数据源。
-
-确认正式运行后再删除候选容器；保留 Git SHA、构建配置与发布证据。旧镜像可按核对后的精确 ID 清理，不要求为回滚继续保留：
+核对资源为 `NanoCpus=2000000000`、`Memory=2147483648`。重新注册场景，并恢复上游提交。确认正式服务正常后删除候选容器：
 
 ```bash
 docker stop low-altitude-path-planning-candidate
 docker rm low-altitude-path-planning-candidate
 ```
 
-## 7. 按 Git SHA 重新构建回滚版本
+保存发布 SHA、镜像 ID、构建配置和验证结果。旧镜像可按精确 ID 清理。回滚按提交重新构建。
 
-回滚不依赖本地旧镜像。先暂停新提交并尽可能排空，保存故障日志和当前镜像 ID；选择含完整 v2 Dockerfile、依赖与 `GIT_SHA` 构建参数的 Git SHA，在候选端口通过烟测后，再按 **2 CPU / 2 GiB** 切换。已知可重建的历史 v2 基准为 `c14b18677a00abf20b8500f827417dd35aaa0d27`。旧 v1 镜像标签 `9816f8b` 对应主线提交没有 Dockerfile，不能直接作为下列构建命令的目标。重建产生的新镜像 ID 必须重新记录，不要求与历史镜像 ID 相同。
+## 7. 回滚
+
+暂停新提交，并等待现有作业完成。保存日志和镜像 ID。选择已验收的接口版本，在候选端口重新构建并验证。
 
 ```bash
-docker logs low-altitude-path-planning-api > /tmp/uav-v2-failed-container.log 2>&1
-# 先将 UAV_ROLLBACK_SHA 设置为已确认的完整 Git SHA。
+docker logs low-altitude-path-planning-api > /tmp/uav-failed-container.log 2>&1
 : "${UAV_ROLLBACK_SHA:?Set the verified rollback Git SHA}"
 git cat-file -e "${UAV_ROLLBACK_SHA}^{commit}"
-git cat-file -e "${UAV_ROLLBACK_SHA}:Dockerfile"
 UAV_ROLLBACK_DIR=$(mktemp -d /tmp/uav-rollback.XXXXXX)
 git worktree add --detach "$UAV_ROLLBACK_DIR" "$UAV_ROLLBACK_SHA"
 docker build --build-arg GIT_SHA="$UAV_ROLLBACK_SHA" \
   -t "low-altitude-path-planning:$UAV_ROLLBACK_SHA" "$UAV_ROLLBACK_DIR"
-docker image inspect "low-altitude-path-planning:$UAV_ROLLBACK_SHA" --format '{{.Id}}'
 git worktree remove "$UAV_ROLLBACK_DIR"
-# 先按相应版本在 18001 完成烟测，再执行正式切换。
-UAV_IMAGE_TAG="$UAV_ROLLBACK_SHA" docker compose config
-UAV_IMAGE_TAG="$UAV_ROLLBACK_SHA" docker compose up -d --no-build --force-recreate app
-curl --fail-with-body -sS http://127.0.0.1:18000/api/v1/health
-curl --fail-with-body -sS http://127.0.0.1:18000/api/v1/version
-docker inspect low-altitude-path-planning-api \
-  --format 'image={{.Image}} cpus={{.HostConfig.NanoCpus}} memory={{.HostConfig.Memory}}'
 ```
 
-以上步骤适用于完整 v2 部署提交，沿用双版本健康检查与完整烟测。场景与作业内存无法跨版本恢复，重新注册平台保存的原始场景并验证真实规划后再恢复流量。
+按第 4 节验证候选，再按第 6 节切换。使用所选版本对应的规范快照检查接口。重启后重新注册已保存的场景。
 
-## 8. 当前运行版本与清理核对
-
-当前状态通过 Git、运行服务与 Docker 查询，不以历史报告中的 SHA 代替实时状态，也不要求为每次部署追加一个写死最新 SHA 的文档提交：
+## 8. 当前状态核对
 
 ```bash
 git rev-parse main
@@ -271,21 +176,21 @@ git branch -avv
 git ls-remote --heads origin
 curl --fail-with-body -sS http://127.0.0.1:18000/api/v2/version
 docker inspect low-altitude-path-planning-api \
-  --format 'image={{.Image}} cpus={{.HostConfig.NanoCpus}} memory={{.HostConfig.Memory}}'
+  --format 'image={{.Image}} oom={{.State.OOMKilled}} restarts={{.RestartCount}} cpus={{.HostConfig.NanoCpus}} memory={{.HostConfig.Memory}}'
 docker image ls --no-trunc low-altitude-path-planning
 ```
 
-必要变更整合后核对 main 与运行 revision，正式配额应为 `NanoCpus=2000000000`、`Memory=2147483648`。分支清理后核对本地及远端剩余分支，镜像清理后核对仍在用的镜像 ID；历史冻结输入和原始验收报告保持不变。PR/CI 的实际合并、测试与部署结果以对应检查和当次操作输出为准。
+合并必要变更后，清理已整合的开发分支和旧镜像。保留历史输入与原始报告。版本和资源使用上述命令实时核对。
 
 ## 9. 排错
 
-| 现象 | 证据与处理 |
+| 现象 | 检查与处理 |
 |------|------|
-| v1 health 正常而 v2 degraded | 查看 v2 version 的 engine.error；检查 wheel 中扩展和 Python ABI，不以 v1 health 代替 v2 就绪 |
-| scene/job 不存在 | 检查是否重启、被淘汰或误用多进程；重提原始 Scene，历史作业从平台保存的结果恢复 |
-| 高度转换失败 | 补正确地形、水准面或位置/时间范围内唯一气压修正；不改为猜测基准 |
-| strict 失败 | 检查航路高度、全宽、有效期、方向、真实连接和显式接驳；不自动改 free |
-| 规则缺引用或 nodata | 补版本化空间场、有效时段和覆盖范围；不删除规则来通过验收 |
-| 容器 HTTP 比 SDK 慢 | 对比完整 JSON 大小、CPU throttling、序列化和并发作业；按同一冻结输入定位 |
-| 容器 OOM / 抢占 CPU | 核对正式 2 CPU / 2 GiB 限制、作业积压和服务 RSS；专用性能候选另核对 8 CPU / 8 GiB；不能只看客户端 RSS |
-| 代理超时 | 使用异步完整结果轮询或按业务调整代理超时；性能验收仍计完整规划返回 |
+| health 为 degraded | 查看 version 的 engine.error；检查原生扩展、Python ABI 和安装结果 |
+| scene/job 不存在 | 检查服务是否重启；重新注册原始场景，从已保存文件读取结果 |
+| 高度转换失败 | 补充地形、水准面或对应位置与时间的气压修正 |
+| strict 失败 | 检查航路高度、宽度、有效期、方向、连接和接驳 |
+| 规则引用或场数据缺失 | 补充引用、版本、有效期和覆盖范围 |
+| HTTP 耗时高 | 检查 JSON 大小、CPU throttling、序列化和作业积压 |
+| RESOURCE_EXHAUSTED / OOM | 检查容器 OOMKilled、RestartCount、实际内存和日志 |
+| 代理超时 | 使用异步轮询，或调整代理超时 |

@@ -16,7 +16,6 @@ from shapely.geometry import LineString, Point
 from .rules import LOCAL_TZ
 
 
-MAX_WINDOWS = 10
 _EDGE_GUARD = 1e-6
 
 
@@ -133,4 +132,4 @@ def departure_windows(compiled, task, motion, lower_abs: float, upper_abs: float
         windows=_intersect(windows,_merge(allowed))
         if not windows:
             break
-    return windows[:MAX_WINDOWS]
+    return windows

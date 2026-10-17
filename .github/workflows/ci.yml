@@ -18,152 +18,104 @@ jobs:
   test:
     runs-on: ubuntu-latest
     timeout-minutes: 30
-
+    env:
+      UAV_GIT_SHA: ${{ github.sha }}
     steps:
       - uses: actions/checkout@v4
 
-      - name: 保存本次原始输入及提交版本
+      - name: 保存冻结输入及提交版本
         run: |
-          mkdir -p /tmp/ci-planning-data
-          cp -R input /tmp/ci-planning-data/input
-          printf '{"git_sha":"%s","run_id":"%s"}\n' "$GITHUB_SHA" "$GITHUB_RUN_ID" > /tmp/ci-planning-data/context.json
+          mkdir -p /tmp/ci-v2/input
+          cp -R input/v2_benchmarks /tmp/ci-v2/input/v2_benchmarks
+          printf '{"git_sha":"%s","run_id":"%s"}\n' "$GITHUB_SHA" "$GITHUB_RUN_ID" > /tmp/ci-v2/context.json
 
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
           cache: pip
 
-      - name: 安装依赖
+      - name: 安装当前 SDK、接口与测试依赖
         run: |
           python -m pip install --upgrade pip
-          pip install -e ".[all]" -c requirements-runtime.lock
+          pip install -e ".[server,test]" -c requirements-runtime.lock
 
       - name: 导入及原生核冒烟测试
         run: |
-          python -c "import numpy, scipy, matplotlib, plotly, fastapi, uvicorn; from uav_planner.v2 import native; assert native.available(); print(native.engine_info())"
+          python -c "import numpy, scipy, pydantic, shapely, pyproj, fastapi, uvicorn; from uav_planner.v2 import native; assert native.available(); print(native.engine_info())"
 
       - name: 单元测试
         run: python -m pytest tests/ -v
 
-      - name: 单机规划端到端
-        run: python tools/plan_single.py --input-dir /tmp/ci-planning-data/input --output-dir /tmp/ci-planning-data/output/single
-
-      - name: 多机规划端到端（含冲突检测与合法性验证）
-        run: python tools/plan_multi.py --input-dir /tmp/ci-planning-data/input --output-dir /tmp/ci-planning-data/output/multi --conflict-check --validate --workers 2
-
-      - name: 小规模压测
-        run: python tools/run_stress_test.py --data-dir /tmp/ci-planning-data/input --scales 10 50 --seed 20260906 --workers 2 --output /tmp/ci-planning-data/output/stress
-
-      - name: REST 服务冒烟（真起服务 + curl，不走 TestClient）
+      - name: v2 实际 HTTP 与三套小规模功能基准
         run: |
-          python serve.py --host 127.0.0.1 --port 8000 > /tmp/ci-server.log 2>&1 &
+          python serve.py --host 127.0.0.1 --port 8000 > /tmp/ci-v2/server.log 2>&1 &
           SERVER_PID=$!
           trap 'kill "$SERVER_PID" 2>/dev/null || true' EXIT
-          # 最多等 30 秒就绪
           for i in $(seq 1 30); do
-            curl -sf http://127.0.0.1:8000/api/v1/health > /dev/null && break
+            curl -sf http://127.0.0.1:8000/api/v2/health > /dev/null && break
+            kill -0 "$SERVER_PID"
             sleep 1
           done
-          curl --fail --silent --show-error http://127.0.0.1:8000/api/v1/health
-          python tools/smoke_v2.py --base-url http://127.0.0.1:8000
+          curl --fail --silent --show-error http://127.0.0.1:8000/api/v2/health > /tmp/ci-v2/health.json
+          python tools/smoke_v2.py --base-url http://127.0.0.1:8000 --expected-git-sha "$GITHUB_SHA" --archive-dir /tmp/ci-v2/output/http-smoke > /tmp/ci-v2/smoke.json
+          python tools/benchmark_v2.py --base-url http://127.0.0.1:8000 --scales 10 100 --repeats 1 --functional-only --input-directory /tmp/ci-v2/input/v2_benchmarks --output /tmp/ci-v2/output/benchmarks > /tmp/ci-v2/benchmark.log
 
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: planning-inputs-and-results
-          path: /tmp/ci-planning-data/
-
-      - uses: actions/upload-artifact@v4
-        if: failure()
-        with:
-          name: rest-service-failure-log
-          path: /tmp/ci-server.log
+          name: v2-inputs-and-results
+          path: /tmp/ci-v2/
 
   docker:
     name: Docker 镜像与发布契约
     needs: test
     runs-on: ubuntu-latest
     timeout-minutes: 20
-
     steps:
       - uses: actions/checkout@v4
-
       - name: 构建不可变镜像
         run: docker build --build-arg GIT_SHA="$GITHUB_SHA" -t "uav-ci:$GITHUB_SHA" .
-
-      - name: 启动实际镜像并验证 v1/v2、异步、Swagger 和文档
+      - name: 验证实际 v2 镜像、异步、Swagger、文档和 v1 移除
         run: bash tools/check_docker_release.sh "uav-ci:$GITHUB_SHA" "$GITHUB_SHA" output/ci-docker
-
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: docker-release-contract
           path: output/ci-docker/
 
-  stress:
-    # 万级规模压测手动触发（耗时约 10 分钟）
-    runs-on: ubuntu-latest
-    timeout-minutes: 90
+  benchmark:
+    # Shared-runner functionality only; no dedicated-host 10s performance claim.
     if: github.event_name == 'workflow_dispatch'
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: 保存压测原始输入及提交版本
-        run: |
-          mkdir -p output/stress
-          cp -R input output/stress/input
-          printf '{"git_sha":"%s","run_id":"%s"}\n' "$GITHUB_SHA" "$GITHUB_RUN_ID" > output/stress/context.json
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-          cache: pip
-
-      - run: pip install -e ".[all]" -c requirements-runtime.lock
-
-      - name: 万级规模压测
-        run: |
-          python tools/run_stress_test.py \
-            --data-dir ./output/stress/input \
-            --scales 10 100 1000 10000 \
-            --seed 20260906 --workers 4 --compare \
-            --output ./output/stress
-
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: stress-results
-          path: output/stress/
-
-  visualize:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
-
+    timeout-minutes: 30
+    env:
+      UAV_GIT_SHA: ${{ github.sha }}
     steps:
       - uses: actions/checkout@v4
-
-      - name: 保存可视化输入及提交版本
+      - name: 保存完整输入及提交版本
         run: |
-          mkdir -p /tmp/ci-viz
-          cp -R input /tmp/ci-viz/input
-          printf '{"git_sha":"%s","run_id":"%s"}\n' "$GITHUB_SHA" "$GITHUB_RUN_ID" > /tmp/ci-viz/context.json
-
+          mkdir -p /tmp/ci-v2-large/input
+          cp -R input/v2_benchmarks /tmp/ci-v2-large/input/v2_benchmarks
+          printf '{"git_sha":"%s","run_id":"%s"}\n' "$GITHUB_SHA" "$GITHUB_RUN_ID" > /tmp/ci-v2-large/context.json
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
           cache: pip
-
-      - run: pip install -e ".[viz]" -c requirements-runtime.lock
-
-      - name: 生成样例规划结果
-        run: python tools/plan_single.py --input-dir /tmp/ci-viz/input --output-dir /tmp/ci-viz
-
-      - name: 可视化冒烟测试
-        run: python tools/visualize.py --input /tmp/ci-viz
-
+      - run: pip install -e ".[server,test]" -c requirements-runtime.lock
+      - name: 三套各 1000 任务的实际 HTTP 功能验证与完整结果归档
+        run: |
+          python serve.py --host 127.0.0.1 --port 8000 > /tmp/ci-v2-large/server.log 2>&1 &
+          SERVER_PID=$!
+          trap 'kill "$SERVER_PID" 2>/dev/null || true' EXIT
+          for i in $(seq 1 30); do
+            curl -sf http://127.0.0.1:8000/api/v2/health > /dev/null && break
+            kill -0 "$SERVER_PID"
+            sleep 1
+          done
+          curl --fail --silent --show-error http://127.0.0.1:8000/api/v2/health > /tmp/ci-v2-large/health.json
+          python tools/benchmark_v2.py --base-url http://127.0.0.1:8000 --scales 1000 --repeats 1 --functional-only --input-directory /tmp/ci-v2-large/input/v2_benchmarks --output /tmp/ci-v2-large/output/benchmarks > /tmp/ci-v2-large/benchmark.log
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: visualizations
-          path: /tmp/ci-viz/
+          name: v2-large-functional-inputs-and-results
+          path: /tmp/ci-v2-large/

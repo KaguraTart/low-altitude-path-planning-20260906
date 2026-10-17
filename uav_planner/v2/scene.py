@@ -9,7 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from collections import OrderedDict
 from datetime import datetime, timedelta
-from math import acos, atan2, degrees, isfinite, pi, sin
+from math import acos, atan2, ceil, degrees, isfinite, pi, sin
 from typing import Any
 
 import numpy as np
@@ -326,8 +326,6 @@ class CompiledScene:
     def _rule_geometry(self, key: tuple, factory: Any) -> BaseGeometry:
         if key not in self._rule_geometry_cache:
             self._rule_geometry_cache[key] = factory()
-            while len(self._rule_geometry_cache) > 256:
-                self._rule_geometry_cache.popitem(last=False)
         else:
             self._rule_geometry_cache.move_to_end(key)
         return self._rule_geometry_cache[key]
@@ -336,8 +334,6 @@ class CompiledScene:
         key = (volume.id, id(volume), round(distance, 9))
         if key not in self._buffer_cache:
             self._buffer_cache[key] = volume.geometry.buffer(distance) if distance else volume.geometry
-            while len(self._buffer_cache) > 512:
-                self._buffer_cache.popitem(last=False)
         else:
             self._buffer_cache.move_to_end(key)
         return self._buffer_cache[key]
@@ -599,17 +595,19 @@ class CompiledScene:
         low = np.array([self.bounds.x_min, self.bounds.y_min, self.bounds.z_min], float)
         high = np.array([self.bounds.x_max, self.bounds.y_max, self.bounds.z_max], float)
         resolution = np.asarray(self.resolution, float)
-        shape = np.ceil((high - low) / resolution).astype(int) + 1
-        if int(np.prod(shape)) > 4_000_000:
-            invalid("Grid exceeds configured 3D expansion budget", cells=int(np.prod(shape)))
+        # Python integers avoid wrapping a large grid's dimensions or product.
+        # NumPy reports the actual allocation/representation failure, if any.
+        shape = tuple(ceil((float(hi) - float(lo)) / float(step)) + 1
+                      for lo, hi, step in zip(low, high, resolution))
         margin, vertical = self.clearance(profile)
         selected = self.rules.selected(task)
-        cache_key = (tuple(shape), margin, vertical, round(float(time_s), 6), tuple(str(get(r, "id")) for r in selected), get(task, "route_mode"))
+        cache_key = (shape, margin, vertical, round(float(time_s), 6), tuple(str(get(r, "id")) for r in selected), get(task, "route_mode"))
         cache = self._blocked_cache
         if cache_key in cache:
             cache.move_to_end(cache_key)
             return cache[cache_key]
-        blocked = np.zeros(tuple(shape), dtype=bool)
+        blocked = np.zeros(shape, dtype=bool)
+        shape_array = np.asarray(shape, dtype=np.intp)
         half_horizontal = float(np.linalg.norm(resolution[:2])) / 2
         half_vertical = resolution[2] / 2
 
@@ -618,7 +616,7 @@ class CompiledScene:
                 return
             xmin, ymin, xmax, ymax = geometry.bounds
             begin = np.maximum(0, np.floor((np.array([xmin, ymin, lo]) - low) / resolution).astype(np.int64))
-            finish = np.minimum(shape - 1, np.ceil((np.array([xmax, ymax, hi]) - low) / resolution).astype(np.int64))
+            finish = np.minimum(shape_array - 1, np.ceil((np.array([xmax, ymax, hi]) - low) / resolution).astype(np.int64))
             if np.any(begin > finish):
                 return
             xi, yi, zi = [np.arange(begin[d], finish[d] + 1) for d in range(3)]
@@ -680,11 +678,7 @@ class CompiledScene:
                         raster(cell.geometry.buffer(-margin - half_horizontal), max(low[2], cell.min_altitude + vertical + half_vertical), min(high[2], cell.max_altitude - vertical - half_vertical), allowed)
             blocked |= ~allowed
         result = np.argwhere(blocked).astype(np.int64, copy=False)
-        # Retained raster payload is capped at 24 MiB across at most 16 contexts.
-        if result.nbytes <= 24 * 1024 * 1024:
-            cache[cache_key] = result
-            while len(cache) > 16 or sum(v.nbytes for v in cache.values()) > 24 * 1024 * 1024:
-                cache.popitem(last=False)
+        cache[cache_key] = result
         return result
 
     def direction_allowed(self, rule: Any, p0: np.ndarray, p1: np.ndarray) -> bool:

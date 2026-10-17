@@ -40,7 +40,7 @@ def test_complete_recorded_requests_and_responses(manifest_path):
     assert manifest["status"] == "passed"
     assert manifest["purpose"] == "functional_replay_capture"
     assert {case["name"] for case in manifest["cases"]} >= {
-        "v1_single", "v1_batch", "v2_single_strict", "v2_single_prefer", "v2_single_free",
+        "v2_single_strict", "v2_single_prefer", "v2_single_free",
         "v2_batch", "v2_coordinates_to_local", "v2_coordinates_to_wgs84", "v2_validate"}
     assert {suite["suite"] for suite in manifest["benchmarks"]} == {"strict", "mixed", "free"}
     for suite in manifest["benchmarks"]:

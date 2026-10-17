@@ -17,7 +17,11 @@ from shapely.geometry.base import BaseGeometry
 def _finite_number(value: object) -> float:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise ValueError("must be a JSON number, not a string or boolean")
-    if not math.isfinite(value):
+    try:
+        finite = math.isfinite(value)
+    except OverflowError:
+        finite = False
+    if not finite:
         raise ValueError("must be finite")
     return float(value)
 
@@ -55,6 +59,8 @@ class StrictModel(BaseModel):
 def validated_wkt(value: str, *, kind: str | None = None, require_z: bool = False) -> str:
     try:
         geometry = from_wkt(value)
+    except MemoryError:
+        raise
     except Exception as exc:
         raise ValueError("invalid WKT geometry") from exc
     if geometry.is_empty or geometry.geom_type == "GeometryCollection":
@@ -150,7 +156,7 @@ class CoordinateSpec(StrictModel):
     origin_lon: Annotated[Number, Field(ge=-180, le=180)]
     origin_lat: Annotated[Number, Field(ge=-90, le=90)]
     origin_alt_msl: Number = 0
-    max_radius_m: Annotated[Positive, Field(le=50000)] = 50000
+    max_radius_m: Positive = 50000
     terrain_msl_m: Number | None = None
     geoid_separation_m: Number | None = None
     terrain_source: StrictStr | None = None
@@ -447,7 +453,7 @@ class Scene(StrictModel):
     coordinates: CoordinateSpec
     bounds: Bounds3D
     resolution: tuple[Positive, Positive, Positive] = (25, 25, 10)
-    horizon_s: Positive = Field(default=3600,le=86400)
+    horizon_s: Positive = 3600
     time_origin: Timestamp
     airways: list[Airway] = Field(default_factory=list)
     connectors: list[Connector] = Field(default_factory=list)
@@ -519,7 +525,7 @@ class Task(StrictModel):
     departure_time: Timestamp
     alt_reference: AltitudeReference
     route_mode: RouteMode = "strict"
-    waypoints: list[Waypoint] = Field(default_factory=list,max_length=256)
+    waypoints: list[Waypoint] = Field(default_factory=list)
     earliest_arrival: Timestamp | None = None
     latest_arrival: Timestamp | None = None
     profile_id: StrictStr = "dji_mini_4_pro"

@@ -2,7 +2,7 @@
 
 The local horizontal axes are east/north metres in an azimuthal equidistant
 projection. The local vertical axis is ``MSL - origin_alt_msl``. AEQD is used
-only inside the declared radius, capped at 50 km. No datum conversion is guessed.
+only inside the caller's declared radius. No datum conversion is guessed.
 """
 
 from __future__ import annotations
@@ -170,6 +170,8 @@ class CoordinateFrame:
             if getattr(geometry, "has_m", False):
                 raise ValueError("M coordinates are unsupported; use explicit Z altitude")
             return geometry
+        except MemoryError:
+            raise
         except Exception as exc:
             raise CoordinateError("INVALID_COORDINATE", str(exc)) from exc
 

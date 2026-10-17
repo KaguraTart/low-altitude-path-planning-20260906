@@ -141,28 +141,11 @@ def capture(base_url: str, directory: Path, container: str | None, repeats: int 
                 "memory_swap_bytes": info["HostConfig"]["MemorySwap"],
             }
         recorder.write("environment.json", encoded(environment))
-        for source in sorted((ROOT / "input").rglob("*.json")):
+        recorder.exchange("service_health", "GET", "/api/v2/health")
+        recorder.exchange("service_capabilities", "GET", "/api/v2/capabilities")
+        for source in sorted((ROOT / "input" / "v2_benchmarks").rglob("*.json")):
             recorder.write("source_inputs/" + source.relative_to(ROOT / "input").as_posix(),
                            source.read_bytes())
-        legacy = ["output/deployment/verification.json", "output/pre-main-job-result.json",
-                  "output/v2_acceptance/pre-release-jobs/dedc5258f94949d8.json"]
-        for index, name in enumerate(legacy, 1):
-            source = ROOT / name
-            if source.exists():
-                target = f"original_outputs/{index:02d}_{source.stem}_output.json"
-                recorder.write(target, source.read_bytes())
-                recorder.manifest["original_outputs"].append({
-                    "source": name, "output": target, "input_available": False,
-                    "provenance": "previously_saved_response_copied_without_changes"})
-
-        single_v1 = recorder.exchange("v1_single_example", "GET", "/api/v1/examples/single")
-        result = recorder.exchange("v1_single", "POST", "/api/v1/plan/single", single_v1)
-        assert result["status"] == "planned", result
-        batch_v1 = recorder.exchange("v1_batch_example", "GET", "/api/v1/examples/batch")
-        result = recorder.exchange("v1_batch", "POST", "/api/v1/plan/batch", batch_v1)
-        assert result["success_count"] == len(batch_v1["tasks"]), result
-        recorder.async_case("v1", batch_v1)
-
         single_v2 = recorder.exchange("v2_single_example", "GET", "/api/v2/examples/single")
         strict_result = None
         for mode in ("strict", "prefer", "free"):

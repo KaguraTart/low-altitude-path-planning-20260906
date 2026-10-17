@@ -1,5 +1,6 @@
 """Deployed smoke checks reject revision, schema, and Swagger drift."""
 from copy import deepcopy
+import hashlib
 from io import BytesIO
 import json
 from urllib.error import HTTPError
@@ -20,7 +21,8 @@ class FakeAPI:
     def __init__(self):
         self.sha = SHA
         self.native_available = True
-        self.old_distance = 100
+        self.distance = 100
+        self.retired_status = 404
         self.docs_status = 200
         self.docs = "<html><script>SwaggerUIBundle({url: '/openapi.json'})</script></html>"
         self.paths = []
@@ -37,6 +39,10 @@ class FakeAPI:
         path = urlsplit(request.full_url).path
         self.paths.append(path)
         body = json.loads(request.data) if request.data is not None else None
+        if path.startswith("/api/v1/"):
+            if self.retired_status != 200:
+                raise HTTPError(request.full_url,self.retired_status,"Retired",{},BytesIO(b'{"detail":"Not Found"}'))
+            return BytesIO(b'{"status":"ok"}')
         if path == "/docs":
             if self.docs_status != 200:
                 raise HTTPError(request.full_url, self.docs_status, "Unavailable", {}, BytesIO())
@@ -48,14 +54,12 @@ class FakeAPI:
             result = {"geometries_wkt": ["POINT Z (100 100 80)" if body["direction"] == "wgs84_to_local" else self.point]}
         else:
             responses = {
-                "/api/v1/health": {"status": "ok"},
                 "/api/v2/health": {"status": "ok", "native_available": self.native_available},
                 "/api/v2/version": {"api_version": "2.0.0", "engine": {"git_sha": self.sha}},
                 "/openapi.json": self.spec,
-                "/api/v1/examples/single": {"id": "v1"},
-                "/api/v1/plan/single": {"status": "planned", "route": {"metrics": {"total_distance_m": self.old_distance}}},
                 "/api/v2/examples/single": self.sample,
                 "/api/v2/plan/single": {"status": "planned", "validation": {"valid": True},
+                                         "metrics": {"distance_m": self.distance},
                                          "trajectory_wkt": self.point, "vertex_times_s": [0], "motion_segments": []},
                 "/api/v2/validate": {"valid": True},
                 "/api/v2/scenes": {"scene_id": "scene-one", "scene_version": "v1"},
@@ -92,7 +96,7 @@ def test_expected_revision_snapshot_and_swagger_accept_correct_service(api, tmp_
     assert "/docs" in api.paths
 
 
-def test_old_smoke_call_remains_supported(api):
+def test_default_smoke_checks_current_service(api):
     assert smoke_v2.smoke(BASE)["status"] == "passed"
 
 
@@ -101,10 +105,53 @@ def test_wrong_revision_is_rejected(api):
         smoke_v2.smoke(BASE, expected_git_sha="b" * 40)
 
 
-def test_v1_planned_route_must_still_have_positive_distance(api):
-    api.old_distance = 0
+def test_v2_example_must_have_positive_distance(api):
+    api.distance = 0
     with pytest.raises(AssertionError, match="positive distance"):
         smoke_v2.smoke(BASE)
+
+
+@pytest.mark.parametrize("status", [200, 503])
+def test_retired_routes_must_return_404(api, status):
+    api.retired_status = status
+    with pytest.raises(AssertionError, match="v1"):
+        smoke_v2.smoke(BASE)
+
+
+@pytest.mark.parametrize("path", ["/api/v1/health", "/status"])
+def test_openapi_must_only_contain_v2_routes(api, path):
+    api.spec["paths"][path] = {"get": {}}
+    with pytest.raises(AssertionError, match="only v2"):
+        smoke_v2.smoke(BASE)
+
+
+def test_http_archive_preserves_full_payloads_and_expected_errors(api, tmp_path):
+    archive = tmp_path / "http"
+    result = smoke_v2.smoke(BASE, archive_directory=archive)
+    assert result["retired_v1_routes_absent"] is True
+    manifest = json.loads((archive / "manifest.json").read_text())
+    assert manifest["status"] == "passed"
+    assert sum(case["http_status"] == 404 for case in manifest["exchanges"]) == 10
+    assert any(case["http_status"] == 400 for case in manifest["exchanges"])
+    for case in manifest["exchanges"]:
+        for side in ("input", "output"):
+            record = case[side]
+            data = (archive / record["path"]).read_bytes()
+            assert len(data) == record["bytes"]
+            assert hashlib.sha256(data).hexdigest() == record["sha256"]
+        if case["endpoint"] == "/docs":
+            assert (archive / case["output"]["path"]).read_text() == api.docs
+
+
+def test_failed_contract_archive_keeps_observed_payloads(api, tmp_path):
+    api.distance = 0
+    archive = tmp_path / "http"
+    with pytest.raises(AssertionError, match="positive distance"):
+        smoke_v2.smoke(BASE, archive_directory=archive)
+    manifest = json.loads((archive / "manifest.json").read_text())
+    assert manifest["status"] == "failed"
+    actual = manifest["exchanges"][-1]
+    assert json.loads((archive / actual["output"]["path"]).read_bytes())["metrics"]["distance_m"] == 0
 
 
 def test_nested_openapi_drift_is_rejected(api, tmp_path):

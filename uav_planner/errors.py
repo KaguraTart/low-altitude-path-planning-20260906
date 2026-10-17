@@ -41,11 +41,11 @@ class ErrorCode:
     INTERNAL_ERROR = "INTERNAL_ERROR"
     """未预期的内部异常"""
 
-    JOB_QUEUE_FULL = "JOB_QUEUE_FULL"
-    """后台任务队列已满或服务正在关闭"""
+    RESOURCE_EXHAUSTED = "RESOURCE_EXHAUSTED"
+    """运行时内存分配失败"""
 
-    JOB_RESULT_TOO_LARGE = "JOB_RESULT_TOO_LARGE"
-    """后台任务结果超过可保留的内存上限"""
+    JOB_QUEUE_FULL = "JOB_QUEUE_FULL"
+    """服务正在关闭，停止接收后台任务"""
 
     NATIVE_UNAVAILABLE = "NATIVE_UNAVAILABLE"
     """v2 必需的原生规划引擎不可用"""
