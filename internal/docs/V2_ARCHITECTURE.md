@@ -66,6 +66,8 @@ MSL 直接使用海拔。ELLIPSOID 减去声明的水准面差。AGL 使用地�
 
 ## 6. 验收与运维
 
+测试目录见 [`../../tests/README.md`](../../tests/README.md)。`api/` 检查 HTTP 契约，`planning/` 检查规划约束，`native/` 检查计算核，`integration/` 检查完整调用和数据归档。
+
 冻结输入位于 `input/v2_benchmarks`，种子为 20261016，manifest 记录 SHA-256。strict/mixed/free 三套各有 1000 个任务和已知可行参考调度。mixed 覆盖全部 20 类规则，并用反事实用例检查规则效果。
 
 2026-10-16 的历史验收使用 8 CPU / 8 GiB。三套各运行 10 轮，30/30 轮通过。每轮均返回 1000 条有效路线，冲突为 0。strict/mixed/free 最大完整 HTTP/JSON 耗时为 1.454/4.541/1.191 秒。服务 cgroup memory.peak 为 281.72 MiB，进程 VmHWM 为 327.51 MiB，OOM 为 0。完整记录见 [`../reports/v2-20261016/PERFORMANCE.md`](../reports/v2-20261016/PERFORMANCE.md)。

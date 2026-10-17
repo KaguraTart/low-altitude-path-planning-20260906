@@ -1,5 +1,0 @@
-{
-  "method": "GET",
-  "endpoint": "/api/v2/version",
-  "body": null
-}

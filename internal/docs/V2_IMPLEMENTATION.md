@@ -33,6 +33,8 @@ python tools/smoke_v2.py --base-url http://127.0.0.1:18000
 
 记录当次提交、测试输出、镜像 ID、资源配额和完整烟测结果。接口和资源调整后的结果以本次验证为准。发布步骤见 [`DEPLOYMENT.md`](DEPLOYMENT.md)。
 
+测试按 `api/`、`planning/`、`native/`、`integration/` 分类。只保留 v2 接口及其规划实现的测试。目录与命令见 [`../../tests/README.md`](../../tests/README.md)。完整 JSON 保存在 `tests/data/recordings/`。
+
 ## 4. 历史基准
 
 固定数据种子为 20261016。场景为 5 km × 5 km，局部高度 0–300 m，分辨率 25 m × 25 m × 10 m，飞行时域 3600 秒。strict/mixed/free 三套各有 1000 个任务及参考调度。mixed 覆盖全部 20 类规则。

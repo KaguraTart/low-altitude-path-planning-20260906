@@ -75,7 +75,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: 构建不可变镜像
         run: docker build --build-arg GIT_SHA="$GITHUB_SHA" -t "uav-ci:$GITHUB_SHA" .
-      - name: 验证实际 v2 镜像、异步、Swagger、文档和 v1 移除
+      - name: 验证实际 v2 镜像、异步、Swagger 和文档
         run: bash tools/check_docker_release.sh "uav-ci:$GITHUB_SHA" "$GITHUB_SHA" output/ci-docker
       - uses: actions/upload-artifact@v4
         if: always()

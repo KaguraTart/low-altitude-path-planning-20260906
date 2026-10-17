@@ -47,6 +47,8 @@ PY
 
 Swagger `/docs` 读取 `/openapi.json`。更新 Markdown 后，也要核对模型、规范快照和运行服务。
 
+测试按接口、规划、原生核和集成流程分类。分类运行命令见 [`../../tests/README.md`](../../tests/README.md)。
+
 ## 3. 构建与 CI
 
 先完成代码、文档和回归。将实际变更及测试结果写入 PR。
