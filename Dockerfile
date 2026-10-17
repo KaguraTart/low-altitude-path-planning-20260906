@@ -11,20 +11,18 @@ COPY pyproject.toml CMakeLists.txt README.md ./
 COPY native/ ./native/
 COPY uav_planner/ ./uav_planner/
 COPY server/ ./server/
-COPY src/ ./src/
 COPY serve.py ./
 RUN python -m pip wheel --no-cache-dir --no-deps --wheel-dir /wheels ".[server]"
 
 FROM ${BASE_IMAGE} AS runtime
 WORKDIR /app
-ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 MPLCONFIGDIR=/tmp/matplotlib
+ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1
 ARG GIT_SHA=unknown
 LABEL org.opencontainers.image.revision=$GIT_SHA
 ENV UAV_GIT_SHA=$GIT_SHA
 COPY --from=builder /wheels /wheels
 RUN python -m pip install --no-cache-dir --no-index --find-links=/wheels uav-path-planning[server] \
     && rm -rf /wheels
-COPY input/ ./input/
 COPY docs/API.md docs/openapi.json ./docs/
 EXPOSE 8000
 CMD ["python", "-m", "serve", "--host", "0.0.0.0", "--port", "8000"]

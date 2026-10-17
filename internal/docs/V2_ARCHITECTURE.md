@@ -2,9 +2,9 @@
 
 本文件描述内部实现。对外字段、规则、错误码和调用示例见 [`../../docs/API.md`](../../docs/API.md)。OpenAPI 从 `server.app:app` 的类型模型生成。
 
-## 1. 分层与版本
+## 1. 分层
 
-v1 保留 `uav_planner.api`、`src/`、`server.schemas` 和 `/api/v1`。v2 使用 `uav_planner/v2` 和 `server/v2.py`。公开 SDK 为 `register_scene/plan_single_v2/plan_batch_v2/validate_route_v2/convert_coordinates`。HTTP handler 调用同一 SDK。CPU 规划在线程中运行。
+服务仅提供 `/api/v2`，使用 `uav_planner/v2` 和 `server/v2.py`。公开 SDK 为 `register_scene/plan_single_v2/plan_batch_v2/validate_route_v2/convert_coordinates`。HTTP handler 调用同一 SDK。CPU 规划在线程中运行。
 
 | 文件 / 层 | 责任 |
 |------|------|
@@ -70,6 +70,6 @@ MSL 直接使用海拔。ELLIPSOID 减去声明的水准面差。AGL 使用地�
 
 2026-10-16 的历史验收使用 8 CPU / 8 GiB。三套各运行 10 轮，30/30 轮通过。每轮均返回 1000 条有效路线，冲突为 0。strict/mixed/free 最大完整 HTTP/JSON 耗时为 1.454/4.541/1.191 秒。服务 cgroup memory.peak 为 281.72 MiB，进程 VmHWM 为 327.51 MiB，OOM 为 0。完整记录见 [`../reports/v2-20261016/PERFORMANCE.md`](../reports/v2-20261016/PERFORMANCE.md)。
 
-正式服务保持 2 CPU / 2 GiB。v1 使用 2 个后台执行线程，v2 使用 1 个。其他作业排队等待。默认不限制队列数量、历史数量或结果存储字节数，也不自动淘汰作业。
+正式服务保持 2 CPU / 2 GiB。后台作业使用 1 个执行线程，其他作业排队等待。默认不限制队列数量、历史数量或结果存储字节数，也不自动淘汰作业。
 
-场景和作业保存在单个服务进程中，重启后清空。替换容器前暂停新提交，并排空 v1/v2 作业。重启后重新注册场景。正式端口为 18000，候选端口为 18001。部署与回滚步骤见 [`DEPLOYMENT.md`](DEPLOYMENT.md)。
+场景和作业保存在单个服务进程中，重启后清空。替换容器前暂停新提交，并排空作业。重启后重新注册场景。正式端口为 18000，候选端口为 18001。部署与回滚步骤见 [`DEPLOYMENT.md`](DEPLOYMENT.md)。

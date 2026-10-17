@@ -1,33 +1,24 @@
 """Typed geographic API. Sync handlers run outside the ASGI event loop."""
 from __future__ import annotations
 
-from datetime import datetime, timezone
-from typing import Literal
-
 from fastapi import APIRouter
-from pydantic import Field, JsonValue, model_validator
 from shapely.geometry import LineString, Point
 
-from uav_planner import ErrorCode, PlanningError
+from uav_planner import ErrorCode, PlanningError, get_version
 from uav_planner.v2.coordinates import CoordinateFrame, convert_coordinates
-from uav_planner.v2.engine import (plan_batch_v2, plan_single_v2, register_scene,
-                                   registry, validate_route_v2)
+from uav_planner.v2.engine import (
+    plan_batch_v2, plan_single_v2, register_scene, registry, validate_route_v2,
+)
 from uav_planner.v2.models import (
-    AircraftProfile, BatchResult, CoordinateRequest, CoordinateResponse, Number,
-    Positive, RouteResult, RouteValidation, RuleReport, RULE_TYPES, Scene, StrictModel, MotionSegment,
-    Task, WKT,
+    BatchResult, CoordinateRequest, CoordinateResponse, RouteResult, RULE_TYPES, Scene,
 )
 from uav_planner.v2 import native
 from .jobs import JobRegistry
-
-class ErrorBody(StrictModel):
-    code: str
-    message: str
-    detail: dict[str,JsonValue] = Field(default_factory=dict)
-
-
-class ErrorEnvelope(StrictModel):
-    error: ErrorBody
+from .schemas import (
+    BatchRequest, Capabilities, ErrorBody, ErrorEnvelope, HealthResponse, JobError,
+    JobResult, JobSubmitted, SceneResponse, SceneSelection, SingleRequest,
+    ValidateRequest, ValidationResponse, VersionResponse,
+)
 
 
 router=APIRouter(prefix="/api/v2",tags=["v2 WKT / WGS84"],responses={
@@ -39,100 +30,6 @@ router=APIRouter(prefix="/api/v2",tags=["v2 WKT / WGS84"],responses={
     503:{"model":ErrorEnvelope,"description":"Planning engine or memory unavailable"},
 })
 jobs=JobRegistry(max_workers=1)
-
-
-class SceneSelection(StrictModel):
-    scene_id: str | None = None
-    scene: Scene | None = None
-
-    @model_validator(mode="after")
-    def one_scene(self):
-        if (self.scene_id is None)==(self.scene is None):
-            raise ValueError("Provide exactly one of scene_id or scene")
-        return self
-
-
-class SingleRequest(SceneSelection):
-    task: Task
-    time_budget_s: Positive | None = None
-
-
-class BatchRequest(SceneSelection):
-    tasks: list[Task] = Field(min_length=1)
-    request_id: str | None = None
-    time_budget_s: Positive | None = None
-
-
-class ValidateRequest(SceneSelection):
-    task: Task
-    trajectory_wkt: WKT
-    vertex_times_s: list[Number] = Field(min_length=1)
-    motion_segments: list[MotionSegment] | None = None
-
-
-class ValidationResponse(RouteValidation):
-    rule_report: list[RuleReport]
-
-
-class SceneResponse(StrictModel):
-    scene_id: str
-    scene_version: str
-    status: Literal["ready"]
-    compilation_ms: Number
-    coordinate_context: dict[str,JsonValue]
-    warnings: list[JsonValue]
-    counts: dict[str,int]
-
-
-class JobSubmitted(StrictModel):
-    job_id: str
-    status: Literal["pending"]
-    poll_url: str
-
-
-class JobError(StrictModel):
-    code: str
-    message: str
-    detail: dict[str,JsonValue] = Field(default_factory=dict)
-
-
-class JobResult(StrictModel):
-    job_id: str
-    status: Literal["pending","running","succeeded","failed"]
-    created_at: str
-    started_at: str | None = None
-    finished_at: str | None = None
-    elapsed_ms: Number | None = None
-    result: BatchResult | None = None
-    error: JobError | None = None
-
-
-class HealthResponse(StrictModel):
-    status: Literal["ok","degraded"]
-    api_version: str
-    native_available: bool
-    jobs: dict[str,int]
-
-
-class VersionResponse(StrictModel):
-    api_version: str
-    engine: dict[str,JsonValue]
-    default_profile: AircraftProfile
-
-
-class Capabilities(StrictModel):
-    api_version: str
-    route_modes: list[str]
-    default_route_mode: str
-    rule_types: list[str]
-    altitude_references: list[str]
-    geometric_tolerance_m: Number
-    max_scene_radius_m: Number | None
-    grid_formats: list[str]
-    scene_lifecycle: str
-    scene_limits: dict[str,int | None]
-    max_registered_scenes: int | None
-    max_registered_scene_bytes: int | None
 
 
 @router.get("/health",response_model=HealthResponse)
@@ -148,7 +45,7 @@ def health_jobs() -> dict[str,int]:
 
 @router.get("/version",response_model=VersionResponse)
 def version():
-    return {"api_version":"2.0.0","engine":native.engine_info(),"default_profile":AircraftProfile()}
+    return get_version()
 
 
 @router.get("/capabilities",response_model=Capabilities)

@@ -5,7 +5,7 @@ build-backend = "scikit_build_core.build"
 [project]
 name = "uav-path-planning"
 version = "2.0.0"
-description = "低空无人机多维时空 A* 路径规划算法（Python SDK + REST 服务）"
+description = "低空无人机 WKT/WGS84 路径规划算法（v2 Python SDK + REST 服务）"
 readme = "README.md"
 requires-python = ">=3.11"
 
@@ -25,30 +25,15 @@ server = [
     "fastapi>=0.110",
     "uvicorn[standard]>=0.27",
 ]
-# 可视化脚本：pip install "uav-path-planning[viz]"
-viz = [
-    "matplotlib>=3.7.0",
-    "plotly>=5.15.0",
-]
 # 跑测试：pip install "uav-path-planning[test]"
 test = [
     "pytest>=8.0",
     "httpx>=0.27",
 ]
-all = [
-    "fastapi>=0.110",
-    "uvicorn[standard]>=0.27",
-    "matplotlib>=3.7.0",
-    "plotly>=5.15.0",
-    "pytest>=8.0",
-    "httpx>=0.27",
-]
 
 [tool.scikit-build]
-wheel.packages = ["uav_planner", "src", "server"]
+wheel.packages = ["uav_planner", "server"]
 cmake.build-type = "Release"
 
 # 安装入口只保留 serve（交付物：REST 服务启动脚本）。
-# 开发工具（tools/ 下的 plan_*.py / run_stress_test.py / visualize*.py）
-# 不属于交付范围，也不作为模块安装——它们直接以脚本方式运行，
-# 且依赖通过 uav_planner.pipeline 由本包提供，依赖方向是 tools → uav_planner。
+# tools/ 下的 v2 基准与验收脚本直接在源码目录运行，不作为模块安装。

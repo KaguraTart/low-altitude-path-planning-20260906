@@ -1,85 +1,64 @@
+"""Public SDK for WGS84/WKT scenes, planning, and continuous route validation.
+
+``plan_single``, ``plan_batch``, and ``validate_route`` use the same geographic
+contract as their explicit ``_v2`` names and the HTTP service. Results are JSON
+compatible dictionaries; imports defer engine loading until a call is made.
 """
-低空无人机路径规划算法 —— 对外 Python SDK
-
-把项目内部的 ``src.*`` 实现封装成一组稳定的函数式接口，让调用方无需了解
-内部目录结构与 dataclass 细节即可使用算法：
-
-    from uav_planner import plan_single
-
-    result = plan_single(
-        start={"x": 500, "y": 500, "z": 100},
-        goal={"x": 2500, "y": 2500, "z": 150},
-    )
-    print(result["status"], result["route"]["metrics"])
-
-所有入参与返回值都是纯 JSON 结构，可直接 ``json.dumps``。
-字段级契约见 ``docs/API.md``；起 HTTP 服务见 ``serve.py``。
-"""
-
 from __future__ import annotations
 
-import os as _os
-import sys as _sys
+from typing import Any
 
-# 项目根目录入 sys.path，使 `import src.*`（以及复用顶层 CLI 脚本的编排函数）
-# 在「被别处 import」时同样可用，而不必依赖调用方先设好 PYTHONPATH。
-_ROOT = _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))
-if _ROOT not in _sys.path:
-    _sys.path.insert(0, _ROOT)
-
-from .api import (  # noqa: E402
-    ALGORITHMS,
-    get_version,
-    plan_batch,
-    plan_from_dir,
-    plan_single,
-    validate_route,
-)
-from .adapters import DEFAULT_AIRCRAFT, DEFAULT_CONFIG  # noqa: E402
-from .errors import ErrorCode, PlanningError  # noqa: E402
-from .serializer import dumps_safe, sanitize  # noqa: E402
+from .errors import ErrorCode, PlanningError
 
 __version__ = "2.0.0"
 
-__all__ = [
-    # 核心接口
-    "plan_single",
-    "plan_batch",
-    "plan_from_dir",
-    "validate_route",
-    "get_version",
-    # 错误体系
-    "PlanningError",
-    "ErrorCode",
-    # 默认值与工具
-    "DEFAULT_CONFIG",
-    "DEFAULT_AIRCRAFT",
-    "ALGORITHMS",
-    "sanitize",
-    "dumps_safe",
-    "__version__",
-]
 
-
-# Lazy geographic SDK imports keep the v1 import surface lightweight.
-def register_scene(scene):
+def register_scene(scene: Any) -> dict[str, Any]:
     from .v2.engine import register_scene as implementation
     return implementation(scene)
 
-def plan_single_v2(**kwargs):
+
+def plan_single_v2(*, task: Any, scene_id: str | None = None,
+                   scene: Any = None, time_budget_s: float | None = None) -> dict[str, Any]:
     from .v2.engine import plan_single_v2 as implementation
-    return implementation(**kwargs)
+    return implementation(task=task, scene_id=scene_id, scene=scene, time_budget_s=time_budget_s)
 
-def plan_batch_v2(**kwargs):
+
+def plan_batch_v2(*, tasks: Any, scene_id: str | None = None,
+                  scene: Any = None, request_id: str | None = None,
+                  time_budget_s: float | None = None) -> dict[str, Any]:
     from .v2.engine import plan_batch_v2 as implementation
-    return implementation(**kwargs)
+    return implementation(tasks=tasks, scene_id=scene_id, scene=scene,
+                          request_id=request_id, time_budget_s=time_budget_s)
 
-def validate_route_v2(**kwargs):
+
+def validate_route_v2(*, task: Any, trajectory_wkt: str, vertex_times_s: Any,
+                      motion_segments: Any = None, scene_id: str | None = None,
+                      scene: Any = None) -> dict[str, Any]:
     from .v2.engine import validate_route_v2 as implementation
-    return implementation(**kwargs)
+    return implementation(task=task, trajectory_wkt=trajectory_wkt,
+                          vertex_times_s=vertex_times_s, motion_segments=motion_segments,
+                          scene_id=scene_id, scene=scene)
 
-def convert_coordinates(request):
+
+def convert_coordinates(request: Any) -> dict[str, Any]:
     from .v2.coordinates import convert_coordinates as implementation
     return implementation(request).model_dump(mode="json")
 
-__all__ += ["register_scene", "plan_single_v2", "plan_batch_v2", "validate_route_v2", "convert_coordinates"]
+
+def get_version() -> dict[str, Any]:
+    from .v2.native import engine_info
+    from .v2.profiles import default_profile
+    return {"api_version": __version__, "engine": engine_info(),
+            "default_profile": default_profile().model_dump(mode="json")}
+
+
+plan_single = plan_single_v2
+plan_batch = plan_batch_v2
+validate_route = validate_route_v2
+
+__all__ = [
+    "register_scene", "plan_single", "plan_batch", "validate_route",
+    "plan_single_v2", "plan_batch_v2", "validate_route_v2", "convert_coordinates",
+    "get_version", "ErrorCode", "PlanningError", "__version__",
+]

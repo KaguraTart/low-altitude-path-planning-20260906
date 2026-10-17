@@ -2,7 +2,6 @@
 from fastapi.testclient import TestClient
 
 from server.app import app
-from server.schemas import PlanBatchRequest, PlanSingleRequest
 from server.v2 import BatchRequest, SingleRequest, ValidateRequest, example_request
 
 
@@ -16,15 +15,13 @@ def test_capabilities_report_no_service_resource_limits():
     assert all(value is None for value in body['scene_limits'].values())
 
 
-def test_v1_and_v2_default_to_no_search_time_or_iteration_budget():
+def test_current_api_defaults_to_no_search_time_budget():
     example = example_request()
     assert SingleRequest.model_validate(example).time_budget_s is None
     batch = {**example, 'tasks': [example['task']]}
     batch.pop('task')
     assert BatchRequest.model_validate(batch).time_budget_s is None
     assert SingleRequest.model_validate({**example, 'time_budget_s': 301}).time_budget_s == 301
-    assert PlanSingleRequest().max_iterations is None
-    assert PlanBatchRequest(tasks=[]).max_iterations is None
 
 
 def test_batch_above_previous_task_limit_is_accepted_by_request_model():

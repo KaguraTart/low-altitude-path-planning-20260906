@@ -1,17 +1,7 @@
-"""
-异步作业注册表
+"""进程内异步作业。
 
-**为什么需要它**：本项目压测实测 10000 个任务的批量规划耗时约 437 秒
-（见 ``output/stress/STRESS_TEST_REPORT.md``），远超任何合理的 HTTP
-请求超时。同步端点只适合中小批量联调，大批量必须走异步：
-
-    POST /api/v1/jobs          → 立即返回 job_id
-    GET  /api/v1/jobs/{id}     → 轮询取状态与结果
-
-**进程内内存态**：作业表存在本进程的字典里，不做持久化。这意味着
-服务重启后历史作业会丢失、多 worker 部署时轮询可能落到没有该作业的
-进程上。联调阶段够用；上生产需要换成 Redis/数据库 + 独立 worker，
-届时替换本模块实现即可，``app.py`` 的调用方式不用改。
+通过 POST /api/v2/jobs 提交，通过 GET /api/v2/jobs/{job_id} 查询。
+完整结果保留在内存中，服务重启后清空。
 """
 
 from __future__ import annotations

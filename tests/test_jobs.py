@@ -121,7 +121,7 @@ def test_http_job_submission_during_shutdown_is_429(monkeypatch):
     assert response.json()["error"]["code"] == ErrorCode.JOB_QUEUE_FULL
 
 
-def test_application_lifespan_drains_both_registries(monkeypatch):
+def test_application_lifespan_drains_current_registry(monkeypatch):
     module = import_module("server.app")
     v2 = import_module("server.v2")
     calls = []
@@ -130,14 +130,12 @@ def test_application_lifespan_drains_both_registries(monkeypatch):
             calls.append((self, "start"))
         def shutdown(self, wait=False):
             calls.append((self, wait))
-    first, second = Registry(), Registry()
-    monkeypatch.setattr(module, "_jobs", first)
-    monkeypatch.setattr(v2, "jobs", second)
+    registry = Registry()
+    monkeypatch.setattr(v2, "jobs", registry)
     with TestClient(module.app):
-        assert (first, "start") in calls
-        assert (second, "start") in calls
-    assert (first, True) in calls
-    assert (second, True) in calls
+        assert calls == [(registry, "start")]
+    assert calls == [(registry, "start"), (registry, True)]
+    assert not hasattr(module, "_jobs")
 
 
 def test_missing_native_engine_returns_503(monkeypatch):
@@ -151,18 +149,14 @@ def test_missing_native_engine_returns_503(monkeypatch):
     assert response.json()["error"]["code"] == ErrorCode.NATIVE_UNAVAILABLE
 
 
-def test_memory_failure_returns_503_for_both_api_versions(monkeypatch):
+def test_memory_failure_returns_503_for_current_api(monkeypatch):
     module = import_module("server.app")
     v2 = import_module("server.v2")
     def exhausted(**kwargs):
         raise MemoryError("allocation failed")
-    monkeypatch.setattr(module, "plan_single", exhausted)
     monkeypatch.setattr(v2, "plan_single_v2", exhausted)
     client = TestClient(module.app)
-    requests = [("/api/v1/plan/single", {"start": {"x": 0, "y": 0, "z": 100}, "goal": {"x": 100, "y": 0, "z": 100}}),
-                ("/api/v2/plan/single", example_request())]
-    for url, value in requests:
-        response = client.post(url, json=value)
-        assert response.status_code == 503
-        assert response.json()["error"]["code"] == ErrorCode.RESOURCE_EXHAUSTED
-        assert response.json()["error"]["detail"]["type"] == "MemoryError"
+    response = client.post("/api/v2/plan/single", json=example_request())
+    assert response.status_code == 503
+    assert response.json()["error"]["code"] == ErrorCode.RESOURCE_EXHAUSTED
+    assert response.json()["error"]["detail"]["type"] == "MemoryError"

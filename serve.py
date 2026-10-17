@@ -80,7 +80,7 @@ def main():
     print()
     print("  本机访问:")
     print(f"    交互文档  http://127.0.0.1:{args.port}/docs")
-    print(f"    健康检查  http://127.0.0.1:{args.port}/api/v1/health")
+    print(f"    健康检查  http://127.0.0.1:{args.port}/api/v2/health")
 
     if args.host == "0.0.0.0":
         ips = lan_ips()
