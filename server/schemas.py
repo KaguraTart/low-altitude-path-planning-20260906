@@ -166,7 +166,7 @@ class PlanSingleRequest(BaseModel):
     cost_grid: bool = Field(True, description="是否启用通行代价层")
     clearance: float = Field(200.0, description="净空膨胀半径（米）")
     clearance_cost: float = Field(3.0, description="净空区通行代价倍率")
-    max_iterations: int = Field(2_000_000, description="A* 最大迭代次数")
+    max_iterations: Optional[int] = Field(None, gt=0, description="A* 迭代预算；省略时不限制次数")
     validate: bool = Field(True, description="是否附带路径合法性验证")
     task_id: str = Field("task-001", description="任务标识")
 
@@ -190,7 +190,7 @@ class PlanBatchRequest(BaseModel):
     cost_grid: bool = Field(True, description="是否启用通行代价层")
     clearance: float = Field(200.0, description="净空膨胀半径（米）")
     clearance_cost: float = Field(3.0, description="净空区通行代价倍率")
-    max_iterations: int = Field(200_000, description="单任务 A* 最大迭代次数")
+    max_iterations: Optional[int] = Field(None, gt=0, description="单任务 A* 迭代预算；省略时不限制次数")
     request_id: Optional[str] = Field(None, description="请求标识")
     validate_tasks: bool = Field(
         False,

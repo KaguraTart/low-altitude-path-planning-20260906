@@ -382,7 +382,7 @@
             }
           },
           "429": {
-            "description": "Job admission or retention budget reached",
+            "description": "Service is shutting down",
             "content": {
               "application/json": {
                 "schema": {
@@ -402,7 +402,7 @@
             }
           },
           "503": {
-            "description": "Native planning engine unavailable",
+            "description": "Planning engine or memory unavailable",
             "content": {
               "application/json": {
                 "schema": {
@@ -467,7 +467,7 @@
             }
           },
           "429": {
-            "description": "Job admission or retention budget reached",
+            "description": "Service is shutting down",
             "content": {
               "application/json": {
                 "schema": {
@@ -487,7 +487,7 @@
             }
           },
           "503": {
-            "description": "Native planning engine unavailable",
+            "description": "Planning engine or memory unavailable",
             "content": {
               "application/json": {
                 "schema": {
@@ -548,7 +548,7 @@
             }
           },
           "429": {
-            "description": "Job admission or retention budget reached",
+            "description": "Service is shutting down",
             "content": {
               "application/json": {
                 "schema": {
@@ -568,7 +568,7 @@
             }
           },
           "503": {
-            "description": "Native planning engine unavailable",
+            "description": "Planning engine or memory unavailable",
             "content": {
               "application/json": {
                 "schema": {
@@ -629,7 +629,7 @@
             }
           },
           "429": {
-            "description": "Job admission or retention budget reached",
+            "description": "Service is shutting down",
             "content": {
               "application/json": {
                 "schema": {
@@ -649,7 +649,7 @@
             }
           },
           "503": {
-            "description": "Native planning engine unavailable",
+            "description": "Planning engine or memory unavailable",
             "content": {
               "application/json": {
                 "schema": {
@@ -720,7 +720,7 @@
             }
           },
           "429": {
-            "description": "Job admission or retention budget reached",
+            "description": "Service is shutting down",
             "content": {
               "application/json": {
                 "schema": {
@@ -740,7 +740,7 @@
             }
           },
           "503": {
-            "description": "Native planning engine unavailable",
+            "description": "Planning engine or memory unavailable",
             "content": {
               "application/json": {
                 "schema": {
@@ -812,7 +812,7 @@
             }
           },
           "429": {
-            "description": "Job admission or retention budget reached",
+            "description": "Service is shutting down",
             "content": {
               "application/json": {
                 "schema": {
@@ -832,7 +832,7 @@
             }
           },
           "503": {
-            "description": "Native planning engine unavailable",
+            "description": "Planning engine or memory unavailable",
             "content": {
               "application/json": {
                 "schema": {
@@ -903,7 +903,7 @@
             }
           },
           "429": {
-            "description": "Job admission or retention budget reached",
+            "description": "Service is shutting down",
             "content": {
               "application/json": {
                 "schema": {
@@ -923,7 +923,7 @@
             }
           },
           "503": {
-            "description": "Native planning engine unavailable",
+            "description": "Planning engine or memory unavailable",
             "content": {
               "application/json": {
                 "schema": {
@@ -995,7 +995,7 @@
             }
           },
           "429": {
-            "description": "Job admission or retention budget reached",
+            "description": "Service is shutting down",
             "content": {
               "application/json": {
                 "schema": {
@@ -1015,7 +1015,7 @@
             }
           },
           "503": {
-            "description": "Native planning engine unavailable",
+            "description": "Planning engine or memory unavailable",
             "content": {
               "application/json": {
                 "schema": {
@@ -1086,7 +1086,7 @@
             }
           },
           "429": {
-            "description": "Job admission or retention budget reached",
+            "description": "Service is shutting down",
             "content": {
               "application/json": {
                 "schema": {
@@ -1106,7 +1106,7 @@
             }
           },
           "503": {
-            "description": "Native planning engine unavailable",
+            "description": "Planning engine or memory unavailable",
             "content": {
               "application/json": {
                 "schema": {
@@ -1177,7 +1177,7 @@
             }
           },
           "429": {
-            "description": "Job admission or retention budget reached",
+            "description": "Service is shutting down",
             "content": {
               "application/json": {
                 "schema": {
@@ -1197,7 +1197,7 @@
             }
           },
           "503": {
-            "description": "Native planning engine unavailable",
+            "description": "Planning engine or memory unavailable",
             "content": {
               "application/json": {
                 "schema": {
@@ -1268,7 +1268,7 @@
             }
           },
           "429": {
-            "description": "Job admission or retention budget reached",
+            "description": "Service is shutting down",
             "content": {
               "application/json": {
                 "schema": {
@@ -1288,7 +1288,7 @@
             }
           },
           "503": {
-            "description": "Native planning engine unavailable",
+            "description": "Planning engine or memory unavailable",
             "content": {
               "application/json": {
                 "schema": {
@@ -1360,7 +1360,7 @@
             }
           },
           "429": {
-            "description": "Job admission or retention budget reached",
+            "description": "Service is shutting down",
             "content": {
               "application/json": {
                 "schema": {
@@ -1380,7 +1380,7 @@
             }
           },
           "503": {
-            "description": "Native planning engine unavailable",
+            "description": "Planning engine or memory unavailable",
             "content": {
               "application/json": {
                 "schema": {
@@ -1441,7 +1441,7 @@
             }
           },
           "429": {
-            "description": "Job admission or retention budget reached",
+            "description": "Service is shutting down",
             "content": {
               "application/json": {
                 "schema": {
@@ -1461,7 +1461,7 @@
             }
           },
           "503": {
-            "description": "Native planning engine unavailable",
+            "description": "Planning engine or memory unavailable",
             "content": {
               "application/json": {
                 "schema": {
@@ -1522,7 +1522,7 @@
             }
           },
           "429": {
-            "description": "Job admission or retention budget reached",
+            "description": "Service is shutting down",
             "content": {
               "application/json": {
                 "schema": {
@@ -1542,7 +1542,7 @@
             }
           },
           "503": {
-            "description": "Native planning engine unavailable",
+            "description": "Planning engine or memory unavailable",
             "content": {
               "application/json": {
                 "schema": {
@@ -1922,7 +1922,6 @@
               "$ref": "#/components/schemas/Task-Output"
             },
             "type": "array",
-            "maxItems": 10000,
             "minItems": 1,
             "title": "Tasks"
           },
@@ -1938,11 +1937,16 @@
             "title": "Request Id"
           },
           "time_budget_s": {
-            "type": "number",
-            "maximum": 300.0,
-            "title": "Time Budget S",
-            "default": 10,
-            "gt": 0
+            "anyOf": [
+              {
+                "type": "number",
+                "gt": 0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Time Budget S"
           }
         },
         "additionalProperties": false,
@@ -2110,7 +2114,14 @@
             "title": "Geometric Tolerance M"
           },
           "max_scene_radius_m": {
-            "type": "number",
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Max Scene Radius M"
           },
           "grid_formats": {
@@ -2126,17 +2137,38 @@
           },
           "scene_limits": {
             "additionalProperties": {
-              "type": "integer"
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ]
             },
             "type": "object",
             "title": "Scene Limits"
           },
           "max_registered_scenes": {
-            "type": "integer",
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Max Registered Scenes"
           },
           "max_registered_scene_bytes": {
-            "type": "integer",
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Max Registered Scene Bytes"
           }
         },
@@ -2570,8 +2602,7 @@
             "type": "number",
             "title": "Max Radius M",
             "default": 50000,
-            "gt": 0,
-            "le": 50000
+            "gt": 0
           },
           "terrain_msl_m": {
             "anyOf": [
@@ -3890,10 +3921,17 @@
             "default": 3.0
           },
           "max_iterations": {
-            "type": "integer",
+            "anyOf": [
+              {
+                "type": "integer",
+                "exclusiveMinimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Max Iterations",
-            "description": "单任务 A* 最大迭代次数",
-            "default": 200000
+            "description": "单任务 A* 迭代预算；省略时不限制次数"
           },
           "request_id": {
             "anyOf": [
@@ -4050,10 +4088,17 @@
             "default": 3.0
           },
           "max_iterations": {
-            "type": "integer",
+            "anyOf": [
+              {
+                "type": "integer",
+                "exclusiveMinimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Max Iterations",
-            "description": "A* 最大迭代次数",
-            "default": 2000000
+            "description": "A* 迭代预算；省略时不限制次数"
           },
           "validate": {
             "type": "boolean",
@@ -4529,7 +4574,6 @@
           },
           "horizon_s": {
             "type": "number",
-            "maximum": 86400.0,
             "title": "Horizon S",
             "default": 3600,
             "gt": 0
@@ -4696,11 +4740,16 @@
             "$ref": "#/components/schemas/Task-Output"
           },
           "time_budget_s": {
-            "type": "number",
-            "maximum": 300.0,
-            "title": "Time Budget S",
-            "default": 10,
-            "gt": 0
+            "anyOf": [
+              {
+                "type": "number",
+                "gt": 0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Time Budget S"
           }
         },
         "additionalProperties": false,
@@ -4905,7 +4954,6 @@
               "$ref": "#/components/schemas/Waypoint-Output"
             },
             "type": "array",
-            "maxItems": 256,
             "title": "Waypoints"
           },
           "earliest_arrival": {
@@ -5717,7 +5765,6 @@
               "type": "number"
             },
             "type": "array",
-            "maxItems": 100000,
             "minItems": 1,
             "title": "Vertex Times S"
           },
@@ -5727,8 +5774,7 @@
                 "items": {
                   "$ref": "#/components/schemas/MotionSegment"
                 },
-                "type": "array",
-                "maxItems": 100000
+                "type": "array"
               },
               {
                 "type": "null"
@@ -5792,7 +5838,6 @@
               "$ref": "#/components/schemas/uav_planner__v2__models__Waypoint"
             },
             "type": "array",
-            "maxItems": 256,
             "title": "Waypoints"
           },
           "earliest_arrival": {

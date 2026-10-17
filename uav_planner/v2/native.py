@@ -72,25 +72,27 @@ def _trajectories(paths: Sequence[Any], times: Sequence[Any]) -> tuple[list[np.n
 
 def graph_search(
     nodes: Any, edges: Any, edge_costs: Any, start: int, goal: int, *,
-    blocked_nodes: Iterable[int] = (), max_iterations: int = 200_000,
-    deadline_ms: float = 0, directed: bool = False,
+    blocked_nodes: Iterable[int] = (), max_iterations: int | None = 0,
+    deadline_ms: float | None = 0, directed: bool = False,
 ) -> dict[str, Any]:
+    """Search the supplied graph; zero/None leave work and time unrestricted."""
     return require_native().graph_search(
         _matrix(nodes, 3), _matrix(edges, 2, np.int64),
         np.ascontiguousarray(edge_costs, dtype=np.float64), start, goal,
-        list(blocked_nodes), max_iterations, deadline_ms, directed,
+        list(blocked_nodes), 0 if max_iterations is None else max_iterations, 0 if deadline_ms is None else deadline_ms, directed,
     )
 
 
 def grid_search(
     start: Any, goal: Any, bounds: Any, resolution: Any, blocked: Any = (), *,
-    allowed: Any | None = None, max_iterations: int = 200_000,
-    deadline_ms: float = 0,
+    allowed: Any | None = None, max_iterations: int | None = 0,
+    deadline_ms: float | None = 0,
 ) -> dict[str, Any]:
     """26-neighbor A* with all diagonal subcells checked for corner cutting.
 
     Grid coordinate (i,j,k) is at bounds[0] + resolution * (i,j,k).
     Exact requested endpoints are preserved in the returned polyline.
+    Zero/None work or time budgets mean no computational cutoff.
     """
     spacing = np.asarray(resolution, dtype=float)
     if spacing.ndim == 0:
@@ -99,14 +101,14 @@ def grid_search(
         start, goal, _matrix(bounds, 3), spacing.tolist(),
         _matrix(blocked, 3, np.int64),
         None if allowed is None else _matrix(allowed, 3, np.int64),
-        max_iterations, deadline_ms,
+        0 if max_iterations is None else max_iterations, 0 if deadline_ms is None else deadline_ms,
     )
 
 
 def continuous_conflicts(
     paths: Sequence[Any], times: Sequence[Any], horizontal_separation: float,
-    vertical_separation: float, *, max_conflicts: int = 10_000,
-    deadline_ms: float = 0,
+    vertical_separation: float, *, max_conflicts: int | None = 0,
+    deadline_ms: float | None = 0,
 ) -> dict[str, Any]:
     """Find continuous cylinder conflicts using a sparse 4-axis segment BVH.
 
@@ -114,18 +116,19 @@ def continuous_conflicts(
     Single-point trajectories exist only at their timestamp; hover requires
     two equal positions at strictly increasing timestamps. Separation equality
     is conservatively considered a conflict with a numerical 1e-8 margin.
+    Zero/None returns every conflict without a time or record-count cutoff.
     """
     ps, ts = _trajectories(paths, times)
     return require_native().continuous_conflicts(
         ps, ts, horizontal_separation, vertical_separation,
-        max_conflicts, deadline_ms,
+        0 if max_conflicts is None else max_conflicts, 0 if deadline_ms is None else deadline_ms,
     )
 
 
 def schedule_paths(
     paths: Sequence[Any], times: Sequence[Any], departure_windows: Any, *,
     horizontal_separation: float, vertical_separation: float,
-    priorities: Sequence[int] | None = None, deadline_ms: float = 0,
+    priorities: Sequence[int] | None = None, deadline_ms: float | None = 0,
     fixed_count: int = 0,
 ) -> dict[str, Any]:
     """Prioritized continuous reservations with exact forbidden delay jumps.
@@ -142,7 +145,7 @@ def schedule_paths(
     return require_native().schedule_paths(
         ps, ts, _matrix(departure_windows, 2), horizontal_separation,
         vertical_separation, None if priorities is None else list(priorities),
-        deadline_ms, fixed_count,
+        0 if deadline_ms is None else deadline_ms, fixed_count,
     )
 
 
@@ -152,7 +155,7 @@ def solve_sipp(
     reservations_times: Sequence[Any] = (),
     horizontal_separation: float = 0, vertical_separation: float = 0,
     start_time: float = 0, latest_arrival: float = float("inf"),
-    max_iterations: int = 200_000, deadline_ms: float = 0,
+    max_iterations: int | None = 0, deadline_ms: float | None = 0,
     directed: bool = False, max_turn_angle: float = float(np.pi),
     wait_allowed: Sequence[bool] | None = None,
     edge_paths: Sequence[Any] | None = None,
@@ -164,6 +167,7 @@ def solve_sipp(
     node's safe interval, exact edge swaps/crossings are checked, and returned
     repeated nodes explicitly encode waits. Starting before the first safe
     interval delays launch; the vehicle is not reserved before that launch.
+    Zero/None work or time budgets leave computation unrestricted.
     ``max_turn_angle`` is radians and adds incoming-heading search state.
     ``wait_allowed`` contains one boolean per node and defaults to all true.
     False forbids departure after arrival, including waits for another node's
@@ -189,7 +193,7 @@ def solve_sipp(
         _matrix(nodes, 3), _matrix(edges, 2, np.int64),
         np.ascontiguousarray(durations, dtype=np.float64), start, goal,
         ps, ts, horizontal_separation, vertical_separation, start_time,
-        latest_arrival, max_iterations, deadline_ms, directed, max_turn_angle,
+        latest_arrival, 0 if max_iterations is None else max_iterations, 0 if deadline_ms is None else deadline_ms, directed, max_turn_angle,
         wait_mask, shaped_paths, shaped_times,
     )
 

@@ -216,10 +216,6 @@ AABB 长方体包围盒。占据范围：
 | | `max_altitude_m` | float | 米 | 300 |
 | `safety` | `safety_margin_m` | float | 米 | 5 |
 
-> **`operational.min_altitude_m` / `max_altitude_m` 是硬约束**：航点高度超出
-> 升限会导致该任务规划失败（`终点高度 220.0m 超过飞行器最高高度 200.0m`）。
-> 这是数据配置问题，不是算法缺陷。
-
 ### 2.9 `Route` — 待校验航线（`POST /api/v1/validate` 的输入）
 
 | 字段 | 类型 | 必填 | 默认 | 说明 |
@@ -279,8 +275,7 @@ AABB 长方体包围盒。占据范围：
 | `position_a` / `position_b` | [float, float, float] | 双方位置 |
 | `distance` | float | 间距（米） |
 
-> `conflict_avoidance=false` 时 `conflicts` **仍会如实报告**检测到的冲突——
-> 不会把「没检查」包装成「无冲突」。
+> `conflict_avoidance=false` 时，`conflicts` 仍报告检测到的冲突。
 
 ### 3.3 航线对象
 
@@ -389,6 +384,7 @@ AABB 长方体包围盒。占据范围：
 | `PLANNING_FAILED` | 422 | 请求合法但无法完成规划 | 所有任务都不兼容，无可规划任务 |
 | `TIMEOUT` | 504 | 超过时间预算 | — |
 | `INTERNAL_ERROR` | 500 | 未预期的内部异常 | 服务内部错误 |
+| `RESOURCE_EXHAUSTED` | 503 | 运行内存不足 | 服务捕获到内存分配失败 |
 
 **客户端处理建议**：按 `error.code` 分支，不要解析 `message` 文本——文本可能调整，
 错误码是稳定契约。
@@ -458,7 +454,7 @@ if resp.status_code >= 400:
 | `cost_grid` | bool | | `True` | 是否启用通行代价层 |
 | `clearance` | float | | `200.0` | 净空膨胀半径（米） |
 | `clearance_cost` | float | | `3.0` | 净空区通行代价倍率 |
-| `max_iterations` | int | | `2000000` | A\* 最大迭代次数 |
+| `max_iterations` | int \| null | | `null` | 搜索次数预算；省略或 null 时不限制次数 |
 | `validate` | bool | | `True` | 是否附带合法性验证结果 |
 | `task_id` | string | | `"task-001"` | 任务标识 |
 
@@ -483,7 +479,7 @@ if resp.status_code >= 400:
 | `conflict_avoidance` | bool | | `True` | 多机冲突避免 |
 | `min_separation` | float | | `10.0` | 多机最小安全间隔（米） |
 | `cost_grid` / `clearance` / `clearance_cost` | | | `True` / `200.0` / `3.0` | 通行代价层 |
-| `max_iterations` | int | | `200000` | 单任务 A\* 最大迭代次数 |
+| `max_iterations` | int \| null | | `null` | 单任务搜索次数预算；省略或 null 时不限制次数 |
 | `request_id` | string | | 自动 | 请求标识 |
 | `validate_tasks` | bool | | `False` | 是否先剔除飞行器需求不兼容的任务 |
 
@@ -534,7 +530,7 @@ if resp.status_code >= 400:
   "started_at": "2026-10-12T15:30:00",
   "finished_at": "2026-10-12T15:30:22",
   "elapsed_ms": 22631.5,
-  "result": { "...与 /plan/batch 响应相同..." },
+  "result": { "...": "与 /plan/batch 响应相同" },
   "error": null
 }
 ```
@@ -542,8 +538,7 @@ if resp.status_code >= 400:
 `status` 取值：`pending` / `running` / `succeeded` / `failed`。
 失败时 `error` 是标准错误信封。
 
-> ⚠️ 作业表存在**服务进程内存**中：服务重启后历史作业不可查；多 worker 部署时
-> 轮询可能落到没有该作业的进程。联调阶段够用，生产需换持久化存储。
+作业保存在服务进程内存中，重启后清空。默认不限制队列数量、历史数量或结果存储字节数，也不自动淘汰历史作业。v1 使用 2 个执行线程，其他作业排队等待。需要长期保存时，下载并保存完整结果。
 
 ### 5.6 其他端点
 
@@ -964,7 +959,7 @@ nz = ceil((z_max - z_min) / dz)      nt = ceil((t_max - t_min) / dt)
 | `max_climb_rate` / `max_descent_rate` | float \| None | 爬升 / 下降率上限，逐段校验 |
 | `occupancy_mask` | ndarray \| None | **多机冲突避免**用的禁飞时空掩码，与其他已规划航线取并集；`None` 时退化为单机规划 |
 | `_iz_min` / `_iz_max` | int | 网格 Z 范围与飞行器高度包线的**交集**，实际搜索的 z 边界 |
-| `max_iterations` | int | 迭代上限，超出即返回 `failed` 并注明「未找到可行路径」 |
+| `max_iterations` | int \| None | 默认不限制搜索次数；指定正整数时，在达到该次数后停止搜索 |
 
 **搜索代价**：每次移动消耗 `dt`（时间成本）+ `spatial_dist × 0.001`（距离惩罚，
 用于打破平局、偏好短路径）。等待动作代价为 `dt × 1.05`。
@@ -1067,7 +1062,7 @@ fallback；取值一律通过 `get_max_speed()` / `get_max_altitude()` 等 gette
 
 外部几何使用 WGS84，轴序固定为 **经度、纬度、高度**。任务起终点和业务航点必须是 `POINT Z`，航路中心线必须是 `LINESTRING Z`。体积边界为 `POLYGON` 或 `MULTIPOLYGON` 的平面足迹，垂直范围由单独字段确定；足迹 WKT 中的 Z 不改变体积上下限。空几何、非有限坐标、自相交等无效拓扑和 `GEOMETRYCOLLECTION` 会被拒绝。
 
-每个场景以 `coordinates.origin_lon/origin_lat` 建立局部 AEQD 投影：`x` 向东、`y` 向北，单位米；`z = MSL 高度 - origin_alt_msl`，单位米。`bounds`、`resolution`、规则距离和网格都使用这个局部坐标。场景半径由 `max_radius_m` 限制，最大 50000 m；越界报错，不继续计算。
+每个场景以 `coordinates.origin_lon/origin_lat` 建立局部 AEQD 投影。`x` 向东，`y` 向北，单位为米。`z = MSL 高度 - origin_alt_msl`，单位为米。`bounds`、`resolution`、规则距离和网格使用此坐标系。`max_radius_m` 指定场景覆盖半径，默认 50000 m。可按实际范围设置更大的正数。
 
 | `alt_reference` / `altReference` | 输入 Z 的含义 | 转成 MSL 的依据 |
 |------|------|------|
@@ -1088,15 +1083,15 @@ fallback；取值一律通过 `get_max_speed()` / `get_max_altitude()` 等 gette
 | `prefer` | 允许航路外飞行；候选图代价中，航路外基础距离代价为航路内的 2 倍；其余安全、规则和性能约束照常执行 |
 | `free` | 不要求航路包含；其余安全、规则和性能约束照常执行 |
 
-中心线 Z 是航路参考路径，**不把整个航路压成一条固定高度线**。硬高度边界是 `minAltitude/maxAltitude` 及其 `altReference`。`widthMeters` 是航路**全宽**，编译时除以 2；规则 `WIDTH.content.width` 是**半宽**，另减去 `bufferWidth` 与飞机安全裕度。
+中心线 Z 是参考高度。`minAltitude/maxAltitude` 和 `altReference` 确定可用高度带。`widthMeters` 是航路全宽，编译时除以 2。规则 `WIDTH.content.width` 是半宽。可用宽度再扣除 `bufferWidth` 和飞机安全裕度。
 
 严格模式下，航路外起终点需显式提交 `connectors`，任务填写 `start_connector_id` / `end_connector_id`；`Connector.airway_ids` 指定可以接入的航路。接驳仅授权实际起点到首次进入航路、最后离开航路到实际终点的连续部分，不能当作中段捷径。接驳体也有高度、时间和净空限制。中心线、端点和接驳未连通时直接失败。
 
 ### 10.4 场景选择与生命周期
 
-单任务、批量和验证请求中 `scene_id` 与 `scene` **必须且只能给一个**。推荐先注册一次静态场景，再用返回的 `scene_id` 提交多轮任务；首次编译耗时在 `compilation_ms` 中单独返回。场景版本为规范化场景 JSON 的 SHA-256；相同输入复用编译结果，修改规则、数据版本等会得到新版本。服务不缓存任务答案。
+单任务、批量和验证请求选择 `scene_id` 或 `scene`。多轮规划时，先注册场景，再使用返回的 `scene_id`。`compilation_ms` 返回首次编译耗时。场景版本为规范化场景 JSON 的 SHA-256。相同输入复用编译结果；修改输入后生成新版本。服务不缓存任务答案。
 
-场景和作业存在当前服务进程内存，重启后必须重新注册场景，历史作业不保证可查。当前最多保留 8 个场景，登记场景的合计估算存储预算为 1 GiB；编译前按最近使用顺序淘汰以满足数量和估算预算，新场景编译串行执行。保留场景原始 JSON，遇到场景不存在时重新注册。估算预算不等于进程 RSS 硬上限，容器资源限制仍独立生效。单进程部署可确保场景与作业查询落在同一份内存中。
+场景和作业保存在服务进程内存中。重启后重新注册场景。登记表不设固定数量或估算存储上限，也不自动淘汰场景。新场景按顺序编译。保留场景原始 JSON，以便重新注册。服务使用单进程。
 
 ## 11. v2 场景与输入字段
 
@@ -1105,12 +1100,12 @@ fallback；取值一律通过 `get_max_speed()` / `get_max_altitude()` 等 gette
 | 对象 / 字段 | 类型、必填与默认 | 说明 |
 |------|------|------|
 | 单任务 `task` | `Task`，必填 | 一条业务任务 |
-| 批量 `tasks` | `Task[]`，1–10000 项 | HTTP 与 SDK 均检查此范围；ID 不可重复；结果顺序与请求顺序一致 |
+| 批量 `tasks` | 非空 `Task[]` | ID 不可重复；结果顺序与请求顺序一致 |
 | `scene_id` / `scene` | string / `Scene`，二选一 | 引用已注册场景或内联注册 |
-| 规划 `time_budget_s` | number，默认 10，`0 < 值 <= 300` | 一次规划的总预算；不保证每个输入都能成功 |
+| 规划 `time_budget_s` | number \| null，默认 null | 省略或 null 时持续计算；传正有限秒数时，在该时限内计算 |
 | 批量 `request_id` | string，可省略 | 省略则生成 UUID；原样写入批量结果 |
-| 验证 `task`、`trajectory_wkt`、`vertex_times_s` | 必填；时间数组 1–100000 项 | 任务、WGS84 `POINT Z/LINESTRING Z` 与相对场景零点的时间；顶点与时间长度须匹配，HTTP 与 SDK 均检查时间项数 |
-| 验证 `motion_segments` | `MotionSegment[] \| null`，模型允许省略，最多 100000 段 | **移动航线必须提交**；直接复制规划结果的同名字段。缺少时返回 `valid:false`、`MOTION_MODEL_REQUIRED`，不能仅凭 WKT 与顶点时间通过验证 |
+| 验证 `task`、`trajectory_wkt`、`vertex_times_s` | 必填；时间数组非空 | 任务、WGS84 `POINT Z/LINESTRING Z` 与相对场景零点的时间；顶点数与时间项数相同 |
+| 验证 `motion_segments` | `MotionSegment[] \| null`，模型允许省略 | 移动航线需提交此字段。复制规划结果的同名字段；缺少时返回 `valid:false`、`MOTION_MODEL_REQUIRED` |
 
 ### 11.2 `Scene`
 
@@ -1119,7 +1114,7 @@ fallback；取值一律通过 `get_max_speed()` / `get_max_altitude()` 等 gette
 | `coordinates` | `CoordinateSpec` | 必填 | 投影原点与高度换算证据 |
 | `bounds` | `Bounds3D` | 必填 | 局部米制 `x_min/x_max/y_min/y_max/z_min/z_max`，每轴 max 必须大于 min |
 | `resolution` | `[number,number,number]` | `[25,25,10]` | 局部 x/y/z 搜索分辨率，均须 >0 |
-| `horizon_s` | number | 3600 | 从 `time_origin` 起的规划时间范围，`0 < 值 <= 86400` 秒 |
+| `horizon_s` | 正数 | 3600 | 从 `time_origin` 起的飞行时域，单位秒；与计算时限分开设置 |
 | `time_origin` | timestamp | 必填 | 带时区的场景时间零点 |
 | `airways` | `Airway[]` | `[]` | 航路体 |
 | `connectors` | `Connector[]` | `[]` | 严格模式显式接驳体 |
@@ -1133,21 +1128,13 @@ fallback；取值一律通过 `get_max_speed()` / `get_max_altitude()` 等 gette
 
 各列表内部 ID 唯一；几何资源（航路、接驳、障碍、管制、数据集）之间也不能重名。规则引用不存在的资源、任务引用不存在的规则或机型时拒绝请求。
 
-编译前检查以下单场景运行预算；超出返回 HTTP 400、`INVALID_INPUT`，detail 给出 resource/actual/limit。它们是部署约束，输入不必达到上限才有效；实际可用规模还受场景存储估算与搜索约束共同限制。
+场景对象、WKT 顶点、数据格、网格节点及估算存储不设固定上限。批量任务、业务航点、验证数据、碰撞采样和运动顶点也不设固定条目上限。服务处理完整输入，并生成完整结果。
 
-| 资源 | 上限 |
-|------|------|
-| `airways/obstacles/control_zones` | 200 / 1000 / 20 |
-| `connectors/rules/profiles/datasets` | 1000 / 1000 / 32 / 100 |
-| `geometry_vertices` | 50000，累计所有输入 WKT 顶点 |
-| `field_cells` | 1200000，累计所有数据集格子 |
-| `grid_entries` | 1200000，occupied、occupied_ranges、cells 的条目总数 |
-| `grid_nodes` | 4000000，外部网格 shape 三轴乘积 |
-| `estimated_scene_bytes` | 536870912（512 MiB），模型、几何、索引和缓存的保守存储估算 |
+默认不设计算时限或搜索次数。计算在得到结果、搜索结束或发生运行错误时停止。调用方可用 `time_budget_s` 指定停止时间。飞行仍遵守场景时域、机型性能和选定规则。
 
-场景登记另受上面的 8 场景 / 合计 1 GiB 估算预算限制。固定内存估算与条目限制不能推导出每个上限组合都可同时达到；例如大量格子的估算存储可能先触发 512 MiB 限制。`GET /api/v2/capabilities` 用于查询当前镜像实际能力和限额。
+服务捕获到内存分配失败时，返回 HTTP 503、`RESOURCE_EXHAUSTED`。异步作业以 `failed` 和同名错误码记录失败。操作系统直接因 OOM 终止进程时，连接可能断开；Docker 记录 OOM 并按重启策略重启服务。
 
-每条路线的认证碰撞采样与导出运动顶点各有 100000 项预算；达到预算时返回明确的 sample budget exceeded 错误，不截断轨迹后当作成功结果。业务可缩短任务、调整场景/运动参数或拆分有明确衔接约定的任务，不能忽略缺失的后半段。
+`GET /api/v2/capabilities` 返回当前能力。资源上限字段为 null 时，表示未设置固定上限。正式 Docker 配额保持 2 CPU / 2 GiB。
 
 ### 11.3 `CoordinateSpec` 与高度修正
 
@@ -1155,7 +1142,7 @@ fallback；取值一律通过 `get_max_speed()` / `get_max_altitude()` 等 gette
 |------|------|------|
 | `origin_lon` / `origin_lat` | number，必填 | 经度 `[-180,180]`、纬度 `[-90,90]` |
 | `origin_alt_msl` | number，0 | 局部 z=0 的 MSL 海拔 |
-| `max_radius_m` | number，50000 | 大于 0、最大 50000 |
+| `max_radius_m` | number，50000 | 场景覆盖半径，单位米；可设置任意正有限值 |
 | `terrain_msl_m` / `terrain_source` | number / string，null | 声明的平地海拔与来源；非平地区域应提供 terrain 空间场 |
 | `geoid_separation_m` / `geoid_source` | number / string，null | 椭球高减 MSL 的差值与来源 |
 | `height_corrections` | `HeightCorrection[]`，`[]` | QNE/QNH 的显式修正 |
@@ -1244,7 +1231,7 @@ fallback；取值一律通过 `get_max_speed()` / `get_max_altitude()` 等 gette
 | `departure_time` | timestamp，必填 | 最早起飞时间，必须在场景时域内 |
 | `alt_reference` | 高度枚举，必填 | 本任务起终点、航点与输出 WKT 的高度基准 |
 | `route_mode` | `strict/prefer/free`，`strict` | 路径模式 |
-| `waypoints` | `Waypoint[]`，`[]`，最多 256 项 | 按顺序经过的中间业务航点，不重复放起终点；另受 WAYPOINT 规则约束 |
+| `waypoints` | `Waypoint[]`，`[]` | 按顺序经过的中间业务航点，不重复放起终点；执行 WAYPOINT 规则 |
 | `earliest_arrival/latest_arrival` | timestamp/null | 终点到达窗口；最晚到达不能早于 departure |
 | `profile_id` | string，`dji_mini_4_pro` | 引用场景配置或内置默认机型 |
 | `aircraft` | `AircraftProfile`/null | 直接指定时优先于 profile_id |
@@ -1319,7 +1306,7 @@ RTL 是**根据提交时当前状态生成的返航方案**：触发后将目标
 ]
 ```
 
-全部规则均有执行路径；不能将“解析成功”视作“本次航线已满足”。调用方要同时检查路线 `status`、`validation.valid` 和 `rule_report`。规则未被选择或不在生效期会标记为不适用；缺少应有引用数据不会以“已应用”代替实际检查。
+调用方检查路线 `status`、`validation.valid` 和 `rule_report`。报告记录每条规则的执行状态。未选择或未生效的规则标为不适用。缺少必要引用数据时返回错误。
 
 ## 13. v2 返回与错误
 
@@ -1331,9 +1318,9 @@ RTL 是**根据提交时当前状态生成的返航方案**：触发后将目标
 | 坐标转换 | `geometries_wkt`（与输入顺序相同）、`direction`、`alt_reference`、`coordinate_context` |
 | health | `status="ok"/"degraded"`、`api_version`、`native_available`、`jobs`；缺原生扩展时 degraded，不能据此承诺可规划 |
 | version | `api_version`、`engine`（available/engine/version/error/git_sha）、`default_profile`；`engine.git_sha` 为运行镜像的构建 revision，本地未设置时为 `unknown` |
-| capabilities | `api_version/route_modes/default_route_mode/rule_types/altitude_references/geometric_tolerance_m/max_scene_radius_m/grid_formats/scene_lifecycle`；另有 `scene_limits`（§11.2 单场景预算整数对象）、`max_registered_scenes`（默认 8）、`max_registered_scene_bytes`（默认 1073741824，登记合计估算预算） |
+| capabilities | `api_version/route_modes/default_route_mode/rule_types/altitude_references/geometric_tolerance_m/grid_formats/scene_lifecycle`；`scene_limits`、`max_registered_scenes`、`max_registered_scene_bytes`、`max_scene_radius_m` 为 null，表示未设置固定资源上限 |
 
-`coordinate_context` 包含输入 EPSG:4326、轴序、局部 AEQD CRS、原点、半径、地形/水准面来源与气压修正版本。公开几何容差为 0.1 m；这用于数值和离散近似的保守处理，不允许调用方削减配置的安全距离。
+`coordinate_context` 包含 EPSG:4326、轴序、局部 AEQD CRS、原点、半径、高度数据来源与气压修正版本。几何容差为 0.1 m，用于数值和离散近似处理。安全距离使用场景与机型配置值。
 
 ### 13.2 `RouteResult`
 
@@ -1388,17 +1375,15 @@ RTL 是**根据提交时当前状态生成的返航方案**：触发后将目标
 
 提交返回 `{"job_id":"...","status":"pending","poll_url":"/api/v2/jobs/..."}`。查询含 `job_id/status/created_at/started_at/finished_at/elapsed_ms/result/error`。状态为 `pending/running/succeeded/failed`；`succeeded` 表示函数已返回，仍须检查 `result.failed_count` 与每条路线。`failed` 时 error 为 `code/message/detail`。作业元数据时间字符串使用服务记录的格式，飞行计算仍以场景带时区时间为准。
 
-作业在进程内执行；服务重启或已完成作业被淘汰后，查询可返回 404。提交 202 的延迟不能用作完整规划性能。
+作业在进程内执行，服务重启后清空。v2 使用 1 个执行线程，其他作业排队等待。默认不限制队列数量、历史数量或结果存储字节数，也不自动淘汰历史作业。需要长期保存时，下载并保存完整结果。完整规划耗时从提交请求计到取回结果。
 
-v2 同时接纳的 `pending + running` 最多 32 个，执行线程为 1；达到容量或服务停止接纳时，POST /jobs 返回 HTTP 429、`JOB_QUEUE_FULL`，不生成新 job_id。调用方应延迟重试，不能无限加速提交。已完成历史按数量和结果估算存储预算淘汰，结果合计预算为 134217728 字节（128 MiB）；这是内存对象估算，非 JSON 字节数或进程 RSS。单个结果超过该保留预算时，作业转为 failed、error.code=`JOB_RESULT_TOO_LARGE`，查询本身仍为 HTTP 200。需要长期保存的结果由平台获取后持久化。
-
-服务关闭时停止接纳，排队的 pending 作业可转为 failed、`JOB_CANCELLED`；正在执行的作业随应用生命周期等待完成。部署仍先在上游暂停提交并排空，避免依赖关机阶段完成任务。
+服务关闭时停止接纳新作业。排队作业可转为 failed、`JOB_CANCELLED`。正在执行的作业等待完成。部署前暂停提交，并排空作业。
 
 ### 13.5 错误与任务失败
 
 v2 沿用 §4 的统一 `{"error":{"code","message","detail"}}`。模型校验失败返回 HTTP 400、`INVALID_INPUT`，detail.errors 带字段与原因；无场景/作业为 404、`TASK_NOT_FOUND`；未知机型为 404、`AIRCRAFT_NOT_FOUND`。下表是 v2 额外的参数错误，均返回 400：
 
-v2 OpenAPI 为所有端点声明同一 `ErrorEnvelope`，覆盖 `400/404/429/500/503` 和 `4XX`；不使用 FastAPI 自动的 422 校验格式。HTTP 429 为后台作业容量/关闭拒绝，code 为 `JOB_QUEUE_FULL`；HTTP 503 为必须的原生内核不可用，code 为 `NATIVE_UNAVAILABLE`；未预期异常为 HTTP 500、`INTERNAL_ERROR`。
+v2 OpenAPI 为所有端点声明同一 `ErrorEnvelope`，覆盖 `400/404/429/500/503` 和 `4XX`。服务停止接纳作业时，返回 HTTP 429、`JOB_QUEUE_FULL`。内存分配失败返回 HTTP 503、`RESOURCE_EXHAUSTED`。原生内核不可用返回 HTTP 503、`NATIVE_UNAVAILABLE`。未预期异常返回 HTTP 500、`INTERNAL_ERROR`。
 
 | code | 原因 |
 |------|------|
@@ -1409,7 +1394,7 @@ v2 OpenAPI 为所有端点声明同一 `ErrorEnvelope`，覆盖 `400/404/429/500
 | `COORDINATE_RANGE_EXCEEDED` | 超出声明的局部半径 |
 | `COORDINATE_CONTEXT_MISMATCH` | SDK 使用的 CoordinateFrame 与请求原点配置不同 |
 
-请求合法而路径不可行时，HTTP 200，RouteResult.status 为 failed/timeout，code 常见 `SEARCH_NOT_FOUND/TIME/CONSTRAINT_VIOLATION/SEPARATION/TIME_BUDGET_EXCEEDED`。其中 timeout 专指规划预算耗尽。缺 C++ 扩展时 health degraded，规划返回 503/NATIVE_UNAVAILABLE；不静默降级为 Python 算法。验证端点的 MOTION_MODEL_REQUIRED/MOTION_MODEL、作业内的 JOB_RESULT_TOO_LARGE/JOB_CANCELLED 属于结果违规/作业错误，检查响应体，不能只按 HTTP 状态判断成功。
+请求合法而路径不可行时，HTTP 200，RouteResult.status 为 failed。常见 code 为 `SEARCH_NOT_FOUND/TIME/CONSTRAINT_VIOLATION/SEPARATION`。调用方设置的 `time_budget_s` 到期时，返回 status=timeout、code=`TIME_BUDGET_EXCEEDED`。缺 C++ 扩展时，health 为 degraded，规划返回 HTTP 503、`NATIVE_UNAVAILABLE`。验证违规和作业错误写入响应体；检查 `validation`、`status` 和 `error`。
 
 ## 14. v2 完整调用示例
 
@@ -1675,6 +1660,6 @@ print(json.dumps(job["result"], ensure_ascii=False))
 
 迁移时先确定投影原点与真实高度来源，把 v1 局部几何经坐标转换成为 WGS84；不要把米坐标直接写入经纬度 WKT。再把障碍半宽换算成足迹、注册场景，显式选择路径模式和机型，核对相对 time_origin 的时间。先用单任务比对端点、距离、高度和运动约束，再用有交叉任务的批量请求检查逐条状态与 conflicts。现有调用方可继续使用 v1，不需为新增 v2 修改请求。
 
-v2 的固定性能验收使用 `input/v2_benchmarks` 的 SHA-256 冻结输入、三套各 1000 任务、各 10 轮、8 CPU/8 GB，要求每轮所有任务成功并完整返回 JSON ≤10 秒。场景注册单独计时；HTTP 异步提交的 202 不计作完成。该条件是验收口径，不是对任意地图、任意约束或不同行为任务的通用时延承诺。实际发布结果以对应镜像的验收记录为准。
+v2 历史性能验收使用 `input/v2_benchmarks` 的冻结输入。strict/mixed/free 三套各有 1000 个任务，各运行 10 轮，资源为 8 CPU / 8 GiB。每轮全部任务成功，完整 JSON 在 10 秒内返回。场景注册单独计时。正式服务使用 2 CPU / 2 GiB，按实际场景和负载测量耗时。
 
 批量结果 `stage_timings_ms` 记录场景/任务解析、搜索与运动证书、预约调度、最终校验与 WKT、SDK 响应序列化的毫秒耗时。HTTP 验收另计完整传输与 JSON 编解码，不以这些阶段之和替代整批计时。`GET /api/v2/version` 的 `engine.git_sha` 标识镜像构建提交。

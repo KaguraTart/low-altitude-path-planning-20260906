@@ -57,7 +57,7 @@ class SpaceTimeAStar:
         max_speed: float = 15.0,
         wait_enabled: bool = True,
         neighbor_mode: str = "6",
-        max_iterations: int = 2_000_000,
+        max_iterations: Optional[int] = None,
         grid: Optional[SpaceTimeGrid] = None,
         cost_grid: Optional[CostGrid] = None,
         min_altitude: Optional[float] = None,
@@ -468,7 +468,7 @@ class SpaceTimeAStar:
         found = False
         current = start_state
 
-        while open_set and iterations < max_iterations:
+        while open_set and (max_iterations is None or iterations < max_iterations):
             iterations += 1
             f_current, _, current = heapq.heappop(open_set)
 

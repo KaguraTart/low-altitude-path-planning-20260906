@@ -235,7 +235,7 @@ def run_scale(
     obstacle_set: ObstacleSet,
     seed: int,
     max_workers: int,
-    max_iterations: int,
+    max_iterations: int | None,
     dispatch: bool = False,
     use_cost_grid: bool = True,
     verbose: bool = True,
@@ -379,8 +379,8 @@ def main():
         help="并行线程数（默认 8，建议 ≤ CPU 核心数）",
     )
     parser.add_argument(
-        "--max-iterations", type=int, default=200_000,
-        help="A* 最大迭代次数（默认 200000，避免极大规模下爆炸）",
+        "--max-iterations", type=int, default=None,
+        help="A* 单任务迭代预算（默认不限制次数）",
     )
     parser.add_argument("--output", default="./output/stress", help="结果输出目录")
     parser.add_argument(
@@ -478,6 +478,8 @@ def main():
                 print(f"\n[!] 用户中断，已完成 {len(results)}/{len(args.scales)} 个规模 "
                       f"[{mode_name}]", flush=True)
                 break
+            except MemoryError:
+                raise
             except Exception as e:
                 import traceback
                 traceback.print_exc()
@@ -545,7 +547,7 @@ def _write_markdown_report(
     lines.append("- **机型池**: 4 种 (DJI-Matrice-300 / DJI-Mavic-3-Enterprise / "
                  "Custom-Delivery-Drone / Inspection-Drone-Pro)")
     lines.append(f"- **并行度**: {args.workers} 工作线程")
-    lines.append(f"- **A* 截断**: 单任务最大 {args.max_iterations:,} 次迭代")
+    lines.append("- **A* 迭代预算**: " + ("不限制次数" if args.max_iterations is None else f"每任务 {args.max_iterations:,} 次"))
     lines.append(f"- **随机种子**: {args.seed} (保证可复现)")
     lines.append("- **空域大小**: 5km × 5km × 500m，时间窗口 1200s (120 步)")
     lines.append("- **网格规模**: 50×50×10×120 = 3,000,000 个时空格")

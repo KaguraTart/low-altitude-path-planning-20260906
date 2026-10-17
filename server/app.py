@@ -56,6 +56,7 @@ _ERROR_STATUS: Dict[str, int] = {
     ErrorCode.TIMEOUT: 504,
     ErrorCode.INTERNAL_ERROR: 500,
     ErrorCode.JOB_QUEUE_FULL: 429,
+    ErrorCode.RESOURCE_EXHAUSTED: 503,
 }
 
 _STARTED_AT = time.time()
@@ -138,6 +139,15 @@ async def _validation_error_handler(request: Request, exc: RequestValidationErro
 async def _native_unavailable_handler(request: Request, exc: NativeUnavailableError):
     return JSONResponse(status_code=503, content={
         "error": {"code": ErrorCode.NATIVE_UNAVAILABLE, "message": str(exc), "detail": {}}
+    })
+
+
+@app.exception_handler(MemoryError)
+async def _memory_error_handler(request: Request, exc: MemoryError):
+    return JSONResponse(status_code=503, content={
+        "error": {"code": ErrorCode.RESOURCE_EXHAUSTED,
+                  "message": "Memory allocation failed",
+                  "detail": {"type": type(exc).__name__}}
     })
 
 

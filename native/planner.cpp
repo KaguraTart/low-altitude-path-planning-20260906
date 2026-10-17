@@ -36,8 +36,11 @@ struct Deadline {
     bool enabled;
     explicit Deadline(double ms): enabled(ms > 0) {
         nonnegative(ms, "deadline_ms");
-        if(ms>1e12)throw std::invalid_argument("deadline_ms exceeds representable duration");
-        stop = std::chrono::steady_clock::now() + std::chrono::duration_cast<std::chrono::steady_clock::duration>(std::chrono::duration<double, std::milli>(ms));
+        const auto now=std::chrono::steady_clock::now();
+        const auto remaining=std::chrono::steady_clock::time_point::max()-now;
+        const auto budget=std::chrono::duration<long double,std::milli>(ms);
+        stop=!enabled||budget>=remaining ? std::chrono::steady_clock::time_point::max()
+            : now+std::chrono::duration_cast<std::chrono::steady_clock::duration>(budget);
     }
     bool expired() const { return enabled && std::chrono::steady_clock::now() >= stop; }
 };
@@ -192,7 +195,7 @@ ConflictResult find_conflicts(const std::vector<Trajectory>& ts,double h,double 
         for(const auto& s:ss) {
             bool stopped=index.query(s,h,v,[&](size_t j){
                 ++result.checked;auto c=collide(s,index.data[j],h,v);
-                if(c.hit){result.records.push_back({index.data[j].owner,s.owner,c});if(result.records.size()>=cap){result.status="conflict_limit";return true;}}
+                if(c.hit){result.records.push_back({index.data[j].owner,s.owner,c});if(cap&&result.records.size()>=cap){result.status="conflict_limit";return true;}}
                 return false;
             });
             if(stopped) return result;
@@ -204,13 +207,24 @@ ConflictResult find_conflicts(const std::vector<Trajectory>& ts,double h,double 
 // For a fixed pair of linear segments, the forbidden departure times form one
 // interval: their joint disk/slab/time feasibility set is convex. Find its upper
 // boundary from a known colliding departure, avoiding a coarse time increment.
+double advance_departure(double current,double requested) {
+    if(!std::isfinite(current)||!std::isfinite(requested))
+        throw std::overflow_error("Departure time cannot be represented by a finite number");
+    double next=std::max(current+1e-6,requested);
+    if(next<=current)next=std::nextafter(current,INF);
+    if(!std::isfinite(next)||next<=current)
+        throw std::overflow_error("Departure time cannot make representable forward progress");
+    return next;
+}
 double release_delay(const Segment& base,const Segment& reserved,double current,double h,double v) {
     double lo=current,hi=std::max(current,reserved.t1-base.t0)+1e-6;
-    for(int i=0;i<48 && hi-lo>1e-8;++i) {
-        double mid=lo+(hi-lo)*.5;
+    if(!std::isfinite(hi))throw std::overflow_error("Reservation release time exceeds finite arithmetic");
+    while(hi-lo>1e-8) {
+        double mid=lo*.5+hi*.5;
+        if(mid<=lo||mid>=hi)break;
         if(collide(base.shifted(mid),reserved,h,v).hit)lo=mid;else hi=mid;
     }
-    return hi+1e-6;
+    return advance_departure(hi,hi);
 }
 struct ScheduleResult {std::string status="ok";std::vector<double> delays;std::vector<std::string> statuses;size_t accepted=0;};
 ScheduleResult schedule(const std::vector<Trajectory>& ts,const std::vector<std::array<double,2>>& windows,const std::vector<int>& priorities,double h,double v,size_t fixed_count,Deadline& deadline) {
@@ -230,17 +244,16 @@ ScheduleResult schedule(const std::vector<Trajectory>& ts,const std::vector<std:
     for(size_t k=0;k<order.size();++k) {
         if(deadline.expired()){result.status="deadline_exceeded";for(size_t z=k;z<order.size();++z)result.statuses[order[z]]="deadline_exceeded";break;}
         size_t i=order[k];auto ss=segments(ts[i],i);double shift=windows[i][0]-ts[i].times.front();double latest=windows[i][1]-ts[i].times.front();
-        bool accepted=false;size_t attempts=0;
+        bool accepted=false;
         while(shift<=latest+EPS) {
             if(deadline.expired()){result.status="deadline_exceeded";result.statuses[i]="deadline_exceeded";break;}
-            if(++attempts>100000){result.statuses[i]="iteration_limit";break;}
             bool hit=false;double next=shift;
             for(const auto& base:ss) {
                 auto shifted=base.shifted(shift);
                 if(index.query(shifted,h,v,[&](size_t j){if(collide(shifted,index.data[j],h,v).hit){next=release_delay(base,index.data[j],shift,h,v);return true;}return false;})){hit=true;break;}
             }
             if(!hit){index.add(segments(ts[i],i,shift));result.delays[i]=shift;result.statuses[i]="scheduled";++result.accepted;accepted=true;break;}
-            shift=std::max(shift+1e-6,next);
+            shift=advance_departure(shift,next);
         }
         if(!accepted && result.statuses[i]=="unscheduled")result.statuses[i]="window_exhausted";
     }
@@ -270,7 +283,7 @@ SearchResult astar(const Graph& g,int start,int goal,const std::vector<int>& blo
         if(deadline.expired()){r.status="deadline_exceeded";return r;}
         auto [f,n]=open.top();open.pop();if(f>best[n]+g.heuristic_scale*distance(g.nodes[n],g.nodes[goal])+EPS)continue;
         if(n==goal){r.status="ok";r.cost=best[n];for(int x=n;x>=0;x=parent[x])r.path.push_back(x);std::reverse(r.path.begin(),r.path.end());return r;}
-        if(r.expanded++>=limit){r.status="iteration_limit";return r;}
+        if(limit&&r.expanded>=limit){r.status="iteration_limit";return r;}++r.expanded;
         for(auto e:g.adjacent[n])if(!ban[e.node]&&best[n]+e.cost+EPS<best[e.node]){best[e.node]=best[n]+e.cost;parent[e.node]=n;open.push({best[e.node]+g.heuristic_scale*distance(g.nodes[e.node],g.nodes[goal]),e.node});}
     }return r;
 }
@@ -289,7 +302,7 @@ struct GridResult {std::string status="no_path";std::vector<Vec> path;double cos
 GridResult grid_astar(Vec start,Vec goal,const std::vector<Vec>& bounds,Vec resolution,const CellSet& blocked,const CellSet& allowed,bool restrict_allowed,size_t limit,Deadline& deadline) {
     if(bounds.size()!=2)throw std::invalid_argument("bounds must have shape (2, 3)");
     Cell shape{},s{},target{};
-    for(int k=0;k<3;++k){finite(start[k],"start");finite(goal[k],"goal");finite(resolution[k],"resolution");if(resolution[k]<=0||bounds[1][k]<bounds[0][k])throw std::invalid_argument("resolution must be positive and bounds ordered");double count=std::floor((bounds[1][k]-bounds[0][k])/resolution[k])+1;if(count>2e9)throw std::invalid_argument("grid axis too large");shape[k]=static_cast<std::int64_t>(count);if(start[k]<bounds[0][k]-EPS||start[k]>bounds[1][k]+EPS||goal[k]<bounds[0][k]-EPS||goal[k]>bounds[1][k]+EPS)throw std::invalid_argument("start and goal must lie inside bounds");s[k]=std::clamp<std::int64_t>(std::llround((start[k]-bounds[0][k])/resolution[k]),0,shape[k]-1);target[k]=std::clamp<std::int64_t>(std::llround((goal[k]-bounds[0][k])/resolution[k]),0,shape[k]-1);}
+    for(int k=0;k<3;++k){finite(start[k],"start");finite(goal[k],"goal");finite(resolution[k],"resolution");if(resolution[k]<=0||bounds[1][k]<bounds[0][k])throw std::invalid_argument("resolution must be positive and bounds ordered");double count=std::floor((bounds[1][k]-bounds[0][k])/resolution[k])+1;if(!std::isfinite(count)||count<1||count>=static_cast<double>(std::numeric_limits<std::int64_t>::max()))throw std::overflow_error("grid axis cannot be represented by int64 indices");shape[k]=static_cast<std::int64_t>(count);if(start[k]<bounds[0][k]-EPS||start[k]>bounds[1][k]+EPS||goal[k]<bounds[0][k]-EPS||goal[k]>bounds[1][k]+EPS)throw std::invalid_argument("start and goal must lie inside bounds");s[k]=std::clamp<std::int64_t>(std::llround((start[k]-bounds[0][k])/resolution[k]),0,shape[k]-1);target[k]=std::clamp<std::int64_t>(std::llround((goal[k]-bounds[0][k])/resolution[k]),0,shape[k]-1);}
     auto free=[&](const Cell& c){for(int k=0;k<3;++k)if(c[k]<0||c[k]>=shape[k])return false;return blocked.count(c)==0&&(!restrict_allowed||allowed.count(c));};
     auto position=[&](const Cell& c){return Vec{bounds[0][0]+c[0]*resolution[0],bounds[0][1]+c[1]*resolution[1],bounds[0][2]+c[2]*resolution[2]};};
     GridResult r;if(!free(s)||!free(target))return r;
@@ -299,7 +312,7 @@ GridResult grid_astar(Vec start,Vec goal,const std::vector<Vec>& bounds,Vec reso
         if(deadline.expired()){r.status="deadline_exceeded";return r;}
         auto cur=open.top();open.pop();auto c=cur.cell;if(cur.f>best[c]+distance(position(c),position(target))+EPS)continue;
         if(c==target){std::vector<Vec> reverse;for(Cell x=c;;x=parents.at(x)){reverse.push_back(position(x));if(x==s)break;}r.path.assign(reverse.rbegin(),reverse.rend());if(distance(start,r.path.front())>EPS)r.path.insert(r.path.begin(),start);else r.path.front()=start;if(distance(goal,r.path.back())>EPS)r.path.push_back(goal);else r.path.back()=goal;r.cost=0;for(size_t i=1;i<r.path.size();++i)r.cost+=distance(r.path[i-1],r.path[i]);r.status="ok";return r;}
-        if(r.expanded++>=limit){r.status="iteration_limit";return r;}
+        if(limit&&r.expanded>=limit){r.status="iteration_limit";return r;}++r.expanded;
         for(int dx=-1;dx<=1;++dx)for(int dy=-1;dy<=1;++dy)for(int dz=-1;dz<=1;++dz){if(dx==0&&dy==0&&dz==0)continue;int delta[3]={dx,dy,dz};Cell next{c[0]+dx,c[1]+dy,c[2]+dz};if(!free(next))continue;bool clear=true;for(int mask=1;mask<8&&clear;++mask){Cell corner=c;bool proper=false;for(int k=0;k<3;++k){if(mask&(1<<k))corner[k]+=delta[k];else if(delta[k])proper=true;}if(proper&&!free(corner))clear=false;}if(!clear)continue;double cand=best[c]+distance(position(c),position(next));auto it=best.find(next);if(it==best.end()||cand+EPS<it->second){best[next]=cand;parents[next]=c;open.push({cand+distance(position(next),position(target)),next});}}
     }return r;
 }
@@ -374,14 +387,14 @@ SearchResult sipp(const Graph& g,int start,int goal,const std::vector<Trajectory
     auto intervals=[&](int node)->const std::vector<Interval>&{if(!ready[node]){safe[node]=safe_intervals(g.nodes[node],reservations,h,v,start_time,latest);ready[node]=true;}return safe[node];};
     SearchResult r;std::vector<SippState> states;std::unordered_map<StateKey,std::vector<double>,StateHash> best;std::priority_queue<QueueItem,std::vector<QueueItem>,std::greater<QueueItem>> open;
     // Earliest arrival dominates only when waiting at this node is legal.
-    // Otherwise keep distinct arrival labels, bounded by max_iterations.
+    // Otherwise keep distinct arrival labels within the caller's time window.
     auto record=[&](const StateKey& key,double arrival){auto& labels=best[key];if(can_wait[key.node]){if(!labels.empty()&&labels[0]<=arrival+EPS)return false;labels.assign(1,arrival);return true;}auto it=std::lower_bound(labels.begin(),labels.end(),arrival-EPS);if(it!=labels.end()&&*it<=arrival+EPS)return false;labels.insert(it,arrival);return true;};
     const auto& initial=intervals(start);for(size_t i=0;i<initial.size();++i){double t=initial[i][0];states.push_back({start,static_cast<int>(i),-1,t,t,-1,-1});record({start,static_cast<int>(i),-1},t);open.push({t+g.heuristic_scale*distance(g.nodes[start],g.nodes[goal]),static_cast<int>(states.size()-1)});}
     while(!open.empty()) {
         if(deadline.expired()){r.status="deadline_exceeded";return r;}
         auto [f,id]=open.top();open.pop();auto cur=states[id];StateKey key{cur.node,cur.interval,cur.previous};if(can_wait[cur.node]&&cur.arrival>best[key][0]+EPS)continue;
         if(cur.node==goal){std::vector<int> chain;for(int n=id;n>=0;n=states[n].parent)chain.push_back(n);std::reverse(chain.begin(),chain.end());r.path.push_back(start);r.times.push_back(states[chain.front()].arrival);for(size_t z=1;z<chain.size();++z){auto state=states[chain[z]];if(state.depart>r.times.back()+EPS){r.path.push_back(states[state.parent].node);r.times.push_back(state.depart);}r.path.push_back(state.node);r.times.push_back(state.arrival);r.edge_ids.push_back(state.edge_id);}r.cost=cur.arrival-start_time;r.status="ok";return r;}
-        if(r.expanded++>=limit){r.status="iteration_limit";return r;}
+        if(limit&&r.expanded>=limit){r.status="iteration_limit";return r;}++r.expanded;
         const auto source=intervals(cur.node)[cur.interval];
         for(auto e:g.adjacent[cur.node]) {
             if(e.cost<=0)continue;
@@ -392,13 +405,11 @@ SearchResult sipp(const Graph& g,int start,int goal,const std::vector<Trajectory
             for(size_t j=0;j<dest.size();++j) {
                 double departure=can_wait[cur.node]?std::max(cur.arrival,dest[j][0]-e.cost):cur.arrival,last=std::min(source[1],dest[j][1]-e.cost);if(departure>last+EPS||departure+e.cost<dest[j][0])continue;
                 bool clear=false;
-                size_t attempts=0;
                 while(departure<=last+EPS) {
                     if(deadline.expired()){r.status="deadline_exceeded";return r;}
-                    if(++attempts>100000){r.status="iteration_limit";return r;}
                     double next=departure;bool hit=false;
                     for(const auto& base:motion){if(deadline.expired()){r.status="deadline_exceeded";return r;}auto edge=base.shifted(departure);if(reservations.query(edge,h,v,[&](size_t k){if(collide(edge,reservations.data[k],h,v).hit){next=release_delay(base,reservations.data[k],departure,h,v);return true;}return false;})){hit=true;break;}}
-                    if(!hit){clear=true;break;}if(!can_wait[cur.node])break;departure=std::max(departure+1e-6,next);
+                    if(!hit){clear=true;break;}if(!can_wait[cur.node])break;departure=advance_departure(departure,next);
                 }
                 if(!clear) continue;
                 double arrival=departure+e.cost;
@@ -585,9 +596,9 @@ PYBIND11_MODULE(_native,m) {
     m.attr("ENGINE_VERSION")="2.0.0";
     m.def("validate_motion",[](const py::sequence& primitives,const Limits& limits,const std::vector<double>& starts){auto ps=motion_primitives(primitives);if(!starts.empty()&&starts.size()!=ps.size())throw std::invalid_argument("starts must contain one timestamp per primitive");for(auto t:starts)finite(t,"primitive start time");for(const auto& entry:limits){nonnegative(entry.second,entry.first.c_str());}ValidationResult r;{py::gil_scoped_release release;r=validate_motion(ps,limits,starts);}return validation_dict(r);},py::arg("primitives"),py::arg("limits"),py::arg("starts")=std::vector<double>{});
     m.def("validate_trajectory",[](const RealArray& path,const RealArray& times,const Limits& limits){auto p=points(path,"path");auto t=numbers(times,"times");if(p.empty()||p.size()!=t.size())throw std::invalid_argument("path must have one timestamp per point");for(size_t i=1;i<t.size();++i)if(t[i]<=t[i-1])throw std::invalid_argument("times must be strictly increasing");for(const auto& entry:limits)nonnegative(entry.second,entry.first.c_str());ValidationResult r;{py::gil_scoped_release release;r=validate_samples({p,t},limits);}return validation_dict(r);},py::arg("path"),py::arg("times"),py::arg("limits"));
-    m.def("graph_search",[](const RealArray& ns,const IntArray& es,const RealArray& cs,int start,int goal,const std::vector<int>& blocked,size_t limit,double ms,bool directed){auto g=graph(ns,es,cs,directed);SearchResult r;{py::gil_scoped_release release;Deadline deadline(ms);r=astar(g,start,goal,blocked,limit,deadline);}return search_dict(r);},py::arg("nodes"),py::arg("edges"),py::arg("edge_costs"),py::arg("start"),py::arg("goal"),py::arg("blocked_nodes")=std::vector<int>{},py::arg("max_iterations")=200000,py::arg("deadline_ms")=0.,py::arg("directed")=false);
-    m.def("grid_search",[](Vec start,Vec goal,const RealArray& bounds,Vec resolution,const IntArray& blocked,const py::object& allowed,size_t limit,double ms){auto bs=points(bounds,"bounds");auto blocked_set=cells(blocked);CellSet allowed_set;bool restrict_allowed=!allowed.is_none();if(restrict_allowed)allowed_set=cells(IntArray::ensure(allowed));GridResult r;{py::gil_scoped_release release;Deadline deadline(ms);r=grid_astar(start,goal,bs,resolution,blocked_set,allowed_set,restrict_allowed,limit,deadline);}py::dict d;d["status"]=r.status;d["path"]=r.path;d["cost"]=std::isfinite(r.cost)?py::cast(r.cost):py::none();d["expanded"]=r.expanded;return d;},py::arg("start"),py::arg("goal"),py::arg("bounds"),py::arg("resolution"),py::arg("blocked"),py::arg("allowed")=py::none(),py::arg("max_iterations")=200000,py::arg("deadline_ms")=0.);
-    m.def("continuous_conflicts",[](const py::sequence& paths,const py::sequence& times,double h,double v,size_t cap,double ms){nonnegative(h,"horizontal_separation");nonnegative(v,"vertical_separation");if(cap==0)throw std::invalid_argument("max_conflicts must be positive");auto ts=trajectories(paths,times);ConflictResult r;{py::gil_scoped_release release;Deadline deadline(ms);r=find_conflicts(ts,h,v,cap,deadline);}py::list records;for(auto rec:r.records){py::dict d;d["first"]=rec.first;d["second"]=rec.second;d["start"]=rec.collision.start;d["end"]=rec.collision.end;d["min_horizontal"]=rec.collision.horizontal;d["min_vertical"]=rec.collision.vertical;records.append(d);}py::dict d;d["status"]=r.status;d["conflicts"]=records;d["checked_pairs"]=r.checked;return d;},py::arg("paths"),py::arg("times"),py::arg("horizontal_separation"),py::arg("vertical_separation"),py::arg("max_conflicts")=10000,py::arg("deadline_ms")=0.);
+    m.def("graph_search",[](const RealArray& ns,const IntArray& es,const RealArray& cs,int start,int goal,const std::vector<int>& blocked,size_t limit,double ms,bool directed){auto g=graph(ns,es,cs,directed);SearchResult r;{py::gil_scoped_release release;Deadline deadline(ms);r=astar(g,start,goal,blocked,limit,deadline);}return search_dict(r);},py::arg("nodes"),py::arg("edges"),py::arg("edge_costs"),py::arg("start"),py::arg("goal"),py::arg("blocked_nodes")=std::vector<int>{},py::arg("max_iterations")=0,py::arg("deadline_ms")=0.,py::arg("directed")=false);
+    m.def("grid_search",[](Vec start,Vec goal,const RealArray& bounds,Vec resolution,const IntArray& blocked,const py::object& allowed,size_t limit,double ms){auto bs=points(bounds,"bounds");auto blocked_set=cells(blocked);CellSet allowed_set;bool restrict_allowed=!allowed.is_none();if(restrict_allowed)allowed_set=cells(IntArray::ensure(allowed));GridResult r;{py::gil_scoped_release release;Deadline deadline(ms);r=grid_astar(start,goal,bs,resolution,blocked_set,allowed_set,restrict_allowed,limit,deadline);}py::dict d;d["status"]=r.status;d["path"]=r.path;d["cost"]=std::isfinite(r.cost)?py::cast(r.cost):py::none();d["expanded"]=r.expanded;return d;},py::arg("start"),py::arg("goal"),py::arg("bounds"),py::arg("resolution"),py::arg("blocked"),py::arg("allowed")=py::none(),py::arg("max_iterations")=0,py::arg("deadline_ms")=0.);
+    m.def("continuous_conflicts",[](const py::sequence& paths,const py::sequence& times,double h,double v,size_t cap,double ms){nonnegative(h,"horizontal_separation");nonnegative(v,"vertical_separation");auto ts=trajectories(paths,times);ConflictResult r;{py::gil_scoped_release release;Deadline deadline(ms);r=find_conflicts(ts,h,v,cap,deadline);}py::list records;for(auto rec:r.records){py::dict d;d["first"]=rec.first;d["second"]=rec.second;d["start"]=rec.collision.start;d["end"]=rec.collision.end;d["min_horizontal"]=rec.collision.horizontal;d["min_vertical"]=rec.collision.vertical;records.append(d);}py::dict d;d["status"]=r.status;d["conflicts"]=records;d["checked_pairs"]=r.checked;return d;},py::arg("paths"),py::arg("times"),py::arg("horizontal_separation"),py::arg("vertical_separation"),py::arg("max_conflicts")=0,py::arg("deadline_ms")=0.);
     m.def("schedule_paths",[](const py::sequence& paths,const py::sequence& times,const RealArray& windows,double h,double v,const py::object& priority_arg,double ms,size_t fixed_count){nonnegative(h,"horizontal_separation");nonnegative(v,"vertical_separation");auto ts=trajectories(paths,times);if(fixed_count>ts.size())throw std::invalid_argument("fixed_count cannot exceed the number of trajectories");if(windows.ndim()!=2||windows.shape(1)!=2||static_cast<size_t>(windows.shape(0))!=ts.size())throw std::invalid_argument("departure_windows must have shape (N, 2)");auto w=windows.unchecked<2>();std::vector<std::array<double,2>> ws(ts.size());for(size_t i=0;i<ts.size();++i){finite(w(i,0),"departure_windows");finite(w(i,1),"departure_windows");if(w(i,0)>w(i,1))throw std::invalid_argument("departure windows must be ordered");ws[i]={w(i,0),w(i,1)};}std::vector<int> priorities(ts.size(),0);if(!priority_arg.is_none()){priorities=priority_arg.cast<std::vector<int>>();if(priorities.size()!=ts.size())throw std::invalid_argument("one priority is required per path");}ScheduleResult r;{py::gil_scoped_release release;Deadline deadline(ms);r=schedule(ts,ws,priorities,h,v,fixed_count,deadline);}py::list delays;for(auto x:r.delays)delays.append(std::isfinite(x)?py::cast(x):py::none());py::dict d;d["status"]=r.status;d["delays"]=delays;d["statuses"]=r.statuses;d["accepted"]=r.accepted;return d;},py::arg("paths"),py::arg("times"),py::arg("departure_windows"),py::arg("horizontal_separation"),py::arg("vertical_separation"),py::arg("priorities")=py::none(),py::arg("deadline_ms")=0.,py::arg("fixed_count")=0);
-    m.def("solve_sipp",[](const RealArray& ns,const IntArray& es,const RealArray& ds,int start,int goal,const py::sequence& paths,const py::sequence& times,double h,double v,double begin,double latest,size_t limit,double ms,bool directed,double turn,const py::object& wait_allowed,const py::object& edge_paths,const py::object& edge_times){nonnegative(h,"horizontal_separation");nonnegative(v,"vertical_separation");auto g=graph(ns,es,ds,directed);auto allowed=wait_mask(wait_allowed,g.nodes.size());auto shaped=sipp_edges(g,es,ds,edge_paths,edge_times);auto occupied=trajectories(paths,times);SearchResult r;{py::gil_scoped_release release;Deadline deadline(ms);r=sipp(g,start,goal,occupied,h,v,begin,latest,limit,turn,allowed,shaped,deadline);}return search_dict(r);},py::arg("nodes"),py::arg("edges"),py::arg("durations"),py::arg("start"),py::arg("goal"),py::arg("reservations_paths")=py::list(),py::arg("reservations_times")=py::list(),py::arg("horizontal_separation")=0.,py::arg("vertical_separation")=0.,py::arg("start_time")=0.,py::arg("latest_arrival")=INF,py::arg("max_iterations")=200000,py::arg("deadline_ms")=0.,py::arg("directed")=false,py::arg("max_turn_angle")=3.141592653589793,py::arg("wait_allowed")=py::none(),py::arg("edge_paths")=py::none(),py::arg("edge_times")=py::none());
+    m.def("solve_sipp",[](const RealArray& ns,const IntArray& es,const RealArray& ds,int start,int goal,const py::sequence& paths,const py::sequence& times,double h,double v,double begin,double latest,size_t limit,double ms,bool directed,double turn,const py::object& wait_allowed,const py::object& edge_paths,const py::object& edge_times){nonnegative(h,"horizontal_separation");nonnegative(v,"vertical_separation");auto g=graph(ns,es,ds,directed);auto allowed=wait_mask(wait_allowed,g.nodes.size());auto shaped=sipp_edges(g,es,ds,edge_paths,edge_times);auto occupied=trajectories(paths,times);SearchResult r;{py::gil_scoped_release release;Deadline deadline(ms);r=sipp(g,start,goal,occupied,h,v,begin,latest,limit,turn,allowed,shaped,deadline);}return search_dict(r);},py::arg("nodes"),py::arg("edges"),py::arg("durations"),py::arg("start"),py::arg("goal"),py::arg("reservations_paths")=py::list(),py::arg("reservations_times")=py::list(),py::arg("horizontal_separation")=0.,py::arg("vertical_separation")=0.,py::arg("start_time")=0.,py::arg("latest_arrival")=INF,py::arg("max_iterations")=0,py::arg("deadline_ms")=0.,py::arg("directed")=false,py::arg("max_turn_angle")=3.141592653589793,py::arg("wait_allowed")=py::none(),py::arg("edge_paths")=py::none(),py::arg("edge_times")=py::none());
 }

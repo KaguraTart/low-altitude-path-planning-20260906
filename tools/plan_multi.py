@@ -74,8 +74,8 @@ def main():
     parser.add_argument("--workers", type=int, default=4, help="并行线程数")
     parser.add_argument("--dispatch", action="store_true",
                         help="调度模式（共享网格 + 跳过 risk/heading + 预微调）")
-    parser.add_argument("--max-iterations", type=int, default=200_000,
-                        help="A* 单任务最大迭代次数")
+    parser.add_argument("--max-iterations", type=int, default=None,
+                        help="A* 单任务迭代预算（默认不限制次数）")
     parser.add_argument("--no-validation", action="store_true",
                         help="跳过飞行器需求校验")
     parser.add_argument("--no-avoid-conflicts", action="store_true",

@@ -114,6 +114,35 @@ def test_projection_radius_limit_both_directions():
     assert frame.to_local(f"POINT Z ({lon} {lat} 320)", "MSL").x == pytest.approx(49999)
 
 
+def test_caller_can_declare_radius_above_fifty_kilometres():
+    frame = CoordinateFrame(spec(max_radius_m=100000))
+    wkt = frame.to_wgs84(Point(75000, 0, 20))
+    assert frame.to_local(wkt, "MSL").x == pytest.approx(75000)
+    with pytest.raises(CoordinateError, match="declared"):
+        frame.to_wgs84(Point(100001, 0, 20))
+
+
+@pytest.mark.parametrize("target", [
+    "uav_planner.v2.models.from_wkt", "uav_planner.v2.coordinates.from_wkt",
+])
+def test_coordinate_memory_failure_is_not_invalid_input(monkeypatch, target):
+    def out_of_memory(*args, **kwargs):
+        raise MemoryError("test allocation")
+
+    monkeypatch.setattr(target, out_of_memory)
+    with pytest.raises(MemoryError, match="test allocation"):
+        CoordinateFrame(spec()).to_local("POINT Z (104.78 29.34 320)", "MSL")
+
+
+def test_task_and_scene_accept_more_waypoints_and_longer_declared_horizon():
+    value = task().model_dump()
+    value["waypoints"] = [{"wkt": value["start_wkt"]}] * 257
+    assert len(Task.model_validate(value).waypoints) == 257
+    scene = Scene(coordinates=spec(), time_origin=AT, horizon_s=86401,
+                  bounds=Bounds3D(x_min=0, x_max=100, y_min=0, y_max=100, z_min=0, z_max=100))
+    assert scene.horizon_s == 86401
+
+
 def test_bidirectional_batch_conversion_preserves_z_and_context():
     request = CoordinateRequest(coordinates=spec(), direction="wgs84_to_local", alt_reference="MSL",
                                 geometries_wkt=["POINT Z (104.78 29.34 320)", "POINT Z (104.781 29.34 330)"])
@@ -134,7 +163,7 @@ def test_polygon_footprints_remain_2d_without_vertical_evidence():
     assert not CoordinateFrame(spec()).to_local(value, "AGL").has_z
 
 
-@pytest.mark.parametrize("updates", [{"origin_lon": "104"}, {"origin_lat": True}, {"origin_alt_msl": float("inf")}, {"max_radius_m": 50001}, {"unknown": 1}])
+@pytest.mark.parametrize("updates", [{"origin_lon": "104"}, {"origin_lat": True}, {"origin_alt_msl": float("inf")}, {"origin_alt_msl": 10**1000}, {"max_radius_m": 0}, {"unknown": 1}])
 def test_coordinate_model_is_strict_and_finite(updates):
     values = dict(origin_lon=104.78, origin_lat=29.34)
     values.update(updates)

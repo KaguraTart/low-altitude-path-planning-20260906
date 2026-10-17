@@ -1,4 +1,4 @@
-"""Bounded background admission, retention, and application shutdown."""
+"""Background jobs retain complete results until the process stops."""
 from importlib import import_module
 from threading import Event
 from time import monotonic, sleep
@@ -22,62 +22,62 @@ def finished(registry, job_id):
     pytest.fail("Background job did not finish")
 
 
-def test_queue_rejects_overload_without_retaining_more_requests():
-    registry = JobRegistry(max_workers=1, max_jobs=2)
+def test_queue_accepts_more_than_the_previous_admission_limit():
+    registry = JobRegistry(max_workers=1)
     gate = Event()
     try:
-        registry.submit(gate.wait)
-        registry.submit(gate.wait)
-        with pytest.raises(PlanningError) as error:
-            registry.submit(gate.wait)
-        assert error.value.code == ErrorCode.JOB_QUEUE_FULL
-        assert registry.stats()["total"] == 2
+        ids = [registry.submit(gate.wait) for _ in range(201)]
+        assert registry.stats()["total"] == len(ids)
+        assert all(registry.get(jid) is not None for jid in ids)
+        gate.set()
+        assert finished(registry, ids[-1])["status"] == "succeeded"
     finally:
         gate.set()
         registry.shutdown(wait=True)
 
 
-def test_completion_evicts_excess_history_and_result_bytes():
-    registry = JobRegistry(max_workers=1, max_jobs=3, max_completed_bytes=2000)
+def test_completed_history_keeps_all_results():
+    registry = JobRegistry(max_workers=1)
     try:
-        first = registry.submit(lambda: "x" * 1500)
-        assert finished(registry, first)["status"] == "succeeded"
-        second = registry.submit(lambda: "y" * 1500)
-        assert finished(registry, second)["status"] == "succeeded"
-        assert registry.get(first) is None
-        assert registry.stats()["total"] == 1
+        result = {"values": list(range(1000))}
+        ids = [registry.submit(lambda: result) for _ in range(201)]
+        assert finished(registry, ids[-1])["status"] == "succeeded"
+        assert registry.stats()["succeeded"] == len(ids)
+        assert all(registry.get(jid)["result"] == result for jid in ids)
     finally:
         registry.shutdown(wait=True)
 
 
-def test_large_result_remains_pollable_as_explicit_failure():
-    registry = JobRegistry(max_workers=1, max_jobs=2, max_completed_bytes=100)
+def test_memory_failure_is_pollable():
+    registry = JobRegistry(max_workers=1)
+    def exhausted():
+        raise MemoryError("allocation failed")
     try:
-        job_id = registry.submit(lambda: "x" * 1000)
-        result = finished(registry, job_id)
-        assert result["status"] == "failed"
-        assert result["error"]["code"] == ErrorCode.JOB_RESULT_TOO_LARGE
-        assert result["result"] is None
+        record = finished(registry, registry.submit(exhausted))
+        assert record["status"] == "failed"
+        assert record["result"] is None
+        assert record["error"]["code"] == ErrorCode.RESOURCE_EXHAUSTED
+        assert record["error"]["detail"]["type"] == "MemoryError"
     finally:
         registry.shutdown(wait=True)
 
 
-def test_completed_history_remains_bounded_without_a_later_submission():
-    registry = JobRegistry(max_workers=1, max_jobs=2)
+@pytest.mark.parametrize("failure", [MemoryError, RuntimeError])
+def test_submission_failure_does_not_leave_a_pending_record(monkeypatch, failure):
+    registry = JobRegistry(max_workers=1)
+    def fail_submit(*args, **kwargs):
+        raise failure("submit failed")
     try:
-        ids = []
-        for _ in range(3):
-            job_id = registry.submit(lambda: None)
-            ids.append(job_id)
-            assert finished(registry, job_id)["status"] == "succeeded"
-        assert registry.get(ids[0]) is None
-        assert registry.stats()["total"] == 2
+        monkeypatch.setattr(registry._executor, "submit", fail_submit)
+        with pytest.raises(failure):
+            registry.submit(lambda: None)
+        assert registry.stats()["total"] == 0
     finally:
         registry.shutdown(wait=True)
 
 
 def test_missing_native_engine_is_explicit_in_job_error():
-    registry = JobRegistry(max_workers=1, max_jobs=2)
+    registry = JobRegistry(max_workers=1)
     def unavailable():
         raise NativeUnavailableError("Compiled v2 engine is unavailable")
     try:
@@ -89,7 +89,7 @@ def test_missing_native_engine_is_explicit_in_job_error():
 
 
 def test_shutdown_cancels_pending_work_and_rejects_admission():
-    registry = JobRegistry(max_workers=1, max_jobs=2)
+    registry = JobRegistry(max_workers=1)
     running = Event()
     gate = Event()
     def block():
@@ -108,22 +108,17 @@ def test_shutdown_cancels_pending_work_and_rejects_admission():
         registry.shutdown(wait=True)
 
 
-def test_http_job_overload_is_429(monkeypatch):
+def test_http_job_submission_during_shutdown_is_429(monkeypatch):
     module = import_module("server.v2")
     application = import_module("server.app").app
-    registry = JobRegistry(max_workers=1, max_jobs=1)
-    gate = Event()
-    try:
-        registry.submit(gate.wait)
-        monkeypatch.setattr(module, "jobs", registry)
-        value = example_request()
-        value["tasks"] = [value.pop("task")]
-        response = TestClient(application).post("/api/v2/jobs", json=value)
-        assert response.status_code == 429
-        assert response.json()["error"]["code"] == ErrorCode.JOB_QUEUE_FULL
-    finally:
-        gate.set()
-        registry.shutdown(wait=True)
+    registry = JobRegistry(max_workers=1)
+    registry.shutdown(wait=True)
+    monkeypatch.setattr(module, "jobs", registry)
+    value = example_request()
+    value["tasks"] = [value.pop("task")]
+    response = TestClient(application).post("/api/v2/jobs", json=value)
+    assert response.status_code == 429
+    assert response.json()["error"]["code"] == ErrorCode.JOB_QUEUE_FULL
 
 
 def test_application_lifespan_drains_both_registries(monkeypatch):
@@ -154,3 +149,20 @@ def test_missing_native_engine_returns_503(monkeypatch):
     response = TestClient(application).post("/api/v2/plan/single", json=example_request())
     assert response.status_code == 503
     assert response.json()["error"]["code"] == ErrorCode.NATIVE_UNAVAILABLE
+
+
+def test_memory_failure_returns_503_for_both_api_versions(monkeypatch):
+    module = import_module("server.app")
+    v2 = import_module("server.v2")
+    def exhausted(**kwargs):
+        raise MemoryError("allocation failed")
+    monkeypatch.setattr(module, "plan_single", exhausted)
+    monkeypatch.setattr(v2, "plan_single_v2", exhausted)
+    client = TestClient(module.app)
+    requests = [("/api/v1/plan/single", {"start": {"x": 0, "y": 0, "z": 100}, "goal": {"x": 100, "y": 0, "z": 100}}),
+                ("/api/v2/plan/single", example_request())]
+    for url, value in requests:
+        response = client.post(url, json=value)
+        assert response.status_code == 503
+        assert response.json()["error"]["code"] == ErrorCode.RESOURCE_EXHAUSTED
+        assert response.json()["error"]["detail"]["type"] == "MemoryError"

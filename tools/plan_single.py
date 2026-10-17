@@ -70,8 +70,8 @@ def main():
     parser.add_argument("--task", default=None,
                         help="指定任务 ID（默认：按优先级选最高）")
     parser.add_argument("--no-optimize", action="store_true", help="跳过 3.26 多目标优化")
-    parser.add_argument("--max-iterations", type=int, default=2_000_000,
-                        help="A* 单任务最大迭代次数")
+    parser.add_argument("--max-iterations", type=int, default=None,
+                        help="A* 单任务迭代预算（默认不限制次数）")
     parser.add_argument("--no-cost-grid", action="store_true",
                         help="关闭通行代价层（默认开启，偏好远离建筑群的航路）")
     parser.add_argument("--clearance", type=float, default=200.0,
@@ -223,7 +223,10 @@ def main():
 
     # 航点指令
     if final_route.status == "planned" and not args.no_optimize:
-        optimizer = RouteOptimizer(config, obstacle_set, perf, cost_grid=cost_grid)
+        optimizer = RouteOptimizer(
+            config, obstacle_set, perf, cost_grid=cost_grid,
+            max_iterations=args.max_iterations,
+        )
         waypoints = optimizer.generate_waypoints(final_route.trajectory, min_spacing=80.0)
         wp_file = write_waypoints(waypoints, args.output_dir,
                                   f"waypoints_{task.task_id}.json")

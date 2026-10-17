@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import sys
 import threading
 import time
 import uuid
@@ -21,23 +22,18 @@ from .motion import Motion, MotionError, Primitive, build_motion
 
 
 class SceneRegistry:
-    """Immutable compiled scenes, bounded by count; no task answers are cached."""
+    """Immutable compiled scenes retained until restart; no task answers are cached."""
 
-    def __init__(self, max_scenes: int = 8, max_bytes: int = 1024*1024*1024):
+    def __init__(self) -> None:
         self._scenes: OrderedDict[str, tuple] = OrderedDict()
-        self._sizes: dict[str, int] = {}
         self._lock = threading.RLock()
         self._compile_lock = threading.Lock()
-        self.max_scenes = max_scenes
-        self.max_bytes = max_bytes
+        self.max_scenes = None
+        self.max_bytes = None
 
     def register(self, value: Scene | dict) -> dict:
         from .scene import CompiledScene
-        from .budgets import validate_scene_budget
         model = _parse(Scene, value)
-        estimated = validate_scene_budget(model)
-        if estimated > self.max_bytes:
-            raise PlanningError(ErrorCode.INVALID_INPUT, "Scene exceeds registry memory budget")
         canonical = model.model_dump_json(exclude_none=True)
         version = hashlib.sha256(canonical.encode()).hexdigest()
         key = "scene-" + version[:20]
@@ -49,9 +45,6 @@ class SceneRegistry:
             with self._lock:
                 if key in self._scenes:
                     return self.describe(key)
-                while self._scenes and (len(self._scenes) >= self.max_scenes or sum(self._sizes.values())+estimated > self.max_bytes):
-                    old, _ = self._scenes.popitem(last=False)
-                    self._sizes.pop(old, None)
             start = time.perf_counter()
             try:
                 compiled = CompiledScene(model)
@@ -64,7 +57,6 @@ class SceneRegistry:
             record = (model, compiled, version, (time.perf_counter()-start)*1000)
             with self._lock:
                 self._scenes[key] = record
-                self._sizes[key] = estimated
         return self.describe(key)
 
     def get(self, key: str):
@@ -82,6 +74,34 @@ class SceneRegistry:
 
 
 registry = SceneRegistry()
+
+
+class _DeadlineExceeded(TimeoutError):
+    """A caller-supplied planning budget has expired."""
+
+
+def _planning_deadline(start: float, time_budget_s: float | None) -> float:
+    if time_budget_s is None:
+        return math.inf
+    try:
+        valid = (not isinstance(time_budget_s, bool) and isinstance(time_budget_s, (int, float))
+                 and math.isfinite(time_budget_s) and time_budget_s > 0)
+    except OverflowError:
+        valid = False
+    if not valid:
+        raise PlanningError(ErrorCode.INVALID_INPUT, "time_budget_s must be a positive finite number or None")
+    return start + time_budget_s
+
+
+def _native_deadline_ms(deadline: float) -> float:
+    """Translate an optional wall-clock deadline without disabling expired budgets."""
+    if math.isinf(deadline):
+        return 0.0
+    remaining = deadline - time.perf_counter()
+    if remaining <= 0:
+        raise _DeadlineExceeded("Planning deadline exhausted")
+    remaining_ms = remaining * 1000
+    return remaining_ms if math.isfinite(remaining_ms) else sys.float_info.max
 
 
 def _parse(cls, value):
@@ -192,8 +212,6 @@ def _cost_floor(compiled,task,t):
             best=min(values,default=0)
             best=min(1,max(0,best/100 if kind=="noise" else best))
             floor*=1-content["costBonus"]*(1-best)
-    if len(cache)>=128:
-        cache.pop(next(iter(cache)))
     cache[signature]=max(.001,floor)
     return cache[signature]
 
@@ -270,20 +288,19 @@ def _roadmap(compiled, start,goal,task,profile,t,deadline,reference_altitude=Non
             edges.append((i,j));costs.append(cost)
     if not edges:
         return None
-    result=native.graph_search(nodes,edges,costs,si,gi,deadline_ms=max(1,(deadline-time.perf_counter())*1000),directed=True)
+    result=native.graph_search(nodes,edges,costs,si,gi,deadline_ms=_native_deadline_ms(deadline),directed=True)
+    if result["status"]=="deadline_exceeded":
+        raise _DeadlineExceeded("Planning deadline exhausted during graph search")
     return nodes[result["path"]] if result["status"]=="ok" else None
 
 
 def _grid_path(compiled,start,goal,task,profile,t,deadline):
-    """A bounded local 3D expansion, with exact final path verification."""
+    """Local 3D expansion, with exact final path verification."""
     from . import native
     model=compiled.scene if hasattr(compiled,"scene") else compiled.model
     b=model.bounds
     low=np.array([b.x_min,b.y_min,b.z_min]);high=np.array([b.x_max,b.y_max,b.z_max])
     resolution=np.array(model.resolution)
-    shape=np.ceil((high-low)/resolution).astype(int)
-    if np.prod(shape)>4_000_000:
-        raise PlanningError(ErrorCode.INVALID_INPUT,"Grid exceeds configured 3D expansion budget")
     blocked=[]
     # Geometry screening at cells is conservative; the chosen edges are still
     # verified against original geometry, so raster approximation cannot pass unsafe edges.
@@ -292,7 +309,9 @@ def _grid_path(compiled,start,goal,task,profile,t,deadline):
     elif model.grid:
         blocked=model.grid.occupied
     result=native.grid_search(start,goal,np.array([low,high]),resolution,blocked,
-        deadline_ms=max(1,(deadline-time.perf_counter())*1000),max_iterations=200000)
+        deadline_ms=_native_deadline_ms(deadline))
+    if result["status"]=="deadline_exceeded":
+        raise _DeadlineExceeded("Planning deadline exhausted during grid search")
     return np.asarray(result["path"]) if result["status"]=="ok" else None
 
 
@@ -325,7 +344,7 @@ def _path_for_leg(compiled,start,goal,task,profile,t,deadline):
                 if high>=low:
                     levels.update((low,high))
                     levels.update(np.arange(math.ceil(low/step)*step,high+1e-8,step))
-        for altitude in sorted(levels,key=lambda z:(abs(z-start[2]),z))[:64]:
+        for altitude in sorted(levels,key=lambda z:(abs(z-start[2]),z)):
             if time.perf_counter()>=deadline:
                 break
             path=_roadmap(compiled,start,goal,task,profile,t,deadline,altitude)
@@ -544,7 +563,9 @@ def _sipp_motion(motion, reservations, reservation_times, task, profile, limits,
         edge_paths=edge_paths,edge_times=edge_times,wait_allowed=[can_wait]*len(nodes),
         reservations_paths=reservations,reservations_times=reservation_times,
         horizontal_separation=h,vertical_separation=v,start_time=float(motion.times[0]),latest_arrival=latest,
-        directed=True,deadline_ms=max(1,(deadline-time.perf_counter())*1000))
+        directed=True,deadline_ms=_native_deadline_ms(deadline))
+    if answer["status"]=="deadline_exceeded":
+        raise _DeadlineExceeded("Planning deadline exhausted during safe-interval search")
     if answer["status"]!="ok":
         raise MotionError("No safe interval on the current dynamically feasible candidate")
     parts=[]
@@ -768,18 +789,16 @@ def _result(compiled,model,task,profile,motion,wait=0):
     return RouteResult.model_validate(result).model_dump(mode="json")
 
 
-def plan_batch_v2(*,tasks,scene_id=None,scene=None,request_id=None,time_budget_s=10.0):
+def plan_batch_v2(*,tasks,scene_id=None,scene=None,request_id=None,time_budget_s: float | None=None):
     from . import native
     native.require_native()
-    start=time.perf_counter();deadline=start+time_budget_s
+    start=time.perf_counter();deadline=_planning_deadline(start,time_budget_s)
     if (scene_id is None)==(scene is None):
         raise PlanningError(ErrorCode.INVALID_INPUT,"Provide exactly one of scene_id or scene")
     if scene is not None:
         scene_id=register_scene(scene)["scene_id"]
     model,compiled,version,_=registry.get(scene_id)
     dynamic_tracks=_dynamic_tracks(compiled,model)
-    if not 1<=len(tasks)<=10000:
-        raise PlanningError(ErrorCode.INVALID_INPUT,"Batch must contain 1 to 10000 tasks")
     task_models=[_parse(Task,t) for t in tasks]
     if not task_models or len({t.id for t in task_models})!=len(task_models):
         raise PlanningError(ErrorCode.INVALID_INPUT,"Tasks must be nonempty and have unique ids")
@@ -834,8 +853,11 @@ def plan_batch_v2(*,tasks,scene_id=None,scene=None,request_id=None,time_budget_s
                 raise MotionError("Independent motion validation rejected candidate: "+str(certificate["violations"]))
             # Reject impossible durations before allocating the certified cover.
             cp,ct=motion.collision_samples()
+        except _DeadlineExceeded as exc:
+            results[index]=_failure(task,"TIME_BUDGET_EXCEEDED",str(exc));continue
         except (MotionError,ValueError) as exc:
-            results[index]=_failure(task,"SEARCH_NOT_FOUND",str(exc));continue
+            code="TIME_BUDGET_EXCEEDED" if time.perf_counter()>=deadline else "SEARCH_NOT_FOUND"
+            results[index]=_failure(task,code,str(exc));continue
         # Dynamic reservations are checked on a certified space-time chord cover.
         h,v=compiled.rules.separation(task)
         h=max(h,2*(profile.radius_m+profile.safety_margin_m))+.1
@@ -876,9 +898,12 @@ def plan_batch_v2(*,tasks,scene_id=None,scene=None,request_id=None,time_budget_s
     height=max((c["profile"].height_m/2+c["profile"].safety_margin_m for c in candidates),default=0)
     h=max([h]+[radius+d.horizontal_separation_m+.1 for d in model.dynamic_obstacles])
     v=max([v]+[height+d.vertical_separation_m+.1 for d in model.dynamic_obstacles])
-    scheduled=native.schedule_paths(paths,timings,windows,horizontal_separation=h,vertical_separation=v,
-        priorities=priorities,fixed_count=dynamic_count,
-        deadline_ms=max(1,(deadline-time.perf_counter())*1000)) if paths else {"delays":[]}
+    try:
+        scheduled=native.schedule_paths(paths,timings,windows,horizontal_separation=h,vertical_separation=v,
+            priorities=priorities,fixed_count=dynamic_count,
+            deadline_ms=_native_deadline_ms(deadline)) if paths else {"delays":[]}
+    except _DeadlineExceeded:
+        scheduled={"delays":[None]*len(paths)}
     # Most tasks have one interval. Only unsuccessful tasks with additional
     # calendar openings need another search; all previous reservations stay fixed.
     retry=[k for k,c in enumerate(candidates) if scheduled["delays"][dynamic_count+k] is None and len(c["windows"])>1]
@@ -894,9 +919,12 @@ def plan_batch_v2(*,tasks,scene_id=None,scene=None,request_id=None,time_budget_s
                 if time.perf_counter()>=deadline:
                     break
                 fixed_windows=[[float(ts[0])]*2 for ts in fixed_times]
-                answer=native.schedule_paths(fixed_paths+[c["points"]],fixed_times+[c["times"]],fixed_windows+[interval],
-                    horizontal_separation=h,vertical_separation=v,fixed_count=len(fixed_paths),
-                    deadline_ms=max(1,(deadline-time.perf_counter())*1000))
+                try:
+                    answer=native.schedule_paths(fixed_paths+[c["points"]],fixed_times+[c["times"]],fixed_windows+[interval],
+                        horizontal_separation=h,vertical_separation=v,fixed_count=len(fixed_paths),
+                        deadline_ms=_native_deadline_ms(deadline))
+                except _DeadlineExceeded:
+                    break
                 delay=answer["delays"][-1]
                 if delay is not None:
                     scheduled["delays"][dynamic_count+k]=delay
@@ -908,7 +936,10 @@ def plan_batch_v2(*,tasks,scene_id=None,scene=None,request_id=None,time_budget_s
         task,profile,motion,index=c["task"],c["profile"],c["motion"],c["index"]
         delay=scheduled["delays"][dynamic_count+k]
         if delay is None:
-            results[index]=_failure(task,"TIME_BUDGET_EXCEEDED" if time.perf_counter()>=deadline else "SEARCH_NOT_FOUND","No safe departure interval within arrival window");continue
+            statuses=scheduled.get("statuses",[])
+            timed_out=(time.perf_counter()>=deadline or scheduled.get("status")=="deadline_exceeded"
+                       or (dynamic_count+k<len(statuses) and statuses[dynamic_count+k]=="deadline_exceeded"))
+            results[index]=_failure(task,"TIME_BUDGET_EXCEEDED" if timed_out else "SEARCH_NOT_FOUND","No safe departure interval within arrival window");continue
         if delay:
             motion=motion.shifted(delay)
         cp,ct=c["points"],c["times"]+delay
@@ -931,7 +962,11 @@ def plan_batch_v2(*,tasks,scene_id=None,scene=None,request_id=None,time_budget_s
     if accepted:
         # Every upstream trajectory remains an obstacle, even if upstream tracks
         # intersect one another. Such intersections never remove an obstacle.
-        check=native.continuous_conflicts(paths[:dynamic_count]+accepted,timings[:dynamic_count]+accepted_times,h,v)
+        try:
+            check=native.continuous_conflicts(paths[:dynamic_count]+accepted,timings[:dynamic_count]+accepted_times,h,v,
+                deadline_ms=_native_deadline_ms(deadline))
+        except _DeadlineExceeded:
+            check={"status":"deadline_exceeded","conflicts":[]}
         for c in check["conflicts"]:
             if c["first"]<dynamic_count and c["second"]<dynamic_count:
                 continue
@@ -941,6 +976,11 @@ def plan_batch_v2(*,tasks,scene_id=None,scene=None,request_id=None,time_budget_s
             for i,t in enumerate(task_models):
                 if t.id in (a,b):
                     results[i]=_failure(t,"SEPARATION","Residual continuous collision")
+        if check["status"]!="ok":
+            code="TIME_BUDGET_EXCEEDED" if check["status"]=="deadline_exceeded" else "VALIDATION_INCOMPLETE"
+            for i,t in enumerate(task_models):
+                if results[i]["status"]=="planned":
+                    results[i]=_failure(t,code,"Continuous separation validation did not complete: "+check["status"])
     count=sum(r["status"]=="planned" for r in results)
     validated_at=time.perf_counter()
     result=BatchResult.model_validate({"planned_at":datetime.now(timezone.utc),"request_id":request_id or uuid.uuid4().hex,
@@ -956,7 +996,7 @@ def plan_batch_v2(*,tasks,scene_id=None,scene=None,request_id=None,time_budget_s
     return output
 
 
-def plan_single_v2(*,task,scene_id=None,scene=None,time_budget_s=10.0):
+def plan_single_v2(*,task,scene_id=None,scene=None,time_budget_s: float | None=None):
     return plan_batch_v2(tasks=[task],scene_id=scene_id,scene=scene,time_budget_s=time_budget_s)["routes"][0]
 
 
@@ -1058,10 +1098,8 @@ def validate_route_v2(*,task,trajectory_wkt,vertex_times_s,motion_segments=None,
     task=_parse(Task,task);profile=_profile(model,task)
     task,rtl=_rtl_task(compiled,task,profile)
     times=np.asarray(vertex_times_s,dtype=float)
-    if times.ndim!=1 or not 1<=len(times)<=100000 or not np.isfinite(times).all() or np.any(np.diff(times)<=0):
+    if times.ndim!=1 or not len(times) or not np.isfinite(times).all() or np.any(np.diff(times)<=0):
         raise PlanningError(ErrorCode.INVALID_INPUT,"Trajectory times must be finite and strictly increase")
-    if motion_segments is not None and len(motion_segments)>100000:
-        raise PlanningError(ErrorCode.INVALID_INPUT,"Motion exceeds validation primitive budget")
     points=_timed_local(compiled,trajectory_wkt,times,task.alt_reference,model)
     errors=[];motion=None
     if motion_segments:
@@ -1106,6 +1144,8 @@ def validate_route_v2(*,task,trajectory_wkt,vertex_times_s,motion_segments=None,
         h=max(h,profile.radius_m+profile.safety_margin_m+dynamic.horizontal_separation_m)+.1
         v=max(v,profile.height_m/2+profile.safety_margin_m+dynamic.vertical_separation_m)+.1
         pair=native.continuous_conflicts([checked_points,other],[checked_times,other_times],h,v)
+        if pair["status"]!="ok":
+            errors.append({"code":"VALIDATION_INCOMPLETE","message":"Continuous upstream separation validation did not complete", "details":{"obstacle_id":dynamic.id,"status":pair["status"]}})
         if pair["conflicts"]:
             errors.append({"code":"SEPARATION","message":"Trajectory intersects an upstream dynamic obstacle", "details":{"obstacle_id":dynamic.id}})
     if np.linalg.norm(points[0]-_local(compiled,task.start_wkt,task))>.1 or np.linalg.norm(points[-1]-_local(compiled,task.goal_wkt,task))>.1:

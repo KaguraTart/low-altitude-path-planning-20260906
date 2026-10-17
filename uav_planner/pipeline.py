@@ -69,7 +69,7 @@ def run_single_task(
     obstacle_set: ObstacleSet,
     perf: AircraftPerformance,
     optimize: bool = True,
-    max_iterations: int = 2_000_000,
+    max_iterations: Optional[int] = None,
     cost_grid: Optional[Any] = None,
     verbose: bool = True,
 ) -> Tuple[PlannedRoute, List[PlannedRoute], List[str]]:
@@ -190,7 +190,10 @@ def run_single_task(
     # 3. 多目标优化
     if optimize and final_route.status == "planned":
         _log(f"\n[2/2] 多目标航线优化 ({task.task_id})...")
-        optimizer = RouteOptimizer(config, obstacle_set, perf, cost_grid=cost_grid)
+        optimizer = RouteOptimizer(
+            config, obstacle_set, perf, cost_grid=cost_grid,
+            max_iterations=max_iterations,
+        )
         optimized = optimizer.optimize(task, route_id=f"opt-{task.task_id}")
         all_routes.append(optimized)
         final_route = optimized
@@ -213,7 +216,7 @@ def run_batch(
     obstacle_set: ObstacleSet,
     dispatch: bool = False,
     workers: int = 4,
-    max_iterations: int = 200_000,
+    max_iterations: Optional[int] = None,
     use_cost_grid: bool = False,
     conflict_avoidance: bool = True,
     min_separation: float = 10.0,

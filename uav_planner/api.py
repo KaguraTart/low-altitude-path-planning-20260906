@@ -112,7 +112,7 @@ def plan_single(
     cost_grid: bool = True,
     clearance: float = 200.0,
     clearance_cost: float = 3.0,
-    max_iterations: int = 2_000_000,
+    max_iterations: Optional[int] = None,
     validate: bool = True,
     task_id: str = "task-001",
 ) -> Dict[str, Any]:
@@ -142,7 +142,7 @@ def plan_single(
         cost_grid: 是否启用通行代价层（偏好远离建筑群的航路）
         clearance: 障碍物净空膨胀半径，米
         clearance_cost: 净空区内通行代价倍率
-        max_iterations: A\* 最大迭代次数，防止病态输入下无限搜索
+        max_iterations: A\* 迭代预算；None 不限制次数
         validate: 是否附带路径合法性验证结果
         task_id: 任务标识，会回填到返回结构里
 
@@ -159,7 +159,8 @@ def plan_single(
     _check_non_negative(start_time, "start_time")
     _check_positive(clearance, "clearance")
     _check_positive(clearance_cost, "clearance_cost")
-    _check_positive(max_iterations, "max_iterations")
+    if max_iterations is not None:
+        _check_positive(max_iterations, "max_iterations")
 
     if waypoints is not None:
         if start is not None or goal is not None:
@@ -208,7 +209,7 @@ def plan_single(
         final_route, all_routes, warnings = run_single_task(
             task, cfg, obstacle_set, perf,
             optimize=optimize,
-            max_iterations=int(max_iterations),
+            max_iterations=int(max_iterations) if max_iterations is not None else None,
             cost_grid=cost_grid_obj,
             verbose=False,
         )
@@ -250,7 +251,7 @@ def plan_batch(
     cost_grid: bool = True,
     clearance: float = 200.0,
     clearance_cost: float = 3.0,
-    max_iterations: int = 200_000,
+    max_iterations: Optional[int] = None,
     request_id: Optional[str] = None,
     validate_tasks: bool = False,
 ) -> Dict[str, Any]:
@@ -269,7 +270,7 @@ def plan_batch(
                             检测到的冲突，不会把「没检查」包装成「无冲突」
         min_separation: 多机最小安全间隔，米
         cost_grid / clearance / clearance_cost: 通行代价层参数
-        max_iterations: 单任务 A\* 最大迭代次数
+        max_iterations: 单任务 A\* 迭代预算；None 不限制次数
         request_id: 请求标识，缺省由任务数生成
         validate_tasks: 是否先做飞行器需求兼容性校验并剔除不兼容任务
 
@@ -283,7 +284,8 @@ def plan_batch(
 
     _check_positive(max_workers, "max_workers")
     _check_positive(min_separation, "min_separation")
-    _check_positive(max_iterations, "max_iterations")
+    if max_iterations is not None:
+        _check_positive(max_iterations, "max_iterations")
 
     # 任务引用的飞行器必须存在，否则规划到一半才炸，错误定位成本很高
     missing = sorted({t.aircraft_id for t in task_objs if t.aircraft_id not in perfs})
@@ -315,7 +317,7 @@ def plan_batch(
         task_objs, perfs, cfg, obstacle_set,
         dispatch=dispatch,
         workers=int(max_workers),
-        max_iterations=int(max_iterations),
+        max_iterations=int(max_iterations) if max_iterations is not None else None,
         use_cost_grid=bool(cost_grid),
         conflict_avoidance=conflict_avoidance,
         min_separation=float(min_separation),
@@ -460,7 +462,7 @@ def plan_from_dir(
                 f"任务 {task.task_id} 缺少航点定义",
                 {"task_id": task.task_id},
             )
-        options.setdefault("max_iterations", 2_000_000)
+        options.setdefault("max_iterations", None)
         outcome = plan_single(
             waypoints=raw_task["waypoints"],
             config=config_dict,
@@ -476,7 +478,7 @@ def plan_from_dir(
         outcome["data_quality"] = data_quality
         return outcome
 
-    options.setdefault("max_iterations", 200_000)
+    options.setdefault("max_iterations", None)
     # 与 plan_multi.py CLI 对齐：CLI 会先用 validate_tasks_with_aircraft 剔除
     # 与飞行器需求不兼容的任务再规划。这里默认保持一致，使同一批文件
     # 经 CLI 与经接口调用的结果相同；被剔除的任务在 warnings 中如实列出。

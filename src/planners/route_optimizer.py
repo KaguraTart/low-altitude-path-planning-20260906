@@ -45,6 +45,7 @@ class RouteOptimizer:
         obstacle_set: ObstacleSet,
         performance: AircraftPerformance,
         cost_grid: Optional[CostGrid] = None,
+        max_iterations: Optional[int] = None,
     ):
         self.config = config
         self.obstacle_set = obstacle_set
@@ -54,6 +55,7 @@ class RouteOptimizer:
             config=config,
             obstacle_set=obstacle_set,
             max_speed=performance.get_max_speed(),
+            max_iterations=max_iterations,
             cost_grid=cost_grid,
             min_altitude=performance.get_min_altitude(),
             max_altitude=performance.get_max_altitude(),

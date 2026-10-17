@@ -4,9 +4,9 @@
 >
 > **3.25 多维时空大规模并行规划算法** & **3.26 智能飞行线路规划算法**
 >
-> 当前版本：**2.0.0**（v1 保留，新增 WKT / WGS84 v2） · 最后更新：2026-10-16
+> 当前版本：**2.0.0**（v1 保留，新增 WKT / WGS84 v2） · 最后更新：2026-10-17
 >
-> v2 Docker HTTP 验收 **30/30 轮通过**，正式服务已更新为同一验收镜像。下文原有 demo、压测和审计评分为 v1 历史记录；v2 证据见 [`性能报告`](internal/reports/v2-20261016/PERFORMANCE.md)。
+> v2 历史 Docker HTTP 验收 **30/30 轮通过**。正式 Docker 配额为 2 CPU / 2 GiB。下文原有 demo、压测和审计评分为 v1 历史记录；v2 证据见 [`性能报告`](internal/reports/v2-20261016/PERFORMANCE.md)。
 
 ---
 
@@ -20,7 +20,7 @@
 | **要交付**（交什么、不交什么） | [`internal/docs/DELIVERY.md`](internal/docs/DELIVERY.md) |
 | **要跑命令行**（规划 / 压测 / 可视化） | 本文档 §3.3、§3.4；脚本在 [`tools/`](tools/) |
 | **要了解算法** | 本文档 §5；[`internal/docs/archive/algorithm_design.md`](internal/docs/archive/algorithm_design.md) |
-| **要了解 v2 实现与验收边界** | [`internal/docs/V2_ARCHITECTURE.md`](internal/docs/V2_ARCHITECTURE.md)；[`input/v2_benchmarks/`](input/v2_benchmarks/) |
+| **要了解 v2 实现与验收** | [`internal/docs/V2_ARCHITECTURE.md`](internal/docs/V2_ARCHITECTURE.md)；[`input/v2_benchmarks/`](input/v2_benchmarks/) |
 
 ---
 
@@ -29,14 +29,15 @@
 v2 在 `/api/v2` 提供强类型 JSON + WKT 接口，外部坐标为 WGS84 经度/纬度和显式高度基准，内部用局部 AEQD 米制坐标计算。v1 原有 URL、SDK 和输入结构继续保留。所有对外字段、20 类规则、完整 v1/v2 示例与迁移方法集中在 [`docs/API.md`](docs/API.md)；Swagger `/docs` 从同一服务的类型模型生成 OpenAPI，Markdown 不参与生成。
 
 - 默认 `route_mode="strict"`：扫掠体须在有效航路或显式起终点接驳体内，无路就失败；`prefer` 允许航路外飞行并在候选图中使用 2 倍航路外基础代价，`free` 不要求航路包含。
-- 场景可预注册，按输入 SHA-256 版本复用不可变编译结果；任务答案不缓存。场景和异步作业存在进程内存，重启后重新注册场景，服务保持单进程。
+- 场景可预注册，按输入 SHA-256 版本复用编译结果。任务答案不缓存。场景和异步作业保存在进程内存中，重启后清空。
+- 场景、网格、批量任务、采样与结果不设固定资源上限。默认持续计算；可用 `time_budget_s` 设置计算时限。内存分配失败返回 `RESOURCE_EXHAUSTED`。系统 OOM 终止进程时，连接可能断开，Docker 记录事件并重启服务。
 - 全部 20 类规则接入搜索筛选和最终验证；天气、信号、地形、区域、风险等数据及当前飞机状态由平台提供，缺少引用或相关场数据不可用会拒绝或阻断路径。
 - C++17 / pybind11 原生内核承担图/网格搜索、连续时间预约、碰撞检测和独立运动学验证。输出含 WKT、逐顶点时间、解析运动原语与关键点；没有原生扩展时明确报服务故障。
 - 内置 DJI Mini 4 Pro 为工程规划配置；平台负责真实包线、环境数据、飞机状态、飞控执行和持续重规划。
 
 ```bash
 # 安装时构建 C++17 扩展；需 C++17 编译器与 CMake。
-uv pip install -e '.[server,test]'
+uv pip install -e '.[server,test]' -c requirements-runtime.lock
 python serve.py --host 127.0.0.1 --port 8000
 curl --fail-with-body -sS http://127.0.0.1:8000/api/v2/health
 curl --fail-with-body -sS http://127.0.0.1:8000/api/v2/examples/single -o /tmp/uav-single-v2.json
@@ -218,7 +219,7 @@ python tools/visualize_stress.py --input ./output/stress
 | `--compare` | 同时跑 FULL 和 DISPATCH，自动输出加速比 |
 | `--scales` | 自定义规模列表（默认 10 100 1000 10000） |
 | `--workers` | 并行线程数（默认 8） |
-| `--max-iterations` | A\* 单任务最大迭代次数（默认 200000） |
+| `--max-iterations` | A\* 单任务搜索次数预算；默认不限制次数 |
 
 ### 3.5 输出目录约定
 
@@ -492,7 +493,7 @@ A* 现在直接接受飞行器性能参数，越界路径在搜索阶段就被�
 - **多机冲突避免（§五.4）**：`plan_batch()` 默认 `conflict_avoidance=True`，
   流程 = `detect_conflicts_occupancy()` 检测 → 每对选优先级低者 →
   `to_dense_mask()` 生成禁飞掩码 → `SpaceTimeAStar` 带掩码重规划 → 串行更新占用表，
-  最多 3 轮；关闭时（`--no-avoid-conflicts`）仍**如实报告**检出的冲突
+  默认不限制修复轮次；无冲突、状态重复或无法改进时结束。起点占用时，在场景时域内继续尝试延迟起飞。关闭避让时（`--no-avoid-conflicts`）仍报告检出的冲突
 - **时空占用表冲突检测**：`detect_conflicts_occupancy()` 按航线增量登记，
   避免 O(n²·m²) 重复比对；冲突条目带真实 `route_id` + `aircraft_id`
 - **冲突协调建议**：`resolve_conflicts()` 对每条冲突给出"延迟起飞"或"高度调整 +1 层"
@@ -668,14 +669,14 @@ A* 现在直接接受飞行器性能参数，越界路径在搜索阶段就被�
 2. `SpaceTimeAStar` 消费 `occupancy_mask`：`_get_neighbors` 里对阶梯中间格、碰撞格、
    等待动作三处做禁飞检查；起点被占提前失败并给出"建议延迟起飞"原因；
 3. `ParallelPlanner.plan_batch()` 默认 `conflict_avoidance=True`：
-   检测 → 每对选优先级低者 → 带掩码重规划 → 串行更新占用表 → 最多 3 轮；
+   检测 → 每对选优先级低者 → 带掩码重规划 → 串行更新占用表。默认不限制轮次；无冲突、状态重复或无法改进时结束；
 4. 关闭避让时**仍然如实检测并报告** `result.conflicts`（"未检查" ≠ "无冲突"）；
 5. `tools/plan_multi.py` 残余冲突 → `sys.exit(2)`；`--conflict-check` 报告 `result.conflicts` 全量
    （旧的 `--conflict-sample` 前缀切片 `planned[:200]` 改为默认全量）；
 6. `PathValidator.validate_multi_routes` 在有 `config` 时改走线性复杂度的占用表路径，
    检测口径与规划侧一致（同一 `time_window=5s`、同一 `min_separation`）。
 
-**实测**（`min_separation=30m`，`ParallelPlanner` 默认 `max_iterations=2,000,000`、
+**历史实测**（`min_separation=30m`，当时 `max_iterations=2,000,000`、
 `workers=8`；**每一行的"开启/关闭"两列使用完全相同的任务集**，是严格的 A/B 对照。
 残余冲突 / 安全率）：
 

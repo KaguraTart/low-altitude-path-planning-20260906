@@ -34,11 +34,11 @@ router=APIRouter(prefix="/api/v2",tags=["v2 WKT / WGS84"],responses={
     "4XX":{"model":ErrorEnvelope,"description":"Invalid input or unavailable resource"},
     400:{"model":ErrorEnvelope,"description":"Input or referenced constraints are invalid"},
     404:{"model":ErrorEnvelope,"description":"Unknown scene or job"},
-    429:{"model":ErrorEnvelope,"description":"Job admission or retention budget reached"},
+    429:{"model":ErrorEnvelope,"description":"Service is shutting down"},
     500:{"model":ErrorEnvelope,"description":"Unexpected service error"},
-    503:{"model":ErrorEnvelope,"description":"Native planning engine unavailable"},
+    503:{"model":ErrorEnvelope,"description":"Planning engine or memory unavailable"},
 })
-jobs=JobRegistry(max_workers=1,max_jobs=32)
+jobs=JobRegistry(max_workers=1)
 
 
 class SceneSelection(StrictModel):
@@ -54,20 +54,20 @@ class SceneSelection(StrictModel):
 
 class SingleRequest(SceneSelection):
     task: Task
-    time_budget_s: Positive = Field(default=10,le=300)
+    time_budget_s: Positive | None = None
 
 
 class BatchRequest(SceneSelection):
-    tasks: list[Task] = Field(min_length=1,max_length=10000)
+    tasks: list[Task] = Field(min_length=1)
     request_id: str | None = None
-    time_budget_s: Positive = Field(default=10,le=300)
+    time_budget_s: Positive | None = None
 
 
 class ValidateRequest(SceneSelection):
     task: Task
     trajectory_wkt: WKT
-    vertex_times_s: list[Number] = Field(min_length=1,max_length=100000)
-    motion_segments: list[MotionSegment] | None = Field(default=None,max_length=100000)
+    vertex_times_s: list[Number] = Field(min_length=1)
+    motion_segments: list[MotionSegment] | None = None
 
 
 class ValidationResponse(RouteValidation):
@@ -127,12 +127,12 @@ class Capabilities(StrictModel):
     rule_types: list[str]
     altitude_references: list[str]
     geometric_tolerance_m: Number
-    max_scene_radius_m: Number
+    max_scene_radius_m: Number | None
     grid_formats: list[str]
     scene_lifecycle: str
-    scene_limits: dict[str,int]
-    max_registered_scenes: int
-    max_registered_scene_bytes: int
+    scene_limits: dict[str,int | None]
+    max_registered_scenes: int | None
+    max_registered_scene_bytes: int | None
 
 
 @router.get("/health",response_model=HealthResponse)
@@ -156,7 +156,7 @@ def capabilities():
     from uav_planner.v2.budgets import SCENE_LIMITS
     return {"api_version":"2.0.0","route_modes":["strict","prefer","free"],"default_route_mode":"strict",
             "rule_types":list(RULE_TYPES),"altitude_references":["MSL","AGL","ELLIPSOID","QNE","QNH"],
-            "geometric_tolerance_m":.1,"max_scene_radius_m":50000,
+            "geometric_tolerance_m":.1,"max_scene_radius_m":None,
             "grid_formats":["regular_sparse_indices","regular_index_ranges","explicit_bounds_cells"],
             "scene_limits":SCENE_LIMITS,"max_registered_scenes":registry.max_scenes,
             "max_registered_scene_bytes":registry.max_bytes,
@@ -204,7 +204,7 @@ def submit(request: BatchRequest):
 def job(job_id: str):
     result=jobs.get(job_id)
     if result is None:
-        raise PlanningError(ErrorCode.TASK_NOT_FOUND,"Unknown or expired v2 job",{"job_id":job_id})
+        raise PlanningError(ErrorCode.TASK_NOT_FOUND,"Unknown v2 job",{"job_id":job_id})
     return result
 
 

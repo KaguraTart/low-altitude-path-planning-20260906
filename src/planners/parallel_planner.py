@@ -28,6 +28,8 @@ from __future__ import annotations
 
 import random
 import time
+import hashlib
+import math
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Dict, List, Optional, Tuple
 
@@ -49,6 +51,14 @@ from .occupancy import ConflictResolver, SpatioTemporalOccupancyTable
 
 __all__ = ["ParallelPlanner", "SpatioTemporalOccupancyTable", "ConflictResolver"]
 
+
+def _route_fingerprint(route: PlannedRoute) -> bytes:
+    digest = hashlib.sha256(route.status.encode())
+    points = np.asarray([(p.x, p.y, p.z, p.t) for p in route.trajectory], dtype=np.float64)
+    digest.update(points.tobytes())
+    return digest.digest()
+
+
 class ParallelPlanner:
     """
     大规模并行规划引擎
@@ -65,7 +75,7 @@ class ParallelPlanner:
         config: SpaceTimeConfig,
         obstacle_set: ObstacleSet,
         max_workers: int = 4,
-        max_iterations: int = 2_000_000,
+        max_iterations: Optional[int] = None,
         use_cost_grid: bool = False,
         clearance: float = 200.0,
         clearance_cost: float = 3.0,
@@ -113,7 +123,7 @@ class ParallelPlanner:
         dispatch: bool = False,
         conflict_avoidance: bool = True,
         min_separation: float = 10.0,
-        max_conflict_rounds: int = 3,
+        max_conflict_rounds: Optional[int] = None,
     ) -> PlanningResult:
         """
         批量并行规划
@@ -130,7 +140,7 @@ class ParallelPlanner:
                       受影响航线，直到无冲突。关闭后退化为"只规划不避让"，
                       各飞行器可能在同一格同一秒重叠（仅用于性能基准对比）。
             min_separation: 多机最小安全间隔（米）
-            max_conflict_rounds: 冲突修复最大轮数
+            max_conflict_rounds: 冲突修复轮次预算；None 不限制次数
 
         Returns:
             PlanningResult: 批量规划结果
@@ -219,6 +229,8 @@ class ParallelPlanner:
                 idx = future_to_idx[future]
                 try:
                     routes[idx] = future.result()
+                except MemoryError:
+                    raise
                 except Exception as e:
                     routes[idx] = PlannedRoute(
                         route_id=f"route-{idx:03d}",
@@ -518,8 +530,8 @@ class ParallelPlanner:
         performances: Dict[str, AircraftPerformance],
         dispatch: bool = False,
         min_separation: float = 10.0,
-        max_rounds: int = 3,
-        max_delay_steps: int = 6,
+        max_rounds: Optional[int] = None,
+        max_delay_steps: Optional[int] = None,
         time_window: float = 5.0,
     ) -> Tuple[List[PlannedRoute], List[dict], int]:
         """
@@ -537,7 +549,7 @@ class ParallelPlanner:
              由搜索自动二选一，无需人工分支
           4. 若起点本身被占（搜索第一步就出不去），按 dt 逐格延迟重试——
              这是任务书 §三.2 的"时间调整"策略
-          5. 循环直到无冲突或达到轮次上限
+          5. 重复修复，直到无冲突、状态重复或无法改进
 
         每轮内**串行**重规划：新掩码必须包含本轮刚更新的航线，
         否则两条同时重规划的航线可能撞在一起。
@@ -548,8 +560,8 @@ class ParallelPlanner:
             performances: 飞行器性能字典
             dispatch: 调度模式
             min_separation: 多机最小安全间隔（米）
-            max_rounds: 最多修复轮数
-            max_delay_steps: 起点被占时最多延迟几个时间步
+            max_rounds: 修复轮次预算；None 不限制次数
+            max_delay_steps: 延迟尝试预算；None 搜索到场景时域末端
             time_window: 冲突检测的时间对齐窗口（秒）
 
         Returns:
@@ -563,7 +575,14 @@ class ParallelPlanner:
         current = list(routes)
         replanned = 0
 
-        for _ in range(max_rounds):
+        seen_states = set()
+        rounds = 0
+        while max_rounds is None or rounds < max_rounds:
+            state = tuple(_route_fingerprint(route) for route in current)
+            if state in seen_states:
+                break
+            seen_states.add(state)
+            rounds += 1
             conflicts = self.detect_conflicts_occupancy(
                 current, min_separation=min_separation, time_window=time_window
             )
@@ -602,7 +621,7 @@ class ParallelPlanner:
                     old_route=old,
                     max_delay_steps=max_delay_steps,
                 )
-                if new.status != "planned":
+                if new.status != "planned" or _route_fingerprint(new) == _route_fingerprint(old):
                     continue
                 table.unmark_route(old)
                 table.mark_route(new)
@@ -626,7 +645,7 @@ class ParallelPlanner:
         dispatch: bool,
         table: SpatioTemporalOccupancyTable,
         old_route: Optional[PlannedRoute] = None,
-        max_delay_steps: int = 6,
+        max_delay_steps: Optional[int] = None,
     ) -> PlannedRoute:
         """带禁飞掩码重规划一条航线；起点被占则逐格延迟重试
 
@@ -644,6 +663,11 @@ class ParallelPlanner:
             return route
 
         # 起点/终点在其它飞行器占用格里 → 时间调整（延迟起飞）
+        available_steps = max(0, math.ceil((self.config.t_max - task.departure_time) / self.config.dt) - 1)
+        if max_delay_steps is None:
+            max_delay_steps = available_steps
+        else:
+            max_delay_steps = min(max_delay_steps, available_steps)
         for k in range(1, max_delay_steps + 1):
             route = self._plan_one(
                 task, performance, idx, dispatch,

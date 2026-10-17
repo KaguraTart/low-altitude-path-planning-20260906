@@ -300,11 +300,83 @@ def test_sipp_shaped_edge_inputs_are_validated(paths, times):
                           edge_paths=paths, edge_times=times)
 
 
-def test_iteration_limit_and_deadline_never_claim_success():
-    assert native.graph_search([[0, 0, 0], [1, 0, 0]], [[0, 1]], [1], 0, 1, max_iterations=0)["status"] == "iteration_limit"
+def test_explicit_iteration_limit_and_deadline_never_claim_success():
+    assert native.graph_search([[0, 0, 0], [1, 0, 0], [2, 0, 0]],
+                               [[0, 1], [1, 2]], [1, 1], 0, 2, max_iterations=1)["status"] == "iteration_limit"
     result = native.grid_search([0, 0, 0], [1000, 1000, 1000], [[0, 0, 0], [1000, 1000, 1000]], 1, deadline_ms=0.00001)
     assert result["status"] == "deadline_exceeded"
     assert not result["path"]
+
+
+@pytest.mark.parametrize("budget", [0, None])
+def test_zero_or_none_work_budgets_leave_all_searches_unrestricted(budget):
+    nodes = [[0, 0, 0], [1, 0, 0], [2, 0, 0]]
+    edges, costs = [[0, 1], [1, 2]], [1, 1]
+    assert native.graph_search(nodes, edges, costs, 0, 2, max_iterations=budget,
+                               deadline_ms=budget)["status"] == "ok"
+    assert native.grid_search(nodes[0], nodes[-1], [nodes[0], nodes[-1]], 1,
+                              max_iterations=budget, deadline_ms=budget)["status"] == "ok"
+    assert native.solve_sipp(nodes, edges, costs, 0, 2, max_iterations=budget,
+                             deadline_ms=budget)["status"] == "ok"
+
+
+def test_default_graph_search_finishes_past_the_old_expansion_limit():
+    count = 200_002
+    nodes = np.zeros((count, 3))
+    nodes[:, 0] = np.arange(count)
+    edges = np.column_stack((np.arange(count - 1), np.arange(1, count)))
+    costs = np.ones(count - 1)
+    result = native.graph_search(nodes, edges, costs, 0, count - 1)
+    assert result["status"] == "ok"
+    assert len(result["path"]) == count
+    assert result["expanded"] > 200_000
+    capped = native.graph_search(nodes, edges, costs, 0, count - 1, max_iterations=200_000)
+    assert capped["status"] == "iteration_limit" and not capped["path"]
+
+
+@pytest.mark.parametrize("budget", [0, None])
+def test_continuous_conflicts_preserves_every_record_above_old_limit(budget):
+    count = 143
+    result = native.continuous_conflicts([[[0, 0, 0]]] * count, [[0]] * count,
+                                         1, 1, max_conflicts=budget)
+    assert result["status"] == "ok"
+    assert len(result["conflicts"]) == count * (count - 1) // 2 > 10_000
+    assert len({(c["first"], c["second"]) for c in result["conflicts"]}) == len(result["conflicts"])
+
+
+def test_explicit_conflict_record_limit_remains_available():
+    result = native.continuous_conflicts([[[0, 0, 0]]] * 10, [[0]] * 10,
+                                         1, 1, max_conflicts=7)
+    assert result["status"] == "conflict_limit" and len(result["conflicts"]) == 7
+
+
+def test_schedule_can_advance_through_more_than_one_hundred_thousand_reservations():
+    count = 100_010
+    points, times = np.zeros((count + 1, 3)), np.arange(count + 1, dtype=float)
+    result = native.schedule_paths([points, [[0, 0, 0]]], [times, [0]],
+        [[0, 0], [0, count + 2]], horizontal_separation=1, vertical_separation=1, fixed_count=1)
+    assert result["status"] == "ok" and result["statuses"] == ["fixed", "scheduled"]
+    assert count < result["delays"][1] < count + 2
+
+
+def test_sipp_can_advance_through_more_than_one_hundred_thousand_reservations():
+    count = 100_010
+    points, times = np.zeros((count + 1, 3)), np.arange(count + 1, dtype=float)
+    points[:, 0] = 5
+    result = native.solve_sipp([[0, 0, 0], [10, 0, 0]], [[0, 1]], [10], 0, 1,
+        reservations_paths=[points], reservations_times=[times], horizontal_separation=.01,
+        vertical_separation=1, latest_arrival=count + 20, directed=True)
+    assert result["status"] == "ok"
+    assert count < result["times"][-1] <= count + 20
+
+
+def test_deadline_and_grid_extents_use_actual_machine_range():
+    assert native.graph_search([[0, 0, 0], [1, 0, 0]], [[0, 1]], [1], 0, 1,
+                               deadline_ms=1e308)["status"] == "ok"
+    result = native.grid_search([0, 0, 0], [1, 0, 0], [[0, 0, 0], [3e9, 0, 0]], 1)
+    assert result["status"] == "ok"
+    with pytest.raises(OverflowError, match="int64"):
+        native.grid_search([0, 0, 0], [1, 0, 0], [[0, 0, 0], [1e20, 0, 0]], 1)
 
 
 def test_independent_native_calls_can_run_on_threads():
