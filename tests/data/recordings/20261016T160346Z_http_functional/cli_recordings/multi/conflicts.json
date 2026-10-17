@@ -1,7 +1,0 @@
-{
-  "min_separation_m": 10.0,
-  "avoidance_enabled": true,
-  "n_planned_routes": 2,
-  "n_residual_conflicts": 0,
-  "conflicts": []
-}

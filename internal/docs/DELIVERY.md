@@ -12,12 +12,12 @@
 | 原生核 | `native/`、`CMakeLists.txt`、`uav_planner.v2._native` | C++17 / pybind11 搜索、调度、碰撞与运动学验证 |
 | HTTP 服务 | `server/`、`serve.py` | `/api/v2`、异步作业与统一错误信封 |
 | 构建环境 | `pyproject.toml`、`requirements-runtime.lock`、Dockerfile、compose.yaml | Python 3.11 多阶段镜像；默认 2 CPU / 2 GiB |
-| 回归测试 | `tests/` | 坐标、规则、运动、搜索、调度、接口与发布检查 |
+| 回归测试 | `tests/`、`tests/README.md` | 按接口、规划、原生核和集成流程分类 |
 | 完整测试数据 | `tests/data/` | 输入、完整响应、环境、索引与 SHA-256 |
 | 固定基准 | `input/v2_benchmarks/`、`tools/benchmark_v2.py` | 三套输入、参考调度和独立验证 |
 | 运维与架构 | `internal/docs/` | 部署、回滚、实现与验收记录 |
 
-`output/` 保存本次运行结果。需要交付的完整目录归档到 `tests/data/recordings/`。历史报告和原始测试记录按采集版本保留。
+`output/` 保存本次运行结果。需要交付的完整 v2 记录归档到 `tests/data/recordings/`。每套记录附采集版本和校验和。
 
 ## 2. 能力与输入
 
@@ -39,6 +39,8 @@ python tools/smoke_v2.py --base-url http://127.0.0.1:18000
 ```
 
 记录当次测试数量与结果。SDK 检查 `register_scene/plan_single_v2/plan_batch_v2/validate_route_v2/convert_coordinates`。HTTP 检查 health、示例、场景、规划、异步完整结果、坐标转换和错误信封。
+
+分类运行命令见 [`../../tests/README.md`](../../tests/README.md)。归档校验见 `tests/integration/test_recordings.py`。
 
 发布检查还需核对原生扩展、镜像 revision、文档、规范快照与运行时 OpenAPI。步骤见 [`DEPLOYMENT.md`](DEPLOYMENT.md)。
 

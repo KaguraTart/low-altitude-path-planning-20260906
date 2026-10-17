@@ -14,6 +14,7 @@
 | Docker 部署、验证与回滚 | [`internal/docs/DEPLOYMENT.md`](internal/docs/DEPLOYMENT.md) |
 | 架构与实现 | [`internal/docs/V2_ARCHITECTURE.md`](internal/docs/V2_ARCHITECTURE.md) |
 | 交付检查 | [`internal/docs/DELIVERY.md`](internal/docs/DELIVERY.md) |
+| 测试目录与运行命令 | [`tests/README.md`](tests/README.md) |
 | 完整测试输入与输出 | [`tests/data/README.md`](tests/data/README.md) |
 
 ## 规划能力
@@ -92,6 +93,8 @@ bash tools/check_docker_release.sh "low-altitude-path-planning:$UAV_BUILD_SHA" \
 
 ## 测试与数据
 
+测试按接口、规划、原生核和集成流程分类。目录说明与分类运行命令见 [`tests/README.md`](tests/README.md)。
+
 ```bash
 python -m pytest tests/ -q
 python tools/benchmark_v2.py --validate-only
@@ -109,4 +112,4 @@ python tools/benchmark_v2.py --functional-only --base-url http://127.0.0.1:18000
 
 2026-10-16 的历史性能验收使用 8 CPU / 8 GiB。三套各运行 10 轮，30/30 轮通过。每轮均有 1000 条有效路线，冲突为 0。strict/mixed/free 最大完整 HTTP/JSON 耗时为 1.454/4.541/1.191 秒。完整证据见 [`internal/reports/v2-20261016/PERFORMANCE.md`](internal/reports/v2-20261016/PERFORMANCE.md)。正式配额的耗时按实际场景与负载测量。
 
-历史报告和原始测试归档按采集版本保留。当前接口以 `docs/API.md` 和运行服务的 OpenAPI 为准。
+v2 报告和完整测试归档按采集版本保存。当前接口以 `docs/API.md` 和运行服务的 OpenAPI 为准。

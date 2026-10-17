@@ -644,7 +644,7 @@ print(json.dumps(job["result"], ensure_ascii=False))
 
 ## 6. 数据归档与性能记录
 
-完整测试请求与响应见 [`../tests/data/README.md`](../tests/data/README.md)。归档包含接口示例、冻结场景和三套各 1000 条航线结果。每组记录输入、输出、运行环境和 SHA-256。重跑时先注册场景，再替换请求中的 `scene_id`。
+测试目录与分类运行命令见 [`../tests/README.md`](../tests/README.md)。完整测试请求与响应见 [`../tests/data/README.md`](../tests/data/README.md)。归档只包含 v2，保存接口示例、冻结场景和三套各 1000 条航线结果。每组记录输入、输出、运行环境和 SHA-256。重跑时先注册场景，再替换请求中的 `scene_id`。
 
 历史性能验收使用 `input/v2_benchmarks` 的冻结输入。strict/mixed/free 三套各有 1000 个任务，各运行 10 轮，资源为 8 CPU / 8 GiB。每轮全部任务成功，完整 JSON 在 10 秒内返回。场景注册单独计时。正式服务使用 2 CPU / 2 GiB，按实际场景和负载测量耗时。历史证据见 [`../internal/reports/v2-20261016/PERFORMANCE.md`](../internal/reports/v2-20261016/PERFORMANCE.md)。
 

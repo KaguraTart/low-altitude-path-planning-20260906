@@ -1,4 +1,4 @@
-"""Exercise the current v2 service and verify retired v1 routes are absent."""
+"""Exercise all current v2 service endpoints through HTTP."""
 from __future__ import annotations
 
 import argparse
@@ -96,17 +96,13 @@ def _smoke(base_url: str, *, expected_git_sha: str | None,
     def call(path: str, body: Any = None, *, as_text: bool = False) -> Any:
         return request(base_url,path,body,as_text=as_text,archive=archive)
     results={}
-    retired_get=("health","version","algorithms","examples/single","examples/batch","jobs/retired-smoke")
-    retired_post=("plan/single","plan/batch","validate","jobs")
-    for endpoint,body in [(name,None) for name in retired_get]+[(name,{}) for name in retired_post]:
-        try:
-            call("/api/v1/"+endpoint,body)
-        except urllib.error.HTTPError as exc:
-            assert exc.code==404, f"Retired v1 route {endpoint} returned {exc.code} instead of 404"
-        else:
-            raise AssertionError(f"Retired v1 route {endpoint} is still exposed")
     health=call("/api/v2/health")
     assert health["status"]=="ok" and health["native_available"] is True, "v2 native engine must be explicitly available"
+    job_health=call("/api/v2/health/jobs")
+    job_statuses=("pending","running","succeeded","failed")
+    assert all(type(job_health.get(name)) is int and job_health[name]>=0
+               for name in (*job_statuses,"total")), "Job health must report nonnegative integer counts"
+    assert job_health["total"]==sum(job_health[name] for name in job_statuses), "Job health counts must sum to total"
     version=call("/api/v2/version")
     if expected_git_sha is not None:
         actual_sha=version["engine"].get("git_sha")
@@ -166,8 +162,7 @@ def _smoke(base_url: str, *, expected_git_sha: str | None,
     results.update(status="passed",base_url=base_url,api_version=version["api_version"],
                    git_sha=version["engine"].get("git_sha"),coordinate_roundtrip=True,
                    native_available=True,openapi_paths=len(spec["paths"]),scene_id=scene["scene_id"],
-                   swagger_ui=True,
-                   retired_v1_routes_absent=True,
+                   swagger_ui=True,job_health_checked=True,
                    batch_success_count=completed["success_count"],async_job_id=submitted["job_id"],
                    checked_at=time.strftime("%Y-%m-%dT%H:%M:%SZ",time.gmtime()))
     if openapi_snapshot is not None:

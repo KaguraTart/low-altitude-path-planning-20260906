@@ -58,7 +58,7 @@ class Recorder:
             "base_url": self.base_url,
             "status": "recording",
             "collector_sha256": digest(Path(__file__).read_bytes()),
-            "cases": [], "benchmarks": [], "original_outputs": [], "files": [],
+            "cases": [], "benchmarks": [], "files": [],
         }
 
     def write(self, relative: str, data: bytes) -> None:
