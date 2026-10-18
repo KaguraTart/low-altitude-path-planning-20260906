@@ -5,6 +5,8 @@
 Swagger：[https://api.kaguratart.com/docs#/](https://api.kaguratart.com/docs#/)。
 完整字段见 [API 文档](API.md)与[测试 JSON 字段说明](../test_api/API_FIELDS.md)。
 
+转发测试资料时，使用[测试包内的对应表](../test_api/REQUIREMENTS_API_MAPPING.md)。包内示例在 `test_api` 目录执行。
+
 ## 1. 需求对应表
 
 “已有”表示当前接口直接提供该能力。“部分对应”列出可使用的能力，其余部分写为“暂无”。“暂无”表示没有对应的业务接口。

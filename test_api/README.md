@@ -6,6 +6,8 @@
 
 接口字段、测试 JSON 参数和修改步骤见 [接口字段与修改说明](API_FIELDS.md)。
 
+按业务需求选择接口，见[需求与 API 对照表](REQUIREMENTS_API_MAPPING.md)。表中包含 16 项需求、完整接口地址、参数用法和调用示例。
+
 完整公网实测记录见 [测试报告](reports/20261017T135804Z_public/REPORT.md)。
 
 ## 运行测试
@@ -93,6 +95,7 @@ WKT 坐标顺序为经度、纬度、高度。数据使用 WGS84 经纬度和 MS
 | 路径 | 内容 |
 |---|---|
 | `API_FIELDS.md` | 全部接口的输入输出字段、单位、默认值和修改方法 |
+| `REQUIREMENTS_API_MAPPING.md` | 16 项业务需求与 API 的对应关系、参数和调用方法 |
 | `run_tests.py` | 命令行测试入口 |
 | `client.py` | HTTPS 调用和完整 HTTP 记录 |
 | `reporting.py` | Markdown 报告生成器 |
