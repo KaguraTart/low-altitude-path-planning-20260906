@@ -9,6 +9,7 @@
 | 用途 | 文档 |
 |------|------|
 | 对接接口、字段、规则与示例 | [`docs/API.md`](docs/API.md) |
+| 需求与 API 对照、调用方法 | [`docs/REQUIREMENTS_API_MAPPING.md`](docs/REQUIREMENTS_API_MAPPING.md) |
 | Swagger 交互文档 | 运行服务的 `/docs` |
 | 机器可读接口规范 | [`docs/openapi.json`](docs/openapi.json)；运行服务的 `/openapi.json` |
 | Docker 部署、验证与回滚 | [`internal/docs/DEPLOYMENT.md`](internal/docs/DEPLOYMENT.md) |
