@@ -250,10 +250,10 @@ RTL 是**根据提交时当前状态生成的返航方案**：触发后将目标
 | `radius_m/height_m/safety_margin_m` | 0.3 / 0.2 / 5 | 米，半径和高度 >0，裕度 >=0 |
 | `endurance_s/max_range_m` | 2040 / 18000 | 秒 / 米，>0 |
 | `payload_kg` | 0 | kg，>=0 |
-| `rtl_altitude_m` | 20 | 米，>=0 |
+| `rtl_altitude_m` | 20 | 米，>=0；配置记录值。返航高度使用 `RTL.content.rtlAltitude` |
 | `can_hover` | true | boolean |
 | `supported_bands` | `["2.4GHz","5.8GHz"]` | 支持频段 |
-| `low_battery_percent` | 20 | 0–100 |
+| `low_battery_percent` | 20 | 0–100；配置记录值。返航阈值使用 `RTL.content.lowBatteryPercent` |
 | `engineering_values` | 速度、爬降率、偏航率、加减速、转弯半径、尺寸、安全裕度、返航高度与低电阈值字段名列表 | 完整列表以 version 响应为准 |
 
 ## 3. 全部规则
@@ -269,11 +269,11 @@ RTL 是**根据提交时当前状态生成的返航方案**：触发后将目标
 | `TIME` | `dailyStart,dailyEnd,weekdays,earliestDeparture,latestArrival` | 搜索将日历开放期转为起飞窗口，冲突时可重试后续窗口；日内时间 `HH:mm`，Asia/Shanghai；dailyStart/dailyEnd 必须成对，支持跨午夜；weekdays 为 ISO 1–7 整数；earliestDeparture/latestArrival 也是日内 `HH:mm` |
 | `AREA` | `scope,adminCodes,gridCodes,zoneIds` | scope 必填=`INCLUDE/EXCLUDE`；需可解析的区域、网格码或管制几何；INCLUDE 要求整段留在包含区，EXCLUDE 禁止穿入 |
 | `CLIMB` | `maxClimbRate,maxDescentRate` | m/s；与机型能力取更严格限制，逐段检查 |
-| `TURN` | `maxTurnAngle,minTurnRadius` | 角度 `0<值<=180`，半径米 >=0；约束完整转弯累计角及几何半径 |
+| `TURN` | `maxTurnAngle,minTurnRadius` | 角度 `0<=值<=180`，半径米 >=0；约束完整转弯累计角及几何半径 |
 | `SEPARATION` | `verticalSeparation,horizontalSeparation` | 米，>=0；与飞机尺寸和安全裕度取保守值，连续时空检查双方同时过近 |
-| `NO_FLY` | `noFlyMode,heightCeiling,includeBuffer` | noFlyMode 必填=`PERMANENT/TEMPORARY`；临时规则须显式起止有效期；需要匹配管制几何；heightCeiling 为 MSL 米 |
+| `NO_FLY` | `noFlyMode,heightCeiling,includeBuffer` | noFlyMode 必填=`PERMANENT/TEMPORARY`；临时规则须显式起止有效期；需要匹配管制几何；heightCeiling 为 MSL 米；includeBuffer 是保留开关，当前管制区附加缓冲为 0，飞机净空单独参与检查 |
 | `BUILDING` | `avoidMode,safeDistance,bufferRadius` | avoidMode 必填=`BUFFER/CORRIDOR`；距离米 >=0；需障碍几何，CORRIDOR 还需明确 corridor 数据集，不能把建筑整体当穿行区 |
-| `ZONE` | `zoneLevels,coverageThreshold` | 至少给一项；zoneLevels 为非空字符串数组；coverageThreshold 为 0–1；需匹配管制体，阈值不能取消已经触及的硬禁入体 |
+| `ZONE` | `zoneLevels,coverageThreshold` | 至少给一项；zoneLevels 为非空字符串数组；coverageThreshold 为 0–1，记录覆盖阈值；碰撞结果由真实管制体决定 |
 | `WEATHER` | `maxWindSpeed,noPrecipitation,noIcing` | 至少给一项；风 m/s，后两项 boolean；需 versioned weather 格场，相应风/降水/结冰数值必须存在，全程有效且覆盖 |
 | `SIGNAL` | `minSignalStrength,bands,band_policy` | 强度 dBm 必填；bands 为非空字符串数组；band_policy=`any`（默认）或 `all`；需 signal 格场，并匹配飞机支持频段 |
 | `PRIORITY` | `priorityScene,costBonus` | 两者必填；场景=`LOW_RISK/FAST/QUIET`，bonus 为 0–1；LOW_RISK 需 risk 格场，QUIET 需 noise 格场，覆盖缺口不放行；影响候选路线代价 |
@@ -644,7 +644,7 @@ print(json.dumps(job["result"], ensure_ascii=False))
 
 ## 6. 数据归档与性能记录
 
-对接方使用 [`../test_api/`](../test_api/README.md) 执行公网接口测试。复制整个目录后运行 `python run_tests.py`。默认地址为 `https://api.kaguratart.com`。测试覆盖全部 14 个接口和三套各 1000 个任务，保存完整请求、响应与报告。
+对接方使用 [`../test_api/`](../test_api/README.md) 执行公网接口测试。逐项字段说明与修改步骤见 [`接口字段与修改说明`](../test_api/API_FIELDS.md)。复制整个目录后运行 `python run_tests.py`。默认地址为 `https://api.kaguratart.com`。测试覆盖全部 14 个接口和三套各 1000 个任务，保存完整请求、响应与报告。
 
 测试目录与分类运行命令见 [`../tests/README.md`](../tests/README.md)。完整测试请求与响应见 [`../tests/data/README.md`](../tests/data/README.md)。归档只包含 v2，保存接口示例、冻结场景和三套各 1000 条航线结果。每组记录输入、输出、运行环境和 SHA-256。重跑时先注册场景，再替换请求中的 `scene_id`。
 

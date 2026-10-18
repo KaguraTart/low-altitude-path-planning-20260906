@@ -17,6 +17,7 @@
 | 测试目录与运行命令 | [`tests/README.md`](tests/README.md) |
 | 完整测试输入与输出 | [`tests/data/README.md`](tests/data/README.md) |
 | 可独立交付的公网接口测试包 | [`test_api/README.md`](test_api/README.md) |
+| 接口字段与测试 JSON 修改方法 | [`test_api/API_FIELDS.md`](test_api/API_FIELDS.md) |
 
 ## 规划能力
 
