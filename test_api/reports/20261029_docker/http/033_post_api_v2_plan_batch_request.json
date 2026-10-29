@@ -1,0 +1,11 @@
+{
+  "method": "POST",
+  "url": "http://127.0.0.1:18002/api/v2/plan/batch",
+  "path": "/api/v2/plan/batch",
+  "headers": {
+    "User-Agent": "UAV-API-Test/1.0",
+    "Accept": "application/json",
+    "Content-Type": "application/json"
+  },
+  "body_path": "033_post_api_v2_plan_batch_input.json"
+}

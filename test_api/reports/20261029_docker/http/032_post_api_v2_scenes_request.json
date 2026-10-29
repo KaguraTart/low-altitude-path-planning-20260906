@@ -1,0 +1,11 @@
+{
+  "method": "POST",
+  "url": "http://127.0.0.1:18002/api/v2/scenes",
+  "path": "/api/v2/scenes",
+  "headers": {
+    "User-Agent": "UAV-API-Test/1.0",
+    "Accept": "application/json",
+    "Content-Type": "application/json"
+  },
+  "body_path": "032_post_api_v2_scenes_input.json"
+}
