@@ -50,6 +50,8 @@ def write_report(report: dict[str, Any], output_dir: Path) -> Path:
     lines = [
         "# 接口测试报告",
         "",
+        f"文档日期：{_beijing_time(report.get('finished_at') or report.get('started_at')).split()[0]}。",
+        "",
         f"测试地址：{_text(report.get('base_url', '未记录'))}",
         "",
         f"服务版本：`{version}`。构建提交：`{revision}`。",
