@@ -51,7 +51,7 @@ def _calendar(compiled, content, lo: float, hi: float, duration: float):
     origin=compiled.model.time_origin
     first=(origin+timedelta(seconds=lo)).astimezone(LOCAL_TZ).date()-timedelta(days=1)
     last=(origin+timedelta(seconds=hi+duration)).astimezone(LOCAL_TZ).date()+timedelta(days=1)
-    weekdays=set(content.get("weekdays",range(1,8)))
+    weekdays=set(content.get("weekdays",range(7)))
     daily=[];departures=[];arrivals=[]
     begin=time.fromisoformat(content.get("dailyStart","00:00"))
     finish=time.fromisoformat(content.get("dailyEnd","00:00"))
@@ -63,7 +63,7 @@ def _calendar(compiled, content, lo: float, hi: float, duration: float):
     while day<=last:
         midnight=datetime.combine(day,time(),LOCAL_TZ)
         next_midnight=midnight+timedelta(days=1)
-        if day.isoweekday() in weekdays:
+        if (day.isoweekday() % 7) in weekdays:
             if "dailyStart" in content:
                 a=datetime.combine(day,begin,LOCAL_TZ)
                 b=datetime.combine(day+timedelta(days=finish<=begin),finish,LOCAL_TZ)
@@ -72,7 +72,7 @@ def _calendar(compiled, content, lo: float, hi: float, duration: float):
                 end=seconds(next_midnight)
                 # The weekday-only evaluator examines the arrival date too,
                 # including a flight ending exactly at midnight.
-                if next_midnight.isoweekday() not in weekdays:
+                if (next_midnight.isoweekday() % 7) not in weekdays:
                     end-=_EDGE_GUARD
                 daily.append((seconds(midnight),end))
         departures.append((seconds(datetime.combine(day,earliest,LOCAL_TZ)),

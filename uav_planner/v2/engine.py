@@ -68,7 +68,7 @@ class SceneRegistry:
 
     def describe(self, key: str) -> dict:
         model, compiled, version, elapsed = self.get(key)
-        return {"scene_id": key, "scene_version": version, "status": "ready", "compilation_ms": elapsed,
+        return {"scene_id": key, "scene_version": version, "network_version": model.network_version, "scene_type": model.scene_type, "status": "ready", "compilation_ms": elapsed,
                 "coordinate_context": compiled.frame.context, "warnings": compiled.warnings,
                 "counts": {name:len(getattr(model,name)) for name in ("airways","obstacles","control_zones","rules","datasets")}}
 
@@ -203,7 +203,7 @@ def _cost_floor(compiled,task,t):
     floor=1.0
     for rule in active:
         content=rule.content
-        if content["priorityScene"]=="FAST":
+        if content["priorityScene"] in {"FAST", "PLANNING"}:
             floor*=1-content["costBonus"]
         else:
             kind,key=("noise","noise_db") if content["priorityScene"]=="QUIET" else ("risk","risk")
@@ -246,7 +246,7 @@ def _roadmap(compiled, start,goal,task,profile,t,deadline,reference_altitude=Non
     if task.route_mode != "strict":
         # Visibility anchors around obstacles, with clearance applied before use.
         margin=profile.radius_m+profile.safety_margin_m+.2
-        for volume in getattr(compiled,"obstacles",[]):
+        for volume in [*compiled.obstacles, *compiled.zones, *(v for r in compiled.rules.selected(task) if r.rule_type in {"BUILDING","NO_FLY","ZONE"} for v in compiled.rule_scopes.get(r.id, []))]:
             geom=getattr(volume,"geometry",getattr(volume,"geom",None))
             if geom is None:
                 continue
@@ -254,7 +254,14 @@ def _roadmap(compiled, start,goal,task,profile,t,deadline,reference_altitude=Non
             for x,y in [(xmin-margin,ymin-margin),(xmin-margin,ymax+margin),(xmax+margin,ymin-margin),(xmax+margin,ymax+margin)]:
                 nodes.append(np.array([x,y,start[2]]))
         for rule in compiled.rules.selected(task):
-            if rule.rule_type!="PRIORITY" or rule.content["priorityScene"]=="FAST":
+            if rule.rule_type == "PRIORITY" and compiled.rules.active(rule,t):
+                for volume in compiled.rule_scopes.get(rule.id, []):
+                    center=volume.geometry.representative_point()
+                    nodes.append(np.array([center.x,center.y,start[2]]))
+                    xmin,ymin,xmax,ymax=volume.geometry.bounds
+                    for x,y in ((xmin,ymin),(xmin,ymax),(xmax,ymin),(xmax,ymax)):
+                        nodes.append(np.array([x,y,start[2]]))
+            if rule.rule_type!="PRIORITY" or rule.content["priorityScene"] in {"FAST", "PLANNING"}:
                 continue
             kind,key=("noise","noise_db") if rule.content["priorityScene"]=="QUIET" else ("risk","risk")
             cells=[c for d in compiled.datasets_for(rule,kind) for c in d.cells if key in c.values and not c.values.get("nodata",False)]
@@ -458,7 +465,7 @@ def _timed_geographic(compiled, points, times, reference, model):
     rows=[]
     for p,t in zip(points,times):
         lon,lat=compiled.frame._inverse.transform(float(p[0]),float(p[1]),errcheck=True)
-        z=compiled.frame.altitude_from_msl(float(p[2])+compiled.frame.spec.origin_alt_msl,
+        z=compiled.frame.altitude_from_ellipsoid(float(p[2])+compiled.frame.spec.origin_alt_ellipsoid,
             reference,lon,lat,model.time_origin+timedelta(seconds=float(t)))
         rows.append((lon,lat,z))
     geom=Point(rows[0]) if len(rows)==1 else LineString(rows)
@@ -585,14 +592,14 @@ def _sipp_motion(motion, reservations, reservation_times, task, profile, limits,
 
 
 def _failure(task,code,message,violations=(),report=()):
-    return {"task_id":task.id,"status":"timeout" if code=="TIME_BUDGET_EXCEEDED" else "failed",
-            "code":code,"message":message,"route_mode":task.route_mode,
+    return {"task_id":task.id,"engine_id":task.engine_id,"status":"timeout" if code=="TIME_BUDGET_EXCEEDED" else "failed",
+            "code":code,"message":message,"route_mode":task.route_mode,"alt_reference":task.alt_reference,
             "start_wkt":task.start_wkt,"goal_wkt":task.goal_wkt,"departure_time":task.departure_time,
             "validation":{"valid":False,"violations":list(violations)},"rule_report":list(report)}
 
 
-def _report(compiled,task,violations,times=None):
-    reports=compiled.rules.report(task,violations,times=times)
+def _report(compiled,task,violations,times=None,points=None):
+    reports=compiled.rules.report(task,violations,times=times,points=points)
     return [r.model_dump(mode="json") if hasattr(r,"model_dump") else r for r in reports]
 
 
@@ -646,7 +653,7 @@ def _primitive_airway_intervals(compiled, p, start, airway, profile, boundaries)
         if airway.alt_reference in {"AGL","QNE","QNH"}:
             from .safety import _datum_regions
             regions=_datum_regions(compiled,compiled.model,airway.alt_reference)
-            offsets={r.offset-compiled.origin_alt_msl for r in regions if r.offset is not None}
+            offsets={r.offset-compiled.origin_alt_ellipsoid for r in regions if r.offset is not None}
             for region in regions:
                 if region.start<=end and region.end>=start:
                     fractions.update(_arc_boundary_fractions(p,region.geometry))
@@ -780,12 +787,13 @@ def _result(compiled,model,task,profile,motion,wait=0):
                     break
         keypoints.append({"types":sorted(types),"wkt":_timed_geographic(compiled,[point],[passed],task.alt_reference,model),
                           "time_s":passed,"grid_indices":index.tolist(),"grid_code":code,"waypoint_index":waypoint_index})
-    result={"task_id":task.id,"status":"planned","route_mode":task.route_mode,
+    result={"task_id":task.id,"engine_id":task.engine_id,"status":"planned","route_mode":task.route_mode,
+        "alt_reference":task.alt_reference,"coordinate_context":compiled.frame.context,
         "start_wkt":task.start_wkt,"goal_wkt":task.goal_wkt,"departure_time":task.departure_time,
         "time_origin":model.time_origin,"action":"return_to_home" if (compiled.rules.rtl_requirements(task,profile) or {}).get("required") else "mission",
         "trajectory_wkt":wkt,"vertex_times_s":motion.times.tolist(),"motion_segments":segments,"keypoints":keypoints,
         "metrics":{"distance_m":motion.distance,"flight_time_s":float(motion.times[-1]-motion.times[0]),"wait_time_s":wait},
-        "validation":{"valid":True,"violations":[]},"rule_report":_report(compiled,task,[],motion.times)}
+        "validation":{"valid":True,"violations":[]},"rule_report":_report(compiled,task,[],motion.times,motion.points)}
     return RouteResult.model_validate(result).model_dump(mode="json")
 
 
@@ -822,7 +830,7 @@ def plan_batch_v2(*,tasks,scene_id=None,scene=None,request_id=None,time_budget_s
         if rtl and rtl["required"]:
             altitude=rtl["rtl_altitude_m"]
             a,b=anchors[0].copy(),anchors[-1].copy()
-            a[2]=b[2]=compiled.frame.altitude_to_local(altitude,"MSL",
+            a[2]=b[2]=compiled.frame.altitude_to_local(altitude,"EG",
                 *compiled.frame._inverse.transform(float(a[0]),float(a[1])),task.departure_time)
             anchors=[anchors[0],a,b,anchors[-1]]
         try:
@@ -981,6 +989,8 @@ def plan_batch_v2(*,tasks,scene_id=None,scene=None,request_id=None,time_budget_s
             for i,t in enumerate(task_models):
                 if results[i]["status"]=="planned":
                     results[i]=_failure(t,code,"Continuous separation validation did not complete: "+check["status"])
+    for result in results:
+        result["coordinate_context"]=compiled.frame.context
     count=sum(r["status"]=="planned" for r in results)
     validated_at=time.perf_counter()
     result=BatchResult.model_validate({"planned_at":datetime.now(timezone.utc),"request_id":request_id or uuid.uuid4().hex,
@@ -1150,4 +1160,4 @@ def validate_route_v2(*,task,trajectory_wkt,vertex_times_s,motion_segments=None,
             errors.append({"code":"SEPARATION","message":"Trajectory intersects an upstream dynamic obstacle", "details":{"obstacle_id":dynamic.id}})
     if np.linalg.norm(points[0]-_local(compiled,task.start_wkt,task))>.1 or np.linalg.norm(points[-1]-_local(compiled,task.goal_wkt,task))>.1:
         errors.append({"code":"ENDPOINT","message":"Trajectory endpoints differ from task"})
-    return {"valid":not errors,"violations":errors,"rule_report":_report(compiled,task,errors,checked_times)}
+    return {"valid":not errors,"violations":errors,"rule_report":_report(compiled,task,errors,checked_times,checked_points)}

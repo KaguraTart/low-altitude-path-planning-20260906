@@ -116,7 +116,7 @@ def _smoke(base_url: str, *, expected_git_sha: str | None,
     swagger=call("/docs",as_text=True)
     assert "SwaggerUIBundle" in swagger and re.search(r'''["']?url["']?\s*:\s*["']/openapi\.json["']''',swagger), "Swagger UI must reference /openapi.json"
     sample=call("/api/v2/examples/single")
-    conversion={"coordinates":sample["scene"]["coordinates"],"alt_reference":"MSL",
+    conversion={"coordinates":sample["scene"]["coordinates"],"alt_reference":"EG",
                 "at":sample["task"]["departure_time"],"geometries_wkt":[sample["task"]["start_wkt"]],
                 "direction":"wgs84_to_local"}
     local=call("/api/v2/coordinates/convert",conversion)

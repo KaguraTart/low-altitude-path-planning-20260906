@@ -21,7 +21,7 @@ def _at(second):
 
 def _scene(**updates):
     value = {
-        "coordinates": {"origin_lon": 104.78, "origin_lat": 29.34, "origin_alt_msl": 0},
+        "coordinates": {"origin_lon": 104.78, "origin_lat": 29.34, "origin_alt_ellipsoid": 0},
         "bounds": {"x_min": -100, "x_max": 100, "y_min": -100, "y_max": 100,
                    "z_min": -1000, "z_max": 1000},
         "time_origin": ORIGIN, "horizon_s": 100,
@@ -48,13 +48,13 @@ def _correction(start, end, offset=12, **updates):
 
 def _terrain_cell(x0, x1, height=10, **updates):
     value = {"bounds": {"x_min": x0, "x_max": x1, "y_min": -100, "y_max": 100,
-                        "z_min": -1000, "z_max": 1000}, "values": {"elevation_msl_m": height}}
+                        "z_min": -1000, "z_max": 1000}, "values": {"elevation_ellipsoid_m": height}}
     value.update(updates)
     return value
 
 
 def test_constant_references_keep_one_track_per_obstacle_and_absolute_scene_times():
-    model = _scene(dynamic_obstacles=[_trajectory("MSL", times=(10, 20)),
+    model = _scene(dynamic_obstacles=[_trajectory("EG", times=(10, 20)),
                                      _trajectory("ELLIPSOID", id="ellipsoid", times=(30, 40))])
     model.coordinates.geoid_separation_m = 7
     compiled = CompiledScene(model)
@@ -63,7 +63,7 @@ def test_constant_references_keep_one_track_per_obstacle_and_absolute_scene_time
     assert tracks[0][1].tolist() == [10, 20]
     assert tracks[1][1].tolist() == [30, 40]
     assert tracks[0][0][:, 2].tolist() == [10, 10]
-    assert tracks[1][0][:, 2].tolist() == [3, 3]
+    assert tracks[1][0][:, 2].tolist() == [10, 10]
     assert dynamic_tracks(compiled, model) is tracks
 
 
@@ -114,7 +114,7 @@ def test_same_height_terrain_cells_split_track_at_exact_spatial_boundary():
     [_terrain_cell(-100, 100), _terrain_cell(-0.01, 0.01, values={"nodata": True})],
 ])
 def test_hidden_terrain_gap_nodata_and_discontinuity_are_rejected(cells):
-    model = _scene(coordinates={"origin_lon": 104.78, "origin_lat": 29.34, "terrain_msl_m": 500},
+    model = _scene(coordinates={"origin_lon": 104.78, "origin_lat": 29.34, "terrain_ellipsoid_m": 500},
                    datasets=[{"id": "terrain", "kind": "terrain", "version": "test-data-1", "cells": cells}],
                    dynamic_obstacles=[_trajectory("AGL")])
     with pytest.raises(ValueError, match="discontinuous|missing"):
@@ -124,7 +124,7 @@ def test_hidden_terrain_gap_nodata_and_discontinuity_are_rejected(cells):
 def test_terrain_dataset_and_cell_temporal_gap_is_rejected_despite_constant_fallback():
     cells = [_terrain_cell(-100, 100, valid_from=_at(0), valid_to=_at(4)),
              _terrain_cell(-100, 100, valid_from=_at(6), valid_to=_at(20))]
-    model = _scene(coordinates={"origin_lon": 104.78, "origin_lat": 29.34, "terrain_msl_m": 10},
+    model = _scene(coordinates={"origin_lon": 104.78, "origin_lat": 29.34, "terrain_ellipsoid_m": 10},
                    datasets=[{"id": "terrain", "kind": "terrain", "version": "test-data-1", "cells": cells}],
                    dynamic_obstacles=[_trajectory("AGL")])
     with pytest.raises(ValueError, match="missing"):
@@ -158,7 +158,7 @@ def test_temporal_breakpoints_cover_resources_cells_corrections_and_local_daily_
         coordinates={"origin_lon": 104.78, "origin_lat": 29.34,
                      "height_corrections": [_correction(100, 200)]},
         obstacles=[{"id": "wall", "geometry_wkt": frame.to_wgs84(box(-1, -1, 1, 1)),
-                    "min_altitude": 0, "max_altitude": 10, "alt_reference": "MSL",
+                    "min_altitude": 0, "max_altitude": 10, "alt_reference": "EG",
                     "valid_from": _at(2), "valid_to": _at(4)}],
         datasets=[{"id": "terrain", "kind": "terrain", "version": "test-data-1",
                    "valid_from": _at(7), "valid_to": _at(90),

@@ -574,3 +574,14 @@ def test_analytic_validator_rejects_degenerate_arcs_and_unknown_stationary_kind(
            "length": 0, "duration": 1, "radius": 5, "sweep": 1}
     assert not native.validate_motion([arc], {"min_turn_radius_m": 5})["valid"]
     assert not native.validate_motion([dict(arc, kind="unknown")], {})["valid"]
+
+
+def test_positive_horizontal_radius_allows_stopped_pitch_transition_but_not_vertical_detour():
+    horizontal = {"kind": "line", "start": [0, 0, 0], "end": [1, 0, 0], "length": 1,
+                  "duration": 2, "v0": 0, "v1": 0, "peak": 1, "accel": 1, "decel": 1, "ta": 1, "td": 1}
+    climb = dict(horizontal, start=[1, 0, 0], end=[1, 0, 1], kind="climb")
+    same_heading = dict(horizontal, start=[1, 0, 1], end=[2, 0, 1])
+    assert native.validate_motion([horizontal, climb, same_heading], {"min_turn_radius_m": 10})["valid"]
+    changed_heading = dict(same_heading, end=[1, 1, 1])
+    result = native.validate_motion([horizontal, climb, changed_heading], {"min_turn_radius_m": 10})
+    assert "TURN_RADIUS_BYPASS" in {issue["code"] for issue in result["violations"]}

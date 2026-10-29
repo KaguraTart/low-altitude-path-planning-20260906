@@ -143,7 +143,7 @@ def capture(base_url: str, directory: Path, container: str | None, repeats: int 
         recorder.write("environment.json", encoded(environment))
         recorder.exchange("service_health", "GET", "/api/v2/health")
         recorder.exchange("service_capabilities", "GET", "/api/v2/capabilities")
-        for source in sorted((ROOT / "input" / "v2_benchmarks").rglob("*.json")):
+        for source in sorted((ROOT / "input" / "engine_contract_20261029").rglob("*.json")):
             recorder.write("source_inputs/" + source.relative_to(ROOT / "input").as_posix(),
                            source.read_bytes())
         single_v2 = recorder.exchange("v2_single_example", "GET", "/api/v2/examples/single")
@@ -158,7 +158,7 @@ def capture(base_url: str, directory: Path, container: str | None, repeats: int 
         result = recorder.exchange("v2_batch", "POST", "/api/v2/plan/batch", batch_v2)
         assert result["success_count"] == len(batch_v2["tasks"]) and not result["conflicts"], result
         recorder.async_case("v2", batch_v2)
-        conversion = {"coordinates": single_v2["scene"]["coordinates"], "alt_reference": "MSL",
+        conversion = {"coordinates": single_v2["scene"]["coordinates"], "alt_reference": "EG",
                       "at": single_v2["task"]["departure_time"],
                       "geometries_wkt": [single_v2["task"]["start_wkt"]], "direction": "wgs84_to_local"}
         local = recorder.exchange("v2_coordinates_to_local", "POST", "/api/v2/coordinates/convert", conversion)

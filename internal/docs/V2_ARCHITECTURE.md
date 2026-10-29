@@ -9,7 +9,7 @@
 | 文件 / 层 | 责任 |
 |------|------|
 | `models.py` | 输入与输出模型；数值、时间、WKT 和引用校验 |
-| `coordinates.py` | WGS84 与 AEQD 转换；MSL/AGL/ELLIPSOID/QNE/QNH 高度换算 |
+| `coordinates.py` | WGS84 与 AEQD 转换；EG/MSL/AGL/ELLIPSOID/QNE/QNH 高度换算 |
 | `scene.py` | 场景编译、空间索引、体积与时间裁剪、场数据查询、航路包含检查 |
 | `rules.py` | 20 类规则解析、引用检查、搜索筛选、连续规则检查与报告 |
 | `motion.py` | 直线、爬降、圆弧、悬停、原地偏航、加减速时间律与采样 |
@@ -26,11 +26,11 @@
 
 场景对象、WKT 顶点、数据格、网格节点和估算存储不设固定上限。登记表不设固定数量或合计存储上限，也不自动淘汰场景。`capabilities` 保留资源上限字段；null 表示未设置固定上限。
 
-外部 WKT 的 x/y 为经度/纬度。内部 x/y 为 AEQD 东/北坐标，单位为米。内部 z 为 `MSL-origin_alt_msl`。`max_radius_m` 指定场景覆盖半径，默认 50000 m，可设置更大的正数。障碍检查使用投影后的原始几何。净空包含飞机半径、半高与安全裕度。
+外部 WKT 的 x/y 为经度/纬度。内部 x/y 为 AEQD 东/北坐标，单位为米。内部 z 为 `EG-origin_alt_ellipsoid`。`max_radius_m` 指定场景覆盖半径，默认 50000 m，可设置更大的正数。障碍检查使用投影后的原始几何。净空包含飞机半径、半高与安全裕度。
 
-MSL 直接使用海拔。ELLIPSOID 减去声明的水准面差。AGL 使用地形空间场或声明的平地海拔。QNE/QNH 使用对应位置和时间内唯一的修正值。缺少换算数据时返回错误。重叠有效地形格采用较高海拔。
+EG/ELLIPSOID 直接使用椭球高。MSL 按 h=H+N 转为 EG，并声明水准面差及来源。AGL 加上地形 EG 高度。QNE/QNH 加上对应位置和时间内唯一的 EG 修正值。重叠有效地形格采用较高 EG 高度。
 
-数据集和单元格的有效期共同确定数据可用时间。WKT 单元格采用地理足迹和 MSL 高度。bounds 单元格采用局部米制三维边界。外部占用网格使用 `LOCAL_AEQD`，支持稀疏索引、索引范围和显式边界格。
+数据集和单元格的有效期共同确定数据可用时间。WKT 单元格采用地理足迹和 EG 高度。bounds 单元格采用局部米制三维边界。外部占用网格使用 `LOCAL_AEQD`，支持稀疏索引、索引范围和显式边界格。
 
 ## 3. 航路、规则与搜索
 
@@ -68,7 +68,7 @@ MSL 直接使用海拔。ELLIPSOID 减去声明的水准面差。AGL 使用地�
 
 测试目录见 [`../../tests/README.md`](../../tests/README.md)。`api/` 检查 HTTP 契约，`planning/` 检查规划约束，`native/` 检查计算核，`integration/` 检查完整调用和数据归档。
 
-冻结输入位于 `input/v2_benchmarks`，种子为 20261016，manifest 记录 SHA-256。strict/mixed/free 三套各有 1000 个任务和已知可行参考调度。mixed 覆盖全部 20 类规则，并用反事实用例检查规则效果。
+冻结输入位于 `input/engine_contract_20261029`，种子为 20261016，manifest 记录 SHA-256。strict/mixed/free 三套各有 1000 个任务和已知可行参考调度。mixed 覆盖全部 20 类规则，并用反事实用例检查规则效果。
 
 2026-10-16 的历史验收使用 8 CPU / 8 GiB。三套各运行 10 轮，30/30 轮通过。每轮均返回 1000 条有效路线，冲突为 0。strict/mixed/free 最大完整 HTTP/JSON 耗时为 1.454/4.541/1.191 秒。服务 cgroup memory.peak 为 281.72 MiB，进程 VmHWM 为 327.51 MiB，OOM 为 0。完整记录见 [`../reports/v2-20261016/PERFORMANCE.md`](../reports/v2-20261016/PERFORMANCE.md)。
 

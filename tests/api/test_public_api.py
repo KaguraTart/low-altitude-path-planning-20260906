@@ -98,7 +98,7 @@ def test_package_root_aliases_use_current_scene_and_motion_contract():
     assert sdk.plan_batch(scene_id=scene_id, tasks=tasks)["success_count"] == 2
     assert sdk.plan_batch_v2(scene_id=scene_id, tasks=tasks)["success_count"] == 2
     converted = sdk.convert_coordinates({"coordinates": example["scene"]["coordinates"],
-        "direction": "wgs84_to_local", "alt_reference": "MSL",
+        "direction": "wgs84_to_local", "alt_reference": "EG",
         "geometries_wkt": [example["task"]["start_wkt"]]})
     assert isinstance(converted, dict)
     assert converted["geometries_wkt"][0].startswith("POINT Z")

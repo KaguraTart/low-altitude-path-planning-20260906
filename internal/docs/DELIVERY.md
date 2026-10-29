@@ -14,7 +14,7 @@
 | 构建环境 | `pyproject.toml`、`requirements-runtime.lock`、Dockerfile、compose.yaml | Python 3.11 多阶段镜像；默认 2 CPU / 2 GiB |
 | 回归测试 | `tests/`、`tests/README.md` | 按接口、规划、原生核和集成流程分类 |
 | 完整测试数据 | `tests/data/` | 输入、完整响应、环境、索引与 SHA-256 |
-| 固定基准 | `input/v2_benchmarks/`、`tools/benchmark_v2.py` | 三套输入、参考调度和独立验证 |
+| 固定基准 | `input/engine_contract_20261029/`、`tools/benchmark_v2.py` | 三套输入、参考调度和独立验证 |
 | 运维与架构 | `internal/docs/` | 部署、回滚、实现与验收记录 |
 
 `output/` 保存本次运行结果。需要交付的完整 v2 记录归档到 `tests/data/recordings/`。每套记录附采集版本和校验和。
@@ -46,7 +46,7 @@ python tools/smoke_v2.py --base-url http://127.0.0.1:18000
 
 ## 4. 性能与数据
 
-基准种子为 20261016。冻结输入和参考调度位于 `input/v2_benchmarks/`，manifest 记录 SHA-256。独立验证检查端点、时间窗、规则、解析运动学证书和连续机间间隔。
+基准种子为 20261016。冻结输入和参考调度位于 `input/engine_contract_20261029/`，manifest 记录 SHA-256。独立验证检查端点、时间窗、规则、解析运动学证书和连续机间间隔。
 
 历史验收使用 8 CPU / 8 GiB，strict/mixed/free 三套各 1000 个任务，各运行 10 轮。30/30 轮通过，每轮返回 1000 条有效路线，冲突为 0。最大完整 HTTP/JSON 耗时为 1.454/4.541/1.191 秒。记录见 [`../reports/v2-20261016/PERFORMANCE.md`](../reports/v2-20261016/PERFORMANCE.md)。
 

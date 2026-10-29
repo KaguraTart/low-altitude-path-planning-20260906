@@ -96,12 +96,12 @@ def _datum_regions(compiled: CompiledScene, model: Scene, reference: str) -> lis
     if reference == "AGL":
         datasets = compiled.datasets_for(None, "terrain")
         if not datasets:
-            offset = model.coordinates.terrain_msl_m
+            offset = model.coordinates.terrain_ellipsoid_m
             return [] if offset is None else [_DatumRegion(None, -float("inf"), float("inf"), float(offset))]
         result = []
         for dataset in datasets:
             for cell in dataset.cells:
-                value = cell.values.get("elevation_msl_m", cell.values.get("terrain_msl_m"))
+                value = cell.values.get("elevation_ellipsoid_m", cell.values.get("terrain_ellipsoid_m"))
                 offset = None if cell.values.get("nodata", False) or value is None else float(value)
                 result.append(_DatumRegion(
                     cell.geometry.intersection(dataset.geometry),
@@ -115,7 +115,7 @@ def _datum_regions(compiled: CompiledScene, model: Scene, reference: str) -> lis
             continue
         geometry = None
         if correction.geometry_wkt is not None:
-            geometry = compiled.frame.to_local(force_2d(from_wkt(correction.geometry_wkt)).wkt, "MSL")
+            geometry = compiled.frame.to_local(force_2d(from_wkt(correction.geometry_wkt)).wkt, "EG")
         result.append(_DatumRegion(
             geometry, (correction.valid_from - model.time_origin).total_seconds(),
             (correction.valid_to - model.time_origin).total_seconds(), float(correction.offset_m),
@@ -165,8 +165,8 @@ def _variable_track(
     regions: list[_DatumRegion], boundaries: tuple[float, ...],
 ) -> tuple[np.ndarray, np.ndarray]:
     geographic = np.asarray(from_wkt(dynamic.trajectory_wkt).coords, dtype=float)
-    # MSL here projects XY while retaining each reported altitude as raw data.
-    raw = np.asarray(compiled.frame.to_local(dynamic.trajectory_wkt, "MSL").coords, dtype=float).copy()
+    # EG here projects XY while retaining each reported altitude as raw data.
+    raw = np.asarray(compiled.frame.to_local(dynamic.trajectory_wkt, "EG").coords, dtype=float).copy()
     raw[:, 2] = geographic[:, 2]
     times = np.asarray(dynamic.vertex_times_s, dtype=float)
     reference = dynamic.alt_reference
@@ -177,7 +177,7 @@ def _variable_track(
         at = model.time_origin + timedelta(seconds=float(second))
         height = compiled.frame.altitude_to_local(float(coordinate[2]), reference,
                                                  float(coordinate[0]), float(coordinate[1]), at)
-        expected = point[2] + offset - model.coordinates.origin_alt_msl
+        expected = point[2] + offset - model.coordinates.origin_alt_ellipsoid
         if abs(height - expected) > 1e-7:
             raise ValueError(f"{reference} dynamic trajectory has inconsistent height datum evidence")
         converted.append(np.array([point[0], point[1], height], dtype=float))
@@ -208,7 +208,7 @@ def _variable_track(
             if b == 1.0:
                 points.append(converted[index + 1])
             else:
-                points.append(np.array([point[0], point[1], point[2] + basis - model.coordinates.origin_alt_msl]))
+                points.append(np.array([point[0], point[1], point[2] + basis - model.coordinates.origin_alt_ellipsoid]))
             seconds.append(second)
     return np.asarray(points, dtype=float), np.asarray(seconds, dtype=float)
 
@@ -228,7 +228,7 @@ def dynamic_tracks(compiled: CompiledScene, model: Scene) -> list[tuple[np.ndarr
     boundaries = temporal_breakpoints(compiled, model)
     for dynamic in model.dynamic_obstacles:
         try:
-            if dynamic.alt_reference in {"MSL", "ELLIPSOID"}:
+            if dynamic.alt_reference in {"EG", "MSL", "ELLIPSOID"}:
                 geometry = compiled.frame.to_local(dynamic.trajectory_wkt, dynamic.alt_reference, model.time_origin)
                 track = np.asarray(geometry.coords, dtype=float), np.asarray(dynamic.vertex_times_s, dtype=float)
             else:

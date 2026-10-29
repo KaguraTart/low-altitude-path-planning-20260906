@@ -89,6 +89,10 @@ def wkt_vertices(value: str) -> list[tuple[float, float, float]]:
 
 def check_route(route: dict[str, Any], task: dict[str, Any]) -> None:
     require(route.get("task_id") == task["id"], f"Route task ID differs: {task['id']}")
+    require(route.get("alt_reference") == task["alt_reference"], "Route altitude reference differs from task")
+    require(route.get("coordinate_context", {}).get("canonical_alt_reference") == "EG", "Route internal altitude reference is not EG")
+    expected_engine = "ENG-07" if task.get("route_mode", "strict") == "free" else "ENG-06"
+    require(route.get("engine_id") == expected_engine, "Route engine differs from route mode")
     require(route.get("status") == "planned", f"Task {task['id']} did not produce a planned route")
     require(route.get("validation", {}).get("valid") is True, f"Task {task['id']} validation failed")
     require(not route["validation"].get("violations"), f"Task {task['id']} has violations")
@@ -210,6 +214,8 @@ class TestRun:
 
     def _capabilities(self) -> None:
         result = self.get("/api/v2/capabilities")
+        require(result.get("canonical_alt_reference") == "EG" and result.get("contract_version") == "2026-10-29", "Service contract or altitude reference differs")
+        require(set(result.get("engine_rules", {})) == {"ENG-06", "ENG-07"}, "Engine rule allocation is missing")
         require(set(result.get("route_modes", [])) == {"strict", "prefer", "free"}, "Route modes differ")
         require(len(set(result.get("rule_types", []))) == 20, "Rule types do not contain 20 unique entries")
 

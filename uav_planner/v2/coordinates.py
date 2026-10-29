@@ -1,7 +1,7 @@
 """WGS84/AEQD conversion with explicit vertical datum evidence.
 
 The local horizontal axes are east/north metres in an azimuthal equidistant
-projection. The local vertical axis is ``MSL - origin_alt_msl``. AEQD is used
+projection. The local vertical axis is ``EG - origin_alt_ellipsoid``. AEQD is used
 only inside the caller's declared radius. No datum conversion is guessed.
 """
 
@@ -50,36 +50,37 @@ class CoordinateFrame:
             "input_horizontal_crs": "EPSG:4326",
             "axis_order": "longitude,latitude,altitude",
             "local_horizontal_crs": self.local_crs.to_string(),
-            "local_axis_order": "east_m,north_m,msl_minus_origin_m",
+            "local_axis_order": "east_m,north_m,ellipsoid_minus_origin_m",
+            "canonical_alt_reference": "EG",
             "origin_lon": self.spec.origin_lon,
             "origin_lat": self.spec.origin_lat,
-            "origin_alt_msl": self.spec.origin_alt_msl,
+            "origin_alt_ellipsoid": self.spec.origin_alt_ellipsoid,
             "max_radius_m": self.spec.max_radius_m,
             "terrain_source": self.spec.terrain_source,
             "geoid_source": self.spec.geoid_source,
             "height_correction_versions": [item.version for item in self.spec.height_corrections],
         }
 
-    def altitude_to_msl(
+    def altitude_to_ellipsoid(
         self, height: float, reference: str, lon: float, lat: float, at: datetime | None = None,
     ) -> float:
-        """Return absolute MSL metres using declared constant datum evidence."""
+        """Return WGS84 ellipsoid metres (EG); orthometric MSL converts via h = H + N."""
         _finite(height, "height")
         self._check_geographic(lon, lat)
-        if reference == "MSL":
+        if reference in {"EG", "ELLIPSOID"}:
             return float(height)
         if reference == "AGL":
             terrain = self.terrain_provider(lon, lat, at) if self.terrain_provider is not None else None
             if terrain is None:
-                terrain = self.spec.terrain_msl_m
+                terrain = self.spec.terrain_ellipsoid_m
             if terrain is None:
-                raise CoordinateError("HEIGHT_REFERENCE_UNAVAILABLE", "AGL requires declared terrain_msl_m")
-            _finite(terrain, "terrain MSL height")
+                raise CoordinateError("HEIGHT_REFERENCE_UNAVAILABLE", "AGL requires declared terrain_ellipsoid_m")
+            _finite(terrain, "terrain ellipsoid height")
             return float(height) + terrain
-        if reference == "ELLIPSOID":
-            if self.spec.geoid_separation_m is None:
-                raise CoordinateError("HEIGHT_REFERENCE_UNAVAILABLE", "ELLIPSOID requires declared geoid_separation_m")
-            return float(height) - self.spec.geoid_separation_m
+        if reference == "MSL":
+            if self.spec.geoid_separation_m is None or not self.spec.geoid_source or not self.spec.geoid_source.strip():
+                raise CoordinateError("HEIGHT_REFERENCE_UNAVAILABLE", "MSL requires declared geoid_separation_m and geoid_source")
+            return float(height) + self.spec.geoid_separation_m
         if reference in {"QNE", "QNH"}:
             return float(height) + self._pressure_offset(reference, lon, lat, at)
         raise CoordinateError("INVALID_ALTITUDE_REFERENCE", f"Unsupported altitude reference: {reference}")
@@ -87,16 +88,16 @@ class CoordinateFrame:
     def altitude_to_local(
         self, height: float, reference: str, lon: float, lat: float, at: datetime | None = None,
     ) -> float:
-        return self.altitude_to_msl(height, reference, lon, lat, at) - self.spec.origin_alt_msl
+        return self.altitude_to_ellipsoid(height, reference, lon, lat, at) - self.spec.origin_alt_ellipsoid
 
-    def altitude_from_msl(
+    def altitude_from_ellipsoid(
         self, height: float, reference: str, lon: float, lat: float, at: datetime | None = None,
     ) -> float:
-        """Invert the same datum evidence; pressure offset is MSL minus reported altitude."""
+        """Invert the same datum evidence; pressure offset is EG minus reported altitude."""
         _finite(height, "height")
         self._check_geographic(lon, lat)
         # The conversion is an additive offset at the declared point and time.
-        return float(height) - self.altitude_to_msl(0, reference, lon, lat, at)
+        return float(height) - self.altitude_to_ellipsoid(0, reference, lon, lat, at)
 
     def _pressure_offset(self, reference: str, lon: float, lat: float, at: datetime | None) -> float:
         if at is None or at.tzinfo is None or at.utcoffset() is None:
@@ -130,7 +131,7 @@ class CoordinateFrame:
         return transform(forward, geometry)
 
     def to_wgs84(
-        self, geometry: BaseGeometry | str, alt_reference: str = "MSL", at: datetime | None = None,
+        self, geometry: BaseGeometry | str, alt_reference: str = "EG", at: datetime | None = None,
     ) -> str:
         """Convert local geometry to geographic WKT using the requested datum."""
         geometry = self._geometry(geometry) if isinstance(geometry, str) else geometry
@@ -146,7 +147,7 @@ class CoordinateFrame:
             self._check_geographic(lon, lat)
             if z is None:
                 return lon, lat
-            return lon, lat, self.altitude_from_msl(z + self.spec.origin_alt_msl, alt_reference, lon, lat, at)
+            return lon, lat, self.altitude_from_ellipsoid(z + self.spec.origin_alt_ellipsoid, alt_reference, lon, lat, at)
 
         return to_wkt(transform(inverse, geometry), rounding_precision=12, trim=True)
 

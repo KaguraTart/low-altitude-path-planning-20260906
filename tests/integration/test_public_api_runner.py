@@ -26,7 +26,8 @@ def read_example(name):
 def route_for(task):
     start = task["start_wkt"].partition("(")[2].rstrip(") ")
     goal = task["goal_wkt"].partition("(")[2].rstrip(") ")
-    return {"task_id": task["id"], "status": "planned", "route_mode": task.get("route_mode", "strict"),
+    return {"alt_reference":task["alt_reference"], "coordinate_context":{"canonical_alt_reference":"EG"},
+            "engine_id":"ENG-07" if task.get("route_mode") == "free" else "ENG-06", "task_id": task["id"], "status": "planned", "route_mode": task.get("route_mode", "strict"),
             "start_wkt": task["start_wkt"], "goal_wkt": task["goal_wkt"],
             "trajectory_wkt": f"LINESTRING Z ({start}, {goal})", "vertex_times_s": [0, 10],
             "motion_segments": [{"kind": "line", "start_time_s": 0, "end_time_s": 10,
@@ -68,7 +69,7 @@ class FakeService:
         if path == "/api/v2/version":
             return 200, {"api_version": "2.0.0", "engine": {"git_sha": "f" * 40}}
         if path == "/api/v2/capabilities":
-            return 200, {"route_modes": ["strict", "prefer", "free"], "rule_types": list(range(20))}
+            return 200, {"canonical_alt_reference":"EG", "contract_version":"2026-10-29", "engine_rules":{"ENG-06":[],"ENG-07":[]}, "route_modes": ["strict", "prefer", "free"], "rule_types": list(range(20))}
         if path == "/api/v2/examples/single":
             return 200, read_example("single_strict_request")
         if path == "/api/v2/examples/batch":

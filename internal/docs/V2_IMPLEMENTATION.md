@@ -5,7 +5,7 @@
 ## 1. 当前实现
 
 - JSON 请求与响应，WGS84 经纬度 WKT。
-- 显式 MSL/AGL/ELLIPSOID/QNE/QNH 高度基准与转换。
+- 显式 EG/MSL/AGL/ELLIPSOID/QNE/QNH 高度基准与转换。
 - 默认 strict 航路模式，支持 prefer 和 free。
 - 航路、管制区、机型性能和 20 类规则执行与验证。
 - 场景注册、网格适配、单任务与批量规划、异步作业。

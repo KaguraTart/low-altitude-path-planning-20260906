@@ -48,13 +48,13 @@ def test_scene_object_counts_above_old_limits_reach_compilation(lightweight_comp
     scene = example_request()["scene"]
     point = example_request()["task"]["start_wkt"]
     volume = {"geometry_wkt": point, "min_altitude": 0, "max_altitude": 100,
-              "alt_reference": "MSL"}
+              "alt_reference": "EG"}
     templates = {
         "airways": (scene["airways"][0], 201),
         "obstacles": (volume, 1001),
         "connectors": (volume, 1001),
         "control_zones": ({"geom": point, "minAlt": 0, "maxAlt": 100,
-                           "zoneType": "POINT", "altReference": "MSL"}, 21),
+                           "zoneType": "POINT", "altReference": "EG"}, 21),
         "rules": ({"rule_type": "TIME", "content": {}}, 1001),
         "profiles": ({}, 33),
         "datasets": ({"kind": "risk", "version": "test-data-1"}, 101),

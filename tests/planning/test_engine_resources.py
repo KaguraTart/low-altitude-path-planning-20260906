@@ -140,7 +140,7 @@ def test_validator_rejects_incomplete_upstream_conflict_proof(monkeypatch):
     route = engine.plan_single_v2(**value)
     value["scene"]["dynamic_obstacles"] = [{
         "id": "upstream", "trajectory_wkt": value["task"]["start_wkt"],
-        "vertex_times_s": [1000], "alt_reference": "MSL",
+        "vertex_times_s": [1000], "alt_reference": "EG",
     }]
     monkeypatch.setattr(native, "continuous_conflicts", lambda *args, **kwargs: {
         "status": "conflict_limit", "conflicts": [], "checked_pairs": 0,

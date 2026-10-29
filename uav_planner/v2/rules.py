@@ -25,7 +25,7 @@ RULE_KEYS = {
     "DIRECTION": {"direction", "directions"},
     "SPEED": {"minSpeed", "maxSpeed", "cruiseSpeed"},
     "TIME": {"dailyStart", "dailyEnd", "weekdays", "earliestDeparture", "latestArrival"},
-    "AREA": {"scope", "adminCodes", "gridCodes", "zoneIds"},
+    "AREA": {"scope", "adminCodes", "gridCodes", "zoneIds", "minLon", "maxLon", "minLat", "maxLat", "areaWkt"},
     "CLIMB": {"maxClimbRate", "maxDescentRate"},
     "TURN": {"maxTurnAngle", "minTurnRadius"},
     "SEPARATION": {"verticalSeparation", "horizontalSeparation"},
@@ -86,8 +86,8 @@ def validate_rule(rule: Any) -> None:
         elif key in {"directions", "weekdays", "bands", "adminCodes", "gridCodes", "zoneIds", "zoneLevels"}:
             if not isinstance(value, list) or not value:
                 invalid("Rule list field must be nonempty", field=key)
-        elif key not in {"altDatum", "direction", "dailyStart", "dailyEnd", "earliestDeparture", "latestArrival", "scope", "noFlyMode", "avoidMode", "priorityScene", "band_policy"}:
-            _number(content, key, lo=None if key in {"minSignalStrength", "minHeight", "maxHeight", "minAltitude", "maxAltitude"} else 0)
+        elif key not in {"altDatum", "direction", "dailyStart", "dailyEnd", "earliestDeparture", "latestArrival", "scope", "noFlyMode", "avoidMode", "priorityScene", "band_policy", "areaWkt"}:
+            _number(content, key, lo=None if key in {"minSignalStrength", "minHeight", "maxHeight", "minAltitude", "maxAltitude", "minLon", "maxLon", "minLat", "maxLat"} else 0)
     for lower, upper in (("minHeight", "maxHeight"), ("minAltitude", "maxAltitude"), ("minSpeed", "maxSpeed")):
         if lower in content and upper in content and content[lower] > content[upper]:
             invalid("Rule lower bound exceeds upper bound", field=lower)
@@ -108,10 +108,10 @@ def validate_rule(rule: Any) -> None:
     if meaningful and not meaningful.intersection(content):
         invalid("Rule has no executable constraint", rule_id=get(rule, "id"))
     enum_values = {
-        "altDatum": {"MSL", "AGL", "ELLIPSOID", "QNE", "QNH"},
-        "direction": {"ONE_WAY", "BIDIRECTIONAL"}, "scope": {"INCLUDE", "EXCLUDE"},
-        "noFlyMode": {"PERMANENT", "TEMPORARY"}, "avoidMode": {"BUFFER", "CORRIDOR"},
-        "priorityScene": {"LOW_RISK", "FAST", "QUIET"}, "band_policy": {"any", "all"},
+        "altDatum": {"EG", "MSL", "AGL", "ELLIPSOID", "QNE", "QNH"},
+        "direction": {"ONE_WAY", "BIDIRECTIONAL"}, "scope": {"BBOX", "WKT", "INCLUDE", "EXCLUDE"},
+        "noFlyMode": {"STANDARD", "PERMANENT", "TEMPORARY"}, "avoidMode": {"STRICT", "BUFFER", "CORRIDOR"},
+        "priorityScene": {"PLANNING", "LOW_RISK", "FAST", "QUIET"}, "band_policy": {"any", "all"},
     }
     for key, choices in enum_values.items():
         if key in content and (not isinstance(content[key],str) or content[key] not in choices):
@@ -137,17 +137,40 @@ def validate_rule(rule: Any) -> None:
         if key in content and content[key] <= 0:
             invalid("Rule value must be positive", field=key)
     for key in ("maxWaypoints",):
-        if key in content and (isinstance(content[key], bool) or int(content[key]) != content[key] or content[key] < 2):
-            invalid("maxWaypoints must be an integer of at least two")
+        if key in content and (isinstance(content[key], bool) or int(content[key]) != content[key] or content[key] < 0):
+            invalid("maxWaypoints must be a nonnegative integer")
     for key in ("minHeight", "maxHeight", "minAltitude", "maxAltitude"):
         _number(content, key, lo=None)
-    if "weekdays" in content and any(isinstance(n, bool) or not isinstance(n, int) or not 1 <= n <= 7 for n in content["weekdays"]):
-        invalid("weekdays must contain ISO weekday numbers 1 through 7")
+    if "weekdays" in content and any(isinstance(n, bool) or not isinstance(n, int) or not 0 <= n <= 6 for n in content["weekdays"]):
+        invalid("weekdays must contain weekday numbers 0 (Sunday) through 6 (Saturday)")
     if "directions" in content and any(isinstance(n, bool) or not isinstance(n, (float, int)) or not isfinite(n) or not 0 <= n < 360 for n in content["directions"]):
         invalid("directions must contain angles in [0, 360)")
     for key in ("bands", "adminCodes", "gridCodes", "zoneLevels", "zoneIds"):
         if key in content and any(not isinstance(s, str) or not s for s in content[key]):
             invalid("Rule field must contain nonempty strings", field=key)
+    if kind == "AREA" and content["scope"] in {"BBOX", "WKT"}:
+        allowed = {"scope", "minLon", "maxLon", "minLat", "maxLat"} if content["scope"] == "BBOX" else {"scope", "areaWkt"}
+        if set(content) - allowed or get(rule, "resource_ids", []):
+            invalid("Geometric AREA uses only the fields for its BBOX or WKT format", rule_id=get(rule, "id"))
+    if kind == "AREA" and content["scope"] == "BBOX":
+        keys = {"minLon", "maxLon", "minLat", "maxLat"}
+        if not keys <= content.keys():
+            invalid("BBOX requires minLon, maxLon, minLat and maxLat", rule_id=get(rule, "id"))
+        for key in ("minLon", "maxLon"):
+            _number(content, key, lo=-180, hi=180)
+        for key in ("minLat", "maxLat"):
+            _number(content, key, lo=-90, hi=90)
+        if content["minLon"] >= content["maxLon"] or content["minLat"] >= content["maxLat"]:
+            invalid("BBOX maxima must exceed minima", rule_id=get(rule, "id"))
+    if kind == "AREA" and content["scope"] == "WKT":
+        from .models import validated_geographic_wkt
+        from shapely import from_wkt
+        try:
+            value = validated_geographic_wkt(content["areaWkt"])
+            if from_wkt(value).geom_type not in {"Polygon", "MultiPolygon"}:
+                raise ValueError("areaWkt requires POLYGON or MULTIPOLYGON")
+        except (KeyError, ValueError, TypeError) as exc:
+            invalid("WKT AREA requires valid geographic areaWkt polygon", rule_id=get(rule, "id"), reason=str(exc))
     start, end = as_datetime(get(rule, "effective_start")), as_datetime(get(rule, "effective_end"))
     if start and end and start > end:
         invalid("Rule effective period is reversed", rule_id=get(rule, "id"))
@@ -166,10 +189,15 @@ class RuleSet:
     def __init__(self, scene: CompiledScene, rules: Iterable[Any]):
         self.scene = scene
         self.items = list(rules)
+        from .models import Rule
+        self.defaults = [Rule(id="default:CLIMB", rule_type="CLIMB", content={"maxClimbRate": 5, "maxDescentRate": 3}),
+                         Rule(id="default:TURN", rule_type="TURN", content={"maxTurnAngle": 90, "minTurnRadius": 10})]
         seen: set[str] = set()
         for rule in self.items:
             validate_rule(rule)
             rid = str(get(rule, "id"))
+            if rid.startswith("default:"):
+                invalid("Rule ids starting with default: are reserved", rule_id=rid)
             if rid in seen:
                 invalid("Duplicate rule id", rule_id=rid)
             seen.add(rid)
@@ -216,7 +244,7 @@ class RuleSet:
                             good = isinstance(value, bool) or good and value >= 0
                         if not good:
                             invalid("Rule field dataset is missing a required value", rule_id=get(rule, "id"), dataset_id=dataset.id, field=name)
-        if kind == "HEIGHT_LAYER" and content.get("altDatum", "MSL") == "AGL":
+        if kind == "HEIGHT_LAYER" and content.get("altDatum", "EG") == "AGL":
             if self.scene.terrain_constant is None and not self.scene.datasets_for(None, "terrain"):
                 invalid("AGL height rules require terrain data", rule_id=get(rule, "id"))
         if kind == "WIDTH" and not self.scene.airways:
@@ -235,12 +263,16 @@ class RuleSet:
     def selected(self, task: Any = None) -> list[Any]:
         ids = get(task, "rule_ids")
         if ids is None:
-            return self.items
-        known = {str(get(r, "id")) for r in self.items}
-        missing = set(map(str, ids)) - known
-        if missing:
-            invalid("Task references missing rules", rule_ids=sorted(missing))
-        return [r for r in self.items if str(get(r, "id")) in set(map(str, ids))]
+            selected = list(self.items)
+        else:
+            known = {str(get(r, "id")) for r in self.items}
+            missing = set(map(str, ids)) - known
+            if missing:
+                invalid("Task references missing rules", rule_ids=sorted(missing))
+            selected = [r for r in self.items if str(get(r, "id")) in set(map(str, ids))]
+        kinds = {get(r, "rule_type") for r in selected}
+        selected.extend(r for r in self.defaults if r.rule_type not in kinds)
+        return selected
 
     def interval(self, rule: Any, t0: float, t1: float) -> tuple[float, float] | None:
         start, end = as_datetime(get(rule, "effective_start")), as_datetime(get(rule, "effective_end"))
@@ -317,7 +349,7 @@ class RuleSet:
         delta = p1 - p0
         speed = float(np.linalg.norm(delta)) / dt if dt > EPS else (float("inf") if np.linalg.norm(delta) > EPS else 0)
         climb = float(delta[2]) / dt if dt > EPS else 0
-        heading = degrees(atan2(delta[1], delta[0])) % 360
+        heading = degrees(atan2(delta[0], delta[1])) % 360
         for rule in self.selected(task):
             if kinds is not None and get(rule, "rule_type") not in kinds:
                 continue
@@ -342,12 +374,12 @@ class RuleSet:
                         break
             elif kind == "DIRECTION" and np.linalg.norm(delta[:2]) > EPS:
                 if c.get("directions") and not any(abs((heading - h + 180) % 360 - 180) <= 1e-4 for h in c["directions"]):
-                    reason = "segment heading is not in allowed East-zero counterclockwise directions"
+                    reason = "segment heading is not in allowed North-zero clockwise directions"
                 elif c.get("direction") == "ONE_WAY" and not c.get("directions") and not self.scene.direction_allowed(rule, p0, p1):
                     reason = "segment travels against the referenced airway direction"
             elif kind == "WIDTH":
-                if not self.scene.width_allowed(rule, p0, p1, parts, profile):
-                    reason = "segment exceeds the reduced airway half width"
+                if not self.scene.width_allowed(rule, p0, p1, parts, profile, t0, t1, task):
+                    reason = "segment exceeds the flight width or its exterior protection band meets an obstacle"
             elif kind == "TIME":
                 if not all(_daily_interval_allowed(self.scene.time_origin + timedelta(seconds=t0 + a * dt), self.scene.time_origin + timedelta(seconds=t0 + b * dt), c) for a, b in parts):
                     reason = "segment crosses a disallowed daily time or weekday"
@@ -402,9 +434,9 @@ class RuleSet:
                 if capacity + EPS < c["maxPayloadKg"] or get(task, "payload_kg", 0) > min(capacity, c["maxPayloadKg"]) + EPS:
                     reason = "aircraft capacity or task payload violates payload requirements"
             elif kind == "WAYPOINT":
-                # Business waypoints, including start and goal; search/smoothing nodes are not user waypoints.
+                # Count via points; start, goal and motion samples are not via points.
                 wps = [points[0]] + [self.scene.waypoint_local(w, task) for w in task_wps] + [points[-1]]
-                if len(wps) > c.get("maxWaypoints", float("inf")):
+                if len(task_wps) > c.get("maxWaypoints", float("inf")):
                     reason = "task waypoint count exceeds limit"
                 elif any(np.linalg.norm(b - a) + EPS < c.get("minWaypointInterval", 0) for a, b in zip(wps, wps[1:])):
                     reason = "adjacent task waypoints are too close"
@@ -460,15 +492,15 @@ class RuleSet:
                 if "latestArrival" in c and arrival.time().replace(tzinfo=None) > time.fromisoformat(c["latestArrival"]):
                     reason = "arrival exceeds the allowed local arrival time"
             elif kind == "RTL" and phase == "rtl":
-                # Root builds the return route and raises to this MSL altitude before transit.
+                # Root builds the return route and raises to this EG altitude before transit.
                 moving = [i for i in range(len(lengths)) if np.linalg.norm(points[i + 1, :2] - points[i, :2]) > EPS]
-                if any(not self.scene.height_part_allowed(points[i], points[i + 1], times[i], times[i + 1], {"minAltitude": c["rtlAltitude"], "altDatum": "MSL"}) for i in moving):
+                if any(not self.scene.height_part_allowed(points[i], points[i + 1], times[i], times[i + 1], {"minAltitude": c["rtlAltitude"], "altDatum": "EG"}) for i in moving):
                     reason = "return transit is below the required RTL altitude"
             if reason:
                 errors.append(violation(rule, reason))
         return errors
 
-    def report(self, task: Any = None, violations: Iterable[dict] = (), times: Iterable[float] | None = None) -> list[dict]:
+    def report(self, task: Any = None, violations: Iterable[dict] = (), times: Iterable[float] | None = None, points: Any = None) -> list[dict]:
         failures = list(violations)
         if times is None:
             departure = as_datetime(get(task, "departure_time")) or self.scene.time_origin
@@ -478,11 +510,16 @@ class RuleSet:
             t0, t1 = (min(arr), max(arr)) if arr else (0, 0)
         selected = {str(get(r, "id")) for r in self.selected(task)}
         result = []
-        for rule in self.items:
+        for rule in self.items + [r for r in self.defaults if r.id in selected]:
             rid = get(rule, "id")
             failed = [v.get("reason", v.get("message", "rule violation")) for v in failures if str(v.get("rule_id")) == str(rid)]
             enabled = str(rid) in selected and self.interval(rule, t0, t1) is not None
-            reasons = failed or ([] if enabled else ["outside effective period or not selected"])
+            if enabled and get(rule, "scope") is not None and points is not None and times is not None:
+                vertices, seconds = np.asarray(points, float), np.asarray(list(times), float)
+                volumes = self.scene.rule_scopes.get(str(rid), [])
+                enabled = any(self.scene.volume_intervals(volume, vertices[i], vertices[min(i+1,len(vertices)-1)], float(seconds[i]), float(seconds[min(i+1,len(vertices)-1)]))
+                              for volume in volumes for i in range(max(1,len(vertices)-1)))
+            reasons = failed or ([] if enabled else ["outside effective time/space or not selected"])
             result.append({"rule_id": rid, "rule_type": get(rule, "rule_type"), "status": "failed" if failed else "applied" if enabled else "not_applicable", "message": "; ".join(reasons), "details": {"reasons": reasons, "dataset_versions": {d.id: d.version for d in self.scene.datasets_for(rule)}}})
         return result
 
@@ -490,11 +527,11 @@ class RuleSet:
 def _daily_interval_allowed(start: datetime, end: datetime, content: dict) -> bool:
     """Cover a complete interval by permitted local daily windows, including midnight."""
     start, end = start.astimezone(LOCAL_TZ), end.astimezone(LOCAL_TZ)
-    weekdays = set(content.get("weekdays", range(1, 8)))
+    weekdays = set(content.get("weekdays", range(7)))
     if "dailyStart" not in content:
         day = start.date()
         while day <= end.date():
-            if day.isoweekday() not in weekdays:
+            if (day.isoweekday() % 7) not in weekdays:
                 return False
             day += timedelta(days=1)
         return True
@@ -502,7 +539,7 @@ def _daily_interval_allowed(start: datetime, end: datetime, content: dict) -> bo
     windows = []
     day = start.date() - timedelta(days=1)
     while day <= end.date():
-        if day.isoweekday() in weekdays:
+        if (day.isoweekday() % 7) in weekdays:
             a = datetime.combine(day, begin, LOCAL_TZ)
             b = datetime.combine(day + timedelta(days=finish <= begin), finish, LOCAL_TZ)
             windows.append((a, b))

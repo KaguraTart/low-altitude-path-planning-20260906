@@ -25,8 +25,8 @@
 | WKT 线路 | 使用 `LINESTRING Z (经度 纬度 高度, 经度 纬度 高度, ...)` |
 | WKT 区域 | 使用 `POLYGON` 或 `MULTIPOLYGON`。另填区域高度范围和高度基准 |
 | 经纬度 | 使用 WGS84。先写经度，再写纬度，单位为度 |
-| 局部坐标 | X 向东，Y 向北。Z 等于 MSL 高度减 `origin_alt_msl`，单位为米 |
-| 高度 | 明确填写 `MSL`、`AGL`、`ELLIPSOID`、`QNE` 或 `QNH` |
+| 局部坐标 | X 向东，Y 向北。Z 等于 EG 椭球高减 `origin_alt_ellipsoid`，单位为米 |
+| 高度 | 明确填写 `EG`、`MSL`、`AGL`、`ELLIPSOID`、`QNE` 或 `QNH` |
 | 其他单位 | 距离用米；时间用秒；速度用 m/s；加速度用 m/s²；载荷用 kg |
 | 任务时间 | 使用带时区的 ISO 8601，例如 `2026-10-18T09:00:00+08:00` |
 | 相对时间 | 轨迹和运动段的秒数以 `scene.time_origin` 为零点 |
@@ -55,7 +55,7 @@
 
 在 `test_api` 目录执行以下命令。脚本使用本目录的 `client.py`，只依赖 Python 标准库。
 
-本例将终点改到局部坐标 `[800, 100, 80]`。该点位于示例航路内。任务在中间航点悬停 5 秒。巡航速度改为 5m/s。
+本例将终点改到局部坐标 `[800, 100, 80]`。该点位于示例航路内。任务在中间航点悬停 5 秒。巡航速度改为 5 m/s。
 
 ```bash
 python - <<'PY'
@@ -72,7 +72,7 @@ client = HTTPClient(os.environ.get("API_BASE_URL", "https://api.kaguratart.com")
 converted = client.request("POST", "/api/v2/coordinates/convert", {
     "coordinates": request["scene"]["coordinates"],
     "direction": "local_to_wgs84",
-    "alt_reference": "MSL",
+    "alt_reference": "EG",
     "geometries_wkt": [
         "POINT Z (100 100 80)",
         "POINT Z (450 100 80)",
@@ -80,7 +80,10 @@ converted = client.request("POST", "/api/v2/coordinates/convert", {
     ]
 })
 start, middle, goal = converted["geometries_wkt"]
-request["scene"]["time_origin"] = "2026-10-18T09:00:00+08:00"
+request["task"]["rule_ids"] = [
+    rule["id"] for rule in request["scene"]["rules"]
+    if rule.get("rule_type", rule.get("type")) in {"SPEED", "HOVER"}
+]
 request["task"].update({
     "id": "integration-demo-001",
     "start_wkt": start,
@@ -98,7 +101,7 @@ print("完整输入与输出：", output / "http")
 PY
 ```
 
-本例返回 `status: "planned"`。航程约为 700m，任务航时约为 150s，其中包含 5s 悬停。
+本例选择 SPEED/HOVER 业务规则，并继续执行机型、航路和默认爬降/转弯约束。提交后检查实际 `status` 与 `validation.valid`；航时以返回的 `metrics` 为准。
 
 本例的局部坐标单位为米。更换业务地点时，先设置场景原点，再通过坐标转换接口生成经纬度 WKT。
 
@@ -209,10 +212,11 @@ PY
 | 字段 | 类型 | 必填与默认值 | 含义与修改方法 |
 |---|---|---|---|
 | `id` | 非空字符串 | 必填 | 任务编号。结果中的 `task_id` 对应此值。 |
+| `engine_id` | ENG-06/ENG-07 或 null | 自动推断 | strict/prefer 对应 ENG-06；free 对应 ENG-07。显式输入须一致。 |
 | `start_wkt` | `POINT Z` 字符串 | 必填 | 起点。顺序为经度、纬度、高度。经纬度单位为度，高度单位为米。 |
 | `goal_wkt` | `POINT Z` 字符串 | 必填 | 任务终点。触发返航时，服务按 `state.home_wkt` 生成返航路线。 |
 | `departure_time` | 带时区时间字符串 | 必填 | 允许开始任务的时刻，如 `2026-10-16T09:00:00+08:00`。服务可为避让安排较晚起飞。 |
-| `alt_reference` | 枚举字符串 | 必填 | 任务 WKT 的高度基准：`MSL`、`AGL`、`ELLIPSOID`、`QNE`、`QNH`。见[坐标与高度](#coordinates)。 |
+| `alt_reference` | 枚举字符串 | 必填 | 任务 WKT 的高度基准：`EG`、`MSL`、`AGL`、`ELLIPSOID`、`QNE`、`QNH`。见[坐标与高度](#coordinates)。 |
 | `route_mode` | 枚举字符串 | 默认 `strict` | `strict` 使用有效航路与已授权接驳；`prefer` 优先使用航路；`free` 使用合法自由空域。 |
 | `waypoints` | Waypoint 数组 | 默认 `[]` | 按数组顺序经过业务航点。见[航点字段](#waypoint)。 |
 | `earliest_arrival` | 带时区时间或 `null` | 默认 `null` | 最早到达终点的时刻。 |
@@ -262,6 +266,8 @@ PY
 <a id="route"></a>
 ### RouteResult：单条路线结果
 
+每条结果显式返回 `engine_id`、`alt_reference`、`coordinate_context`。包括失败结果。WKT 采用任务请求的高度基准；运动段采用局部 EG 米制坐标。
+
 | 字段 | 类型 | 含义 |
 |---|---|---|
 | `task_id` | 字符串 | 输入任务 `id`。 |
@@ -289,7 +295,7 @@ PY
 <a id="motion-segment"></a>
 ### MotionSegment：运动段
 
-运动段的位置数组使用场景的局部米制坐标，顺序为 `[east_m, north_m, msl_minus_origin_m]`。轨迹 WKT 使用 WGS84。使用[坐标转换接口](#coordinates)在两种表达之间换算。
+运动段的位置数组使用场景的局部米制坐标，顺序为 `[east_m, north_m, ellipsoid_minus_origin_m]`。轨迹 WKT 使用 WGS84。使用[坐标转换接口](#coordinates)在两种表达之间换算。
 
 | 字段 | 类型与默认值 | 含义 |
 |---|---|---|
@@ -405,7 +411,7 @@ PY
 
 `details.reasons` 是原因数组。`details.dataset_versions` 以数据集 ID 为键，以版本字符串为值。
 
-当前规则引擎生成 `applied`、`not_applicable` 和 `failed`。`applied` 表示已选择且有效期与路线相交；`not_applicable` 表示未选择或时间不适用；`failed` 表示规则产生违规项。响应模型另接受 `inactive` 和 `unsupported` 这两个状态值。
+未绑定有效 CLIMB/TURN 时，默认约束也产生执行报告。当前规则引擎生成 `applied`、`not_applicable` 和 `failed`。`applied` 表示已选择且有效期与路线相交；`not_applicable` 表示未选择或时间不适用；`failed` 表示规则产生违规项。响应模型另接受 `inactive` 和 `unsupported` 这两个状态值。
 
 <a id="batch-result"></a>
 ### BatchResult：批量结果
@@ -560,6 +566,8 @@ PY
 <a id="capabilities"></a>
 ### GET /api/v2/capabilities：接口能力
 
+本次契约 `contract_version="2026-10-29"`。`engine_rules` 返回 ENG-06/ENG-07 规则分配；`canonical_alt_reference="EG"`。对接前核对运行服务的这些字段。
+
 没有请求体。HTTP `200` 响应字段如下。
 
 | 字段 | 类型 | 当前含义 |
@@ -568,7 +576,7 @@ PY
 | `route_modes` | 字符串数组 | `strict`、`prefer`、`free`。 |
 | `default_route_mode` | 字符串 | 默认 `strict`。 |
 | `rule_types` | 字符串数组 | 支持的 20 类规则。见[规则字段](#rules)。 |
-| `altitude_references` | 字符串数组 | `MSL`、`AGL`、`ELLIPSOID`、`QNE`、`QNH`。 |
+| `altitude_references` | 字符串数组 | `EG`、`MSL`、`AGL`、`ELLIPSOID`、`QNE`、`QNH`。 |
 | `geometric_tolerance_m` | 数值 | 轨迹几何近似精度，单位米，当前为 `0.1`。 |
 | `max_scene_radius_m` | 数值或 `null` | 当前为 `null`，服务不设置固定场景半径上限。场景覆盖半径由 `coordinates.max_radius_m` 指定。 |
 | `grid_formats` | 字符串数组 | `regular_sparse_indices`、`regular_index_ranges`、`explicit_bounds_cells`。见[网格字段](#grid)。 |
@@ -646,8 +654,10 @@ PY
 
 | 字段 | 类型、单位 | 默认值 | 填写方法与作用 |
 |---|---|---|---|
+| `scene_type` | 枚举 | `LOW_ALTITUDE` | 当前只接受低空场景；地面和水上暂无。 |
+| `network_version` | 字符串或 null | null | 上游路网版本，用于追溯。 |
 | `coordinates` | 对象 | 必填 | 配置 WGS84 与局部米制坐标。见[坐标配置](#coordinates)。 |
-| `bounds` | 对象，m | 必填 | 设置局部规划范围。六个字段为 `x_min`、`x_max`、`y_min`、`y_max`、`z_min`、`z_max`。x 向东，y 向北，z 为 MSL 高度减 `origin_alt_msl`。每轴最大值大于最小值。 |
+| `bounds` | 对象，m | 必填 | 设置局部规划范围。六个字段为 `x_min`、`x_max`、`y_min`、`y_max`、`z_min`、`z_max`。x 向东，y 向北，z 为 EG 椭球高减 `origin_alt_ellipsoid`。每轴最大值大于最小值。 |
 | `resolution` | 三个正数，m | `[25,25,10]` | 按 `[dx,dy,dz]` 设置内部搜索网格分辨率。修改此值会改变搜索网格和结果中的内部网格索引。 |
 | `horizon_s` | 正数，s | `3600` | 设置从 `time_origin` 开始的任务规划时域。按任务时间调整。 |
 | `time_origin` | 带时区时间 | 必填 | 设置场景时间原点。例如 `2026-10-16T09:00:00+08:00`。轨迹的秒数相对此时刻计量。 |
@@ -661,7 +671,7 @@ PY
 | `profiles` | 对象数组 | `[]` | 登记任务引用的机型参数。见[机型](#profiles)。 |
 | `grid` | 对象或 `null` | `null` | 导入外部占用网格和编码。见[网格](#grid)。 |
 
-为空间资源设置稳定的 `id`。航路、接驳区、障碍物、管制区和数据集共用资源引用表。任务通过机型 ID、接驳区 ID 和规则 ID 引用配置。规则通过 `resource_ids` 引用空间资源。时间字段填写带时区的 ISO 8601 字符串。可选有效期的开始或结束为 `null` 时，该方向保持开放。
+为空间资源设置稳定的 `id`。航路、接驳区、障碍物、管制区和数据集共用资源引用表。任务通过机型 ID、接驳区 ID 和规则 ID 引用配置。规则通过 `resource_ids` 引用空间资源。时间字段填写带时区的 ISO 8601 字符串。仅规则外层 `effective_start/effective_end` 兼容无时区的北京时间和空字符串。可选有效期的开始或结束为 `null` 时，该方向保持开放。
 
 ### 修改场景并用于任务
 
@@ -701,7 +711,7 @@ print(request["scene_id"])
 
 修改坐标原点时，同步处理局部米制数据：重新换算 `bounds`、字段单元的 `bounds`、外部 `grid` 的原点和范围。WGS84 几何保留其实际地理位置。若要移动整个业务场景，同步修改航路中心线、端点网格、接驳区、障碍物、管制区、字段范围和任务点。
 
-修改 `origin_alt_msl` 时，重新计算全部局部 z 值。修改高度基准时，同步修改相应高度值及其转换数据。修改 `time_origin` 时，同步调整任务时间、对象有效期、字段有效期和动态轨迹秒数。
+修改 `origin_alt_ellipsoid` 时，重新计算全部局部 z 值。修改高度基准时，同步修改相应高度值及其转换数据。修改 `time_origin` 时，同步调整任务时间、对象有效期、字段有效期和动态轨迹秒数。
 
 <a id="coordinates"></a>
 ## 坐标和高度
@@ -711,7 +721,7 @@ WGS84 几何按 `经度 纬度 高度` 排列。经纬度使用度，高度使�
 水平转换使用以场景原点建立的 AEQD 投影。局部高度按以下公式计算：
 
 ```text
-local_z_m = altitude_msl_m - origin_alt_msl
+local_z_m = altitude_ellipsoid_m - origin_alt_ellipsoid
 ```
 
 ### `coordinates` 配置字段
@@ -722,10 +732,10 @@ local_z_m = altitude_msl_m - origin_alt_msl
 |---|---|---|---|
 | `origin_lon` | 数值，度 | 必填 | 填写局部原点的 WGS84 经度。 |
 | `origin_lat` | 数值，度 | 必填 | 填写局部原点的 WGS84 纬度。 |
-| `origin_alt_msl` | 数值，m MSL | `0` | 设置局部 z=0 对应的海拔。 |
+| `origin_alt_ellipsoid` | 数值，m EG | `0` | 设置局部 z=0 对应的 EG 椭球高。 |
 | `max_radius_m` | 正数，m | `50000` | 声明本次局部坐标覆盖半径。按场景实际范围填写。 |
-| `terrain_msl_m` | 数值或 `null`，m MSL | `null` | 填写场景平坦地形海拔，用于 AGL 转换和地面检查。场景也可通过 `terrain` 数据集提供分区地形。 |
-| `geoid_separation_m` | 数值或 `null`，m | `null` | 填写大地水准面差 `N=椭球高−MSL高`，用于椭球高转换。 |
+| `terrain_ellipsoid_m` | 数值或 `null`，m EG | `null` | 填写场景平坦地形椭球高，用于 AGL 转换和地面检查。场景也可通过 `terrain` 数据集提供分区地形。 |
+| `geoid_separation_m` | 数值或 `null`，m | `null` | 填写大地水准面差 `N=椭球高−MSL高`，用于 MSL 与 EG 转换；使用 MSL 时还必须填写非空 geoid_source。 |
 | `terrain_source` | 字符串或 `null` | `null` | 记录常量地形的来源。响应的坐标上下文会返回此值。 |
 | `geoid_source` | 字符串或 `null` | `null` | 记录大地水准面差的来源。响应的坐标上下文会返回此值。 |
 | `height_corrections` | 对象数组 | `[]` | 填写 QNE、QNH 高度改正。见[高度改正](#altitude-corrections)。 |
@@ -734,23 +744,23 @@ local_z_m = altitude_msl_m - origin_alt_msl
 
 任务、障碍物、动态轨迹和转换请求使用 `alt_reference`。航路和管制区使用 `altReference`。
 
-| 值 | 高度含义 | 换算为 MSL | 配套数据 |
+| 值 | 高度含义 | 换算为 EG | 配套数据 |
 |---|---|---|---|
-| `MSL` | 相对平均海平面的高度 | `MSL = 输入高度` | 直接填写 MSL 高度。 |
-| `AGL` | 相对当地地面的高度 | `MSL = 输入高度 + 地形海拔` | 场景填写常量 `terrain_msl_m` 或分区 `terrain` 数据集。独立坐标转换请求填写 `coordinates.terrain_msl_m`。 |
-| `ELLIPSOID` | WGS84 椭球高 | `MSL = 输入高度 - geoid_separation_m` | 填写 `geoid_separation_m`。 |
-| `QNE` | QNE 高度 | `MSL = 输入高度 + offset_m` | 填写匹配位置和时刻的 `QNE` 改正。 |
-| `QNH` | QNH 高度 | `MSL = 输入高度 + offset_m` | 填写匹配位置和时刻的 `QNH` 改正。 |
+| `EG` / `ELLIPSOID` | WGS84 椭球高 | `EG = 输入高度` | 直接使用；ELLIPSOID 是兼容名。 |
+| `MSL` | 相对平均海平面的高度 | `EG = 输入高度 + geoid_separation_m` | 必须填写差值和非空 `geoid_source`。 |
+| `AGL` | 相对当地地面的高度 | `EG = 输入高度 + 地形椭球高` | 常量 `terrain_ellipsoid_m` 或分区 terrain 数据。 |
+| `QNE` / `QNH` | 气压高度 | `EG = 输入高度 + offset_m` | 对应位置和时刻唯一有效的改正；target_reference=EG。 |
 
-AGL 航路和区域沿运动段使用对应地形。分区地形通过 `datasets[].kind="terrain"` 提供。当地形单元重叠时，服务使用较高的地形海拔进行地面检查。
+AGL 航路和区域沿运动段使用对应地形。分区地形通过 `datasets[].kind="terrain"` 提供。当地形单元重叠时，服务使用较高的地形椭球高进行地面检查。
 
 <a id="altitude-corrections"></a>
 ### `height_corrections[]` 高度改正
 
 | 字段 | 类型、单位 | 默认值 | 填写方法与作用 |
 |---|---|---|---|
+| `target_reference` | `EG` | `EG` | offset_m 的目标基准固定为 EG。 |
 | `reference` | `QNE` 或 `QNH` | 必填 | 指定改正的高度基准。 |
-| `offset_m` | 数值，m | 必填 | 填写 `MSL−输入高度`。正值表示 MSL 高于该基准的输入值。 |
+| `offset_m` | 数值，m | 必填 | 填写 `EG−输入高度`。正值表示 EG 高于该基准的输入值。 |
 | `source` | 非空字符串 | 必填 | 记录改正数据来源。 |
 | `version` | 非空字符串 | 必填 | 记录改正数据版本。 |
 | `valid_from` | 带时区时间 | 必填 | 设置生效开始时刻。 |
@@ -769,10 +779,11 @@ AGL 航路和区域沿运动段使用对应地形。分区地形通过 `datasets
 | `input_horizontal_crs` | `EPSG:4326` | 外部水平坐标系。 |
 | `axis_order` | `longitude,latitude,altitude` | 外部 WKT 轴顺序。 |
 | `local_horizontal_crs` | 投影定义字符串 | 完整 AEQD 投影，包含原点和米制单位。 |
-| `local_axis_order` | `east_m,north_m,msl_minus_origin_m` | 局部坐标轴顺序。 |
+| `local_axis_order` | `east_m,north_m,ellipsoid_minus_origin_m` | 局部坐标轴顺序。 |
 | `origin_lon` | 度 | 实际使用的原点经度。 |
 | `origin_lat` | 度 | 实际使用的原点纬度。 |
-| `origin_alt_msl` | m MSL | 实际使用的局部高度原点。 |
+| `origin_alt_ellipsoid` | m EG | 实际使用的局部高度原点。 |
+| `canonical_alt_reference` | `EG` | 内部统一垂直基准。 |
 | `max_radius_m` | m | 请求声明的局部坐标半径。 |
 | `terrain_source` | 字符串或 `null` | 请求声明的常量地形来源。 |
 | `geoid_source` | 字符串或 `null` | 请求声明的椭球高改正来源。 |
@@ -797,9 +808,9 @@ AGL 航路和区域沿运动段使用对应地形。分区地形通过 `datasets
 | `alt_reference` | 字符串 | 返回本次外部高度基准。 |
 | `coordinate_context` | 对象 | 返回实际使用的坐标配置和投影。见[坐标上下文](#coordinate-context)。 |
 
-执行反向转换时，将正向响应中的 `geometries_wkt` 放入反向请求，保留 `coordinates`、`alt_reference` 和 `at`，将 `direction` 改为 `local_to_wgs84`。局部输入的 Z 始终为 `MSL−origin_alt_msl`。
+执行反向转换时，将正向响应中的 `geometries_wkt` 放入反向请求，保留 `coordinates`、`alt_reference` 和 `at`，将 `direction` 改为 `local_to_wgs84`。局部输入的 Z 始终为 `EG−origin_alt_ellipsoid`。
 
-本包正向示例将 `POINT Z (104.771029580333 29.330902187336 80)` 转为约 `POINT Z (100 100 80)`。该示例的 `origin_alt_msl` 为 `0`，外部高度基准为 `MSL`。
+本包正向示例将 `POINT Z (104.771029580333 29.330902187336 80)` 转为约 `POINT Z (100 100 80)`。该示例的 `origin_alt_ellipsoid` 为 `0`，外部高度基准为 `EG`。
 
 <a id="airways"></a>
 ## 航路 `airways[]`
@@ -809,8 +820,9 @@ AGL 航路和区域沿运动段使用对应地形。分区地形通过 `datasets
 | 字段 | 类型、单位 | 默认值 | 填写方法与作用 |
 |---|---|---|---|
 | `id` | 非空字符串 | 必填 | 设置航路 ID，供接驳区和规则引用。 |
+| `allowed_profile_ids` | string[] | `[]` | 机型准入白名单；空数组不限制。strict/prefer 中，不准入航路体为禁入区，重叠获准航路不能抵消；free 不使用航路准入。 |
 | `centerLine` | WGS84 `LINESTRING Z` | 必填 | 按飞行方向填写中心线顶点。首点落在 `startGrid` 内，末点落在 `endGrid` 内。全部参考高度落在航路高度带内。 |
-| `widthMeters` | 正数，m | 必填 | 设置水平走廊**全宽**。中心线每侧宽度为该值的一半。规则 `WIDTH.content.width` 使用半宽，见[规则](#rules)。 |
+| `widthMeters` | 正数，m | 必填 | 设置水平走廊**全宽**。中心线每侧宽度为该值的一半。规则 `WIDTH.content.width` 也使用全宽，见[规则](#rules)。 |
 | `minAltitude` | 数值，m | 必填 | 设置航路最低高度，采用 `altReference`。 |
 | `maxAltitude` | 数值，m | 必填 | 设置航路最高高度，并大于最低高度。 |
 | `altReference` | 高度基准 | 必填 | 指定中心线 Z、端点网格高度和航路高度带的基准。 |
@@ -924,8 +936,8 @@ AGL 航路和区域沿运动段使用对应地形。分区地形通过 `datasets
 |---|---|---|---|
 | `geometry_wkt` | WGS84 WKT 或 `null` | `null` | 用经纬度定义单元水平面；与 `bounds` 二选一。 |
 | `bounds` | 局部米制范围或 `null` | `null` | 使用 `x_min`、`x_max`、`y_min`、`y_max`、`z_min`、`z_max`；z 为局部高度。与 `geometry_wkt` 二选一。 |
-| `min_altitude` | 数值或 `null`，m MSL | `null` | 使用 `geometry_wkt` 时，设置单元最低海拔。省略时覆盖全部较低高度。 |
-| `max_altitude` | 数值或 `null`，m MSL | `null` | 使用 `geometry_wkt` 时，设置单元最高海拔。省略时覆盖全部较高高度。 |
+| `min_altitude` | 数值或 `null`，m EG | `null` | 使用 `geometry_wkt` 时，设置单元最低椭球高。省略时覆盖全部较低高度。 |
+| `max_altitude` | 数值或 `null`，m EG | `null` | 使用 `geometry_wkt` 时，设置单元最高椭球高。省略时覆盖全部较高高度。 |
 | `values` | JSON 对象 | 必填 | 按数据集 `kind` 填写下表字段。 |
 | `valid_from` | 带时区时间或 `null` | `null` | 设置单元生效开始时刻。 |
 | `valid_to` | 带时区时间或 `null` | `null` | 设置单元生效结束时刻。 |
@@ -936,7 +948,7 @@ AGL 航路和区域沿运动段使用对应地形。分区地形通过 `datasets
 
 | `kind` | `values` 字段与单位 | 使用方法 |
 |---|---|---|
-| `terrain` | `elevation_msl_m`，m MSL；也接受 `terrain_msl_m` | 为单元填写地形海拔。AGL 高度换算和地面检查读取该值。 |
+| `terrain` | `elevation_ellipsoid_m`，m EG；也接受 `terrain_ellipsoid_m` | 为单元填写地形椭球高。AGL 高度换算和地面检查读取该值。 |
 | `weather` | `wind_speed_mps`，m/s；也接受 `windSpeed` | 天气规则将此值与 `maxWindSpeed` 比较。 |
 | `weather` | `precipitation`，布尔值或非负数；`precipitation_mm_h`，mm/h | `false` 或 `0` 表示无降水。若填写数值强度，优先使用 `precipitation_mm_h` 明确单位。两者都填写时读取 `precipitation`。 |
 | `weather` | `icing`，布尔值或非负数 | `false` 或 `0` 表示无结冰。 |
@@ -968,7 +980,7 @@ AGL 航路和区域沿运动段使用对应地形。分区地形通过 `datasets
         "z_min": 0,
         "z_max": 300
       },
-      "values": {"elevation_msl_m": 0}
+      "values": {"elevation_ellipsoid_m": 0}
     }
   ]
 }
@@ -976,6 +988,8 @@ AGL 航路和区域沿运动段使用对应地形。分区地形通过 `datasets
 
 <a id="scene-response"></a>
 ## 场景登记和查询响应
+
+响应还返回 `scene_type="LOW_ALTITUDE"` 和上游 `network_version`（未填写则 null）。`scene_version` 是完整规范化场景的内容哈希，与上游路网版本分别保存。
 
 `POST /api/v2/scenes` 和 `GET /api/v2/scenes/{scene_id}` 返回相同字段结构。
 
@@ -1027,7 +1041,7 @@ AGL 航路和区域沿运动段使用对应地形。分区地形通过 `datasets
 <a id="grid"></a>
 ## 外部占用网格 `GridSpec`
 
-在 `Scene.grid` 中填写网格。水平与高度单位均为米。坐标使用场景的局部 AEQD，z 相对 `origin_alt_msl`。数组顺序固定为 `[x,y,z]`，索引固定为 `[i,j,k]`。
+在 `Scene.grid` 中填写网格。水平与高度单位均为米。坐标使用场景的局部 AEQD，z 相对 `origin_alt_ellipsoid`。数组顺序固定为 `[x,y,z]`，索引固定为 `[i,j,k]`。
 
 `origin`、`resolution`、`shape` 为必填元数据。三种占用输入可同时使用：稀疏 `occupied`、连续索引块 `occupied_ranges`、显式边界 `cells`。服务合并三者的占用几何。
 
@@ -1099,7 +1113,7 @@ AGL 航路和区域沿运动段使用对应地形。分区地形通过 `datasets
 
 在 `Scene.rules` 中添加规则。用 `Task.rule_ids` 选择任务执行的规则。`rule_ids` 为 null 或省略时，任务选择全部场景规则。`rule_ids=[]` 选择空规则集。航路、障碍和机型检查仍由各自的场景字段执行。
 
-规则参数放在 `content` 对象中。字段名为 `content`，不是 `parameters`。
+规则参数放在 `content` 对象中；也接受 Word 样例的 `type` / `constraints`，分别对应 `rule_type` / `content`。必须补充稳定的 `id`。响应使用规范字段名。
 
 | 字段 | 类型 | 必填 / 默认 | 含义与修改方法 |
 |---|---|---|---|
@@ -1107,8 +1121,22 @@ AGL 航路和区域沿运动段使用对应地形。分区地形通过 `datasets
 | `rule_type` | string 枚举 | 必填 | 选择下列 20 种规则之一。 |
 | `content` | object | 必填，非空 | 填写本规则的参数。每种类型的参数见下表。 |
 | `resource_ids` | string[] | `[]` | 指定规则引用的资源 ID。天气、信号和偏好规则引用对应数据集。建筑规则引用障碍体。禁飞和管制规则引用管制区。高度、速度等规则可引用几何资源，限定作用位置。空数组按规则类型选择场景资源，或执行全局约束。 |
-| `effective_start` | 带时区 timestamp 或 null | null | 规则开始生效的绝对时刻。省略时，规则没有起始时刻条件。 |
-| `effective_end` | 带时区 timestamp 或 null | null | 规则结束生效的绝对时刻。省略时，规则没有结束时刻条件。填写起止时刻时，结束时刻晚于开始时刻。 |
+| `scope` | 对象或 null | null | 本条规则的空间作用域，见下表。 |
+| `effective_start` | timestamp 或 null | null | 规则开始生效的绝对时刻；无时区按 Asia/Shanghai，空字符串转 null。省略时，规则没有起始时刻条件。 |
+| `effective_end` | 带时区 timestamp 或 null | null | 规则结束生效的绝对时刻；无时区按 Asia/Shanghai，空字符串转 null。省略时，规则没有结束时刻条件。填写起止时刻时，结束时刻晚于开始时刻。 |
+
+| scope 字段 | 输入要求 |
+|---|---|
+| `grid[].x/y/z` | 三个非负整数；与 geometry 二选一。通过 scene.grid 解析，越界或缺少网格则拒绝。 |
+| `grid[].geometry` | POINT Z 或 POLYGON Z；经纬度和 EG 高度。 |
+| `geom[].type` | CONTROL_ZONE / NO_FLY_ZONE / ADMIN_DIVISION / AIRSPACE / LANDING_SITE。 |
+| `geom[].geom` | CONTROL_ZONE/NO_FLY_ZONE/AIRSPACE 使用 POLYGON Z，LANDING_SITE 使用 POINT Z；行政区不使用此字段。 |
+| `geom[].center_point` | 管制区和起降场使用 POINT Z；行政区使用 POINT；禁飞区和空域不使用此字段。 |
+| `geom[].boundary_2d` | 二维 POLYGON/MULTIPOLYGON。除 LANDING_SITE 外，每个要素必须提供 geom 或 boundary_2d，不能只给中心点；同时有 geom 与 boundary_2d 时，水平足迹须在 0.1 m 容差内一致。 |
+
+BUILDING/WEATHER/SIGNAL/WIDTH 使用 scope.grid；NO_FLY/ZONE/AREA 使用 scope.geom；PRIORITY 可使用两种范围。其余规则不带 scope。缺省 scope 时按场景及资源引用执行。scope 不能代替天气、信号等数据集的实际数值。SEPARATION 不接受 scope，仍执行全局多机间隔检查；区域邻近提醒归属 ENG-11，不在本次 ENG-06/07 交付范围。
+
+未选择有效 CLIMB/TURN 规则时，默认约束为爬升 5 m/s、下降 3 m/s、转角 90°、最小半径 10 m；机型与航路约束继续取更严格值。下面各规则的字段默认值只描述一条显式规则的参数。
 
 数值参数使用 JSON number。布尔参数使用 `true` 或 `false`。下表中的“未设置”表示这条规则不增加该项限制。飞机、航路和任务的相关参数继续参与计算。
 
@@ -1126,23 +1154,23 @@ AGL 航路和区域沿运动段使用对应地形。分区地形通过 `datasets
 | `minAltitude` | number / m | 未设置 | 另一组高度下界字段。与 `maxAltitude` 配对使用。高度检查优先读取 `minAltitude`。 |
 | `maxAltitude` | number / m | 未设置 | 另一组高度上界字段。高度检查优先读取 `maxAltitude`。 |
 | `layerStep` | number > 0 / m | 未设置 | 水平巡航的高度层间距。下界为 60、间距为 20 时，高度层为 60、80、100 m 等。爬升和下降段连接各层。 |
-| `altDatum` | `MSL/AGL/ELLIPSOID/QNE/QNH` | `MSL` | 上述高度的基准。设置 `AGL` 时，同时填写场景地形。其他换算依据见[坐标字段](#coordinates)。 |
+| `altDatum` | `EG/MSL/AGL/ELLIPSOID/QNE/QNH` | `EG` | 上述高度的基准。设置 `AGL` 时，同时填写场景地形。其他换算依据见[坐标字段](#coordinates)。 |
 
 修改高度时使用一组上下界。`layerStep` 以 `minHeight` 为层起点；省略 `minHeight` 时使用 `minAltitude`，两者均省略时使用 0。
 
-混合集使用 `minHeight=60`、`maxHeight=140`、`altDatum=MSL`。
+混合集使用 `minHeight=60`、`maxHeight=140`、`altDatum=EG`。
 
 <a id="rule-width"></a>
 ### `WIDTH`：航路宽度
 
 | `content` 字段 | 类型 / 单位 | 默认 | 含义与修改方法 |
 |---|---|---|---|
-| `width` | number > 0 / m | 必填 | 航路半宽。设为 20 表示以中心线为基准，左右各 20 m。 |
-| `bufferWidth` | number >= 0 / m | 0 | 在半宽内保留的额外净空。 |
+| `width` | number > 0 / m | 必填 | 航路全宽。设为 20 表示以中心线为基准，左右各 10 m。 |
+| `bufferWidth` | number >= 0 / m | 0 | 走廊外侧保护带宽度；不增加可飞行宽度。 |
 
-用 `resource_ids` 选择航路。空数组选择场景中的航路。中心可用半宽为 `min(width, widthMeters/2) - bufferWidth - radius_m - safety_margin_m`。航路的 `widthMeters` 使用全宽；本规则的 `width` 使用半宽。
+用 `resource_ids` 选择航路。空数组选择场景中的航路。中心可用半宽为 `min(width, widthMeters)/2 - radius_m - safety_margin_m`。两个 width 字段都使用全宽；`bufferWidth` 用于走廊外侧保护。
 
-混合集使用 `width=20`、`bufferWidth=1`。修改这两个值可改变航路内的横向活动空间。
+修改 width 改变可用全宽；修改 bufferWidth 改变外侧障碍保护距离。障碍在有效高度和时间内进入已使用航路段中心线 `min(width,widthMeters)/2 + bufferWidth` 的保护范围时，该段不可用；外部占用网格及选定规避规则的 scope 几何同样参与检查。只检查 WIDTH 与规避规则实际生效的时间和空间交集。
 
 <a id="rule-direction"></a>
 ### `DIRECTION`：飞行方向
@@ -1152,7 +1180,7 @@ AGL 航路和区域沿运动段使用对应地形。分区地形通过 `datasets
 | `content` 字段 | 类型 / 单位 | 默认 | 含义与修改方法 |
 |---|---|---|---|
 | `direction` | `ONE_WAY/BIDIRECTIONAL` | 未设置 | `ONE_WAY` 使用航路中心线顺序。航路声明 `REVERSE` 时使用反向。`BIDIRECTIONAL` 允许双向。 |
-| `directions` | 非空 number[] / 度 | 未设置 | 允许的水平航向。东为 0°，北为 90°，西为 180°，南为 270°。每个值为 `[0,360)`。填写后按这些航向检查。 |
+| `directions` | 非空 number[] / 度 | 未设置 | 允许的水平航向。北为 0°，东为 90°，南为 180°，西为 270°。每个值为 `[0,360)`。填写后按这些航向检查。 |
 
 混合集使用 `direction=ONE_WAY`。修改中心线顺序或航路 `direction` 可改变沿航路的通行方向。填写 `directions=[0,90]` 可指定东向与北向航段。
 
@@ -1176,7 +1204,7 @@ AGL 航路和区域沿运动段使用对应地形。分区地形通过 `datasets
 |---|---|---|---|
 | `dailyStart` | string，`HH:mm` | 未设置 | 每日开放开始时刻。与 `dailyEnd` 一起填写。 |
 | `dailyEnd` | string，`HH:mm` | 未设置 | 每日开放结束时刻。结束时刻早于或等于开始时刻时，窗口跨到次日。 |
-| `weekdays` | 非空 int[] | 每周全部 7 天 | ISO 星期编号。1 为周一，7 为周日。跨午夜窗口使用其开始日期的星期。 |
+| `weekdays` | 非空 int[] | 每周全部 7 天 | 星期编号为 0–6。0 为周日，1 为周一，6 为周六。跨午夜窗口使用其开始日期的星期。 |
 | `earliestDeparture` | string，`HH:mm` | 未设置 | 任务起飞当天的最早起飞时刻。 |
 | `latestArrival` | string，`HH:mm` | 未设置 | 任务到达当天的最晚到达时刻。 |
 
@@ -1187,7 +1215,9 @@ AGL 航路和区域沿运动段使用对应地形。分区地形通过 `datasets
 
 | `content` 字段 | 类型 | 默认 | 含义与修改方法 |
 |---|---|---|---|
-| `scope` | `INCLUDE/EXCLUDE` | 必填 | `INCLUDE` 要求飞行包络位于引用区域内。`EXCLUDE` 要求飞行包络避开引用区域。 |
+| `scope` | `BBOX/WKT/INCLUDE/EXCLUDE` | 必填 | BBOX/WKT 定义允许区域；兼容 INCLUDE 包含引用区域、EXCLUDE 排除引用区域。 |
+| `minLon/minLat/maxLon/maxLat` | number，度 | BBOX 必填 | 西、南、东、北边界；最大值须大于最小值。 |
+| `areaWkt` | POLYGON/MULTIPOLYGON 字符串 | WKT 必填 | 允许区域的 WGS84 几何。 |
 | `adminCodes` | 非空 string[] | 未设置 | 匹配 area/grid 数据格中的 `adminCode`、`gridCode` 或 `code`。 |
 | `gridCodes` | 非空 string[] | 未设置 | 匹配数据格编码、`grid.cells[].code` 或 `grid.codes`。 |
 | `zoneIds` | 非空 string[] | 未设置 | 增加按 ID 引用的几何区域。与外层 `resource_ids` 合并使用。 |
@@ -1219,6 +1249,8 @@ AGL 航路和区域沿运动段使用对应地形。分区地形通过 `datasets
 <a id="rule-separation"></a>
 ### `SEPARATION`：多机间隔
 
+当前执行全局间隔规则。携带外层 scope 会被拒绝，区域邻近提醒尚未交付。
+
 | `content` 字段 | 类型 / 单位 | 默认 | 含义与修改方法 |
 |---|---|---|---|
 | `horizontalSeparation` | number >= 0 / m | 0 | 同时飞行的水平间隔要求。 |
@@ -1231,8 +1263,8 @@ AGL 航路和区域沿运动段使用对应地形。分区地形通过 `datasets
 
 | `content` 字段 | 类型 / 单位 | 默认 | 含义与修改方法 |
 |---|---|---|---|
-| `noFlyMode` | `PERMANENT/TEMPORARY` | 必填 | 选择永久或临时禁飞。临时禁飞同时填写外层 `effective_start/effective_end`。 |
-| `heightCeiling` | number >= 0 / MSL m | 未设置 | 本条禁飞规则检查的最高海拔。规则同时使用所引用管制区的原始高度范围。 |
+| `noFlyMode` | `STANDARD/PERMANENT/TEMPORARY` | 必填 | STANDARD 按有效期执行硬禁飞；也接受永久或临时禁飞。临时禁飞同时填写外层 `effective_start/effective_end`。 |
+| `heightCeiling` | number >= 0 / EG m | 未设置 | 本条禁飞规则检查的最高海拔。规则同时使用所引用管制区的原始高度范围。 |
 | `includeBuffer` | boolean | false | 保留的附加缓冲开关。当前管制区模型的附加缓冲为 0，因此 true 与 false 使用相同几何。实际飞机净空由机型的 `radius_m/height_m/safety_margin_m` 提供。 |
 
 用 `resource_ids` 选择管制区。混合集引用 `no-fly-0`，使用永久禁飞，并将 `includeBuffer` 设为 true。管制区自身的禁入几何和有效期由场景执行。扩大禁飞区时，修改管制区 `geom`。
@@ -1242,7 +1274,7 @@ AGL 航路和区域沿运动段使用对应地形。分区地形通过 `datasets
 
 | `content` 字段 | 类型 / 单位 | 默认 | 含义与修改方法 |
 |---|---|---|---|
-| `avoidMode` | `BUFFER/CORRIDOR` | 必填 | `BUFFER` 绕开建筑及缓冲。`CORRIDOR` 使用显式批准通道。 |
+| `avoidMode` | `STRICT/BUFFER/CORRIDOR` | 必填 | `STRICT` 执行硬规避；`STRICT` 执行硬规避；`BUFFER` 绕开建筑及缓冲。`CORRIDOR` 使用显式批准通道。 |
 | `safeDistance` | number >= 0 / m | 0 | 在飞机净空和障碍自身缓冲之外，增加的水平距离。 |
 | `bufferRadius` | number >= 0 / m | 0 | `BUFFER` 模式的缓冲半径。该模式使用 `max(safeDistance,bufferRadius)`。 |
 
@@ -1295,7 +1327,7 @@ AGL 航路和区域沿运动段使用对应地形。分区地形通过 `datasets
 
 | `content` 字段 | 类型 | 默认 | 含义与修改方法 |
 |---|---|---|---|
-| `priorityScene` | `LOW_RISK/FAST/QUIET` | 必填 | `LOW_RISK` 优先低风险区；引用 kind 为 `risk` 的数据集。`QUIET` 优先低噪声区；引用 kind 为 `noise` 的数据集。`FAST` 将基础代价乘以 `1-costBonus`。 |
+| `priorityScene` | `PLANNING/LOW_RISK/FAST/QUIET` | 必填 | `LOW_RISK` 优先低风险区；引用 kind 为 `risk` 的数据集。`QUIET` 优先低噪声区；引用 kind 为 `noise` 的数据集。`FAST`、`PLANNING` 将适用范围内的基础代价乘以 `1-costBonus`，不放宽硬约束。 |
 | `costBonus` | number，0–1 | 必填 | 候选代价的优惠系数。0 表示无优惠，数值越大，偏好作用越强。 |
 
 风险使用 `values.risk`。安静偏好使用 `values.noise_db`。混合集引用 `noise-v1`，使用 `QUIET` 和 `costBonus=0.8`。
@@ -1336,10 +1368,10 @@ AGL 航路和区域沿运动段使用对应地形。分区地形通过 `datasets
 
 | `content` 字段 | 类型 / 单位 | 默认 | 含义与修改方法 |
 |---|---|---|---|
-| `maxWaypoints` | int >= 2 | 未设置 | 起点、业务中间航点和终点的总数。输出采样点不计入此数。 |
+| `maxWaypoints` | int >= 0 | 未设置 | 仅计 `task.waypoints` 途经点数量；起点、终点和输出采样点均不计入。 |
 | `minWaypointInterval` | number >= 0 / m | 0 | 相邻业务航点之间的三维直线距离下限。 |
 
-混合集使用 `maxWaypoints=4`、`minWaypointInterval=10`。增加业务航点时，将数量设置为起点加中间点加终点的总数。
+混合集使用 `maxWaypoints=4`、`minWaypointInterval=10`。增加业务航点时，将数量设置为途经点数量，不包含起点和终点。
 
 <a id="rule-rtl"></a>
 ### `RTL`：低电返航
@@ -1348,10 +1380,10 @@ AGL 航路和区域沿运动段使用对应地形。分区地形通过 `datasets
 
 | `content` 字段 | 类型 / 单位 | 默认 | 含义与修改方法 |
 |---|---|---|---|
-| `rtlAltitude` | number >= 0 / MSL m | 必填 | 返航水平飞行阶段的最低海拔。服务在起点和返航点之间安排升降与水平飞行。 |
+| `rtlAltitude` | number >= 0 / EG m | 必填 | 返航水平飞行阶段的最低 EG 椭球高。服务在起点和返航点之间安排升降与水平飞行。 |
 | `rtlOnLowBattery` | boolean | 必填 | true 时启用按当前电量触发返航。 |
 | `lowBatteryPercent` | number，0–100 / % | 必填 | 电量小于或等于此值时触发返航。 |
 
 触发后，服务以 `home_wkt` 为终点，并生成返航路线。结果 `action=return_to_home`。服务检查返航路线与当前剩余时间、航程。平台使用该结果执行飞行。
 
-混合集使用最低返航海拔 100 m、电量阈值 20%。提高阈值可更早触发返航。
+混合集使用最低返航 EG 椭球高 100 m、电量阈值 20%。提高阈值可更早触发返航。
