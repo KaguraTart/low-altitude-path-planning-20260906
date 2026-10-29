@@ -1,0 +1,1 @@
+{"error":{"code":"TASK_NOT_FOUND","message":"Scene not found; register it after restart","detail":{"scene_id":"test-api-missing-scene"}}}

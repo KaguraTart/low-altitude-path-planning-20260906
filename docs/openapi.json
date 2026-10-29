@@ -345,7 +345,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/Scene-Input"
+                "$ref": "#/components/schemas/Scene"
               }
             }
           },
@@ -620,7 +620,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/SingleRequest-Input"
+                "$ref": "#/components/schemas/SingleRequest"
               }
             }
           },
@@ -711,7 +711,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/BatchRequest-Input"
+                "$ref": "#/components/schemas/BatchRequest"
               }
             }
           },
@@ -893,7 +893,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/BatchRequest-Input"
+                "$ref": "#/components/schemas/BatchRequest"
               }
             }
           },
@@ -1078,7 +1078,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/SingleRequest-Output"
+                  "$ref": "#/components/schemas/SingleRequest"
                 }
               }
             }
@@ -1159,7 +1159,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/BatchRequest-Output"
+                  "$ref": "#/components/schemas/BatchRequest"
                 }
               }
             }
@@ -1576,7 +1576,7 @@
         ],
         "title": "Airway"
       },
-      "BatchRequest-Input": {
+      "BatchRequest": {
         "properties": {
           "scene_id": {
             "anyOf": [
@@ -1592,69 +1592,7 @@
           "scene": {
             "anyOf": [
               {
-                "$ref": "#/components/schemas/Scene-Input"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "tasks": {
-            "items": {
-              "$ref": "#/components/schemas/Task"
-            },
-            "type": "array",
-            "minItems": 1,
-            "title": "Tasks"
-          },
-          "request_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Request Id"
-          },
-          "time_budget_s": {
-            "anyOf": [
-              {
-                "type": "number",
-                "gt": 0
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Time Budget S"
-          }
-        },
-        "additionalProperties": false,
-        "type": "object",
-        "required": [
-          "tasks"
-        ],
-        "title": "BatchRequest"
-      },
-      "BatchRequest-Output": {
-        "properties": {
-          "scene_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Scene Id"
-          },
-          "scene": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/Scene-Output"
+                "$ref": "#/components/schemas/Scene"
               },
               {
                 "type": "null"
@@ -2435,85 +2373,7 @@
         ],
         "title": "CoordinateSpec"
       },
-      "Dataset-Input": {
-        "properties": {
-          "id": {
-            "type": "string",
-            "minLength": 1,
-            "title": "Id"
-          },
-          "kind": {
-            "type": "string",
-            "enum": [
-              "terrain",
-              "weather",
-              "signal",
-              "noise",
-              "area",
-              "grid",
-              "risk",
-              "corridor"
-            ],
-            "title": "Kind"
-          },
-          "version": {
-            "type": "string",
-            "minLength": 1,
-            "title": "Version"
-          },
-          "valid_from": {
-            "anyOf": [
-              {
-                "type": "string",
-                "format": "date-time"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Valid From"
-          },
-          "valid_to": {
-            "anyOf": [
-              {
-                "type": "string",
-                "format": "date-time"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Valid To"
-          },
-          "cells": {
-            "items": {
-              "$ref": "#/components/schemas/FieldCell"
-            },
-            "type": "array",
-            "title": "Cells"
-          },
-          "geometry_wkt": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Geometry Wkt"
-          }
-        },
-        "additionalProperties": false,
-        "type": "object",
-        "required": [
-          "id",
-          "kind",
-          "version"
-        ],
-        "title": "Dataset"
-      },
-      "Dataset-Output": {
+      "Dataset": {
         "properties": {
           "id": {
             "type": "string",
@@ -2835,122 +2695,7 @@
         ],
         "title": "GridRange"
       },
-      "GridSpec-Input": {
-        "properties": {
-          "crs": {
-            "type": "string",
-            "title": "Crs",
-            "default": "LOCAL_AEQD"
-          },
-          "origin": {
-            "prefixItems": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "number"
-              },
-              {
-                "type": "number"
-              }
-            ],
-            "type": "array",
-            "maxItems": 3,
-            "minItems": 3,
-            "title": "Origin"
-          },
-          "resolution": {
-            "prefixItems": [
-              {
-                "type": "number",
-                "gt": 0
-              },
-              {
-                "type": "number",
-                "gt": 0
-              },
-              {
-                "type": "number",
-                "gt": 0
-              }
-            ],
-            "type": "array",
-            "maxItems": 3,
-            "minItems": 3,
-            "title": "Resolution"
-          },
-          "shape": {
-            "prefixItems": [
-              {
-                "type": "integer",
-                "exclusiveMinimum": 0.0
-              },
-              {
-                "type": "integer",
-                "exclusiveMinimum": 0.0
-              },
-              {
-                "type": "integer",
-                "exclusiveMinimum": 0.0
-              }
-            ],
-            "type": "array",
-            "maxItems": 3,
-            "minItems": 3,
-            "title": "Shape"
-          },
-          "occupied": {
-            "items": {
-              "prefixItems": [
-                {
-                  "type": "integer"
-                },
-                {
-                  "type": "integer"
-                },
-                {
-                  "type": "integer"
-                }
-              ],
-              "type": "array",
-              "maxItems": 3,
-              "minItems": 3
-            },
-            "type": "array",
-            "title": "Occupied"
-          },
-          "occupied_ranges": {
-            "items": {
-              "$ref": "#/components/schemas/GridRange"
-            },
-            "type": "array",
-            "title": "Occupied Ranges"
-          },
-          "cells": {
-            "items": {
-              "$ref": "#/components/schemas/GridCell"
-            },
-            "type": "array",
-            "title": "Cells"
-          },
-          "codes": {
-            "additionalProperties": {
-              "type": "string"
-            },
-            "type": "object",
-            "title": "Codes"
-          }
-        },
-        "additionalProperties": false,
-        "type": "object",
-        "required": [
-          "origin",
-          "resolution",
-          "shape"
-        ],
-        "title": "GridSpec"
-      },
-      "GridSpec-Output": {
+      "GridSpec": {
         "properties": {
           "crs": {
             "type": "string",
@@ -3863,100 +3608,7 @@
         ],
         "title": "RouteValidation"
       },
-      "Rule-Input": {
-        "properties": {
-          "id": {
-            "type": "string",
-            "minLength": 1,
-            "title": "Id"
-          },
-          "rule_type": {
-            "type": "string",
-            "enum": [
-              "HEIGHT_LAYER",
-              "WIDTH",
-              "DIRECTION",
-              "SPEED",
-              "TIME",
-              "AREA",
-              "CLIMB",
-              "TURN",
-              "SEPARATION",
-              "NO_FLY",
-              "BUILDING",
-              "ZONE",
-              "WEATHER",
-              "SIGNAL",
-              "PRIORITY",
-              "HOVER",
-              "ENDURANCE",
-              "PAYLOAD",
-              "WAYPOINT",
-              "RTL"
-            ],
-            "title": "Rule Type"
-          },
-          "content": {
-            "additionalProperties": {
-              "$ref": "#/components/schemas/JsonValue"
-            },
-            "type": "object",
-            "title": "Content",
-            "description": "Rule parameters. HEIGHT_LAYER defaults to EG metres; WIDTH.width is full width in metres; DIRECTION.directions uses north=0 degrees clockwise; TIME.weekdays uses Sunday=0, Monday=1 through Saturday=6."
-          },
-          "scope": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/RuleScope"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "Rule application geometry in WGS84/EG. Missing scope applies to the scene. Grid indices require scene.grid geometry metadata."
-          },
-          "resource_ids": {
-            "items": {
-              "type": "string"
-            },
-            "type": "array",
-            "title": "Resource Ids"
-          },
-          "effective_start": {
-            "anyOf": [
-              {
-                "type": "string",
-                "format": "date-time"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Effective Start"
-          },
-          "effective_end": {
-            "anyOf": [
-              {
-                "type": "string",
-                "format": "date-time"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Effective End"
-          }
-        },
-        "additionalProperties": false,
-        "type": "object",
-        "required": [
-          "id",
-          "rule_type",
-          "content"
-        ],
-        "title": "Rule"
-      },
-      "Rule-Output": {
+      "Rule": {
         "properties": {
           "id": {
             "type": "string",
@@ -4149,7 +3801,7 @@
         "type": "object",
         "title": "RuleScope"
       },
-      "Scene-Input": {
+      "Scene": {
         "properties": {
           "scene_type": {
             "type": "string",
@@ -4248,14 +3900,14 @@
           },
           "rules": {
             "items": {
-              "$ref": "#/components/schemas/Rule-Input"
+              "$ref": "#/components/schemas/Rule"
             },
             "type": "array",
             "title": "Rules"
           },
           "datasets": {
             "items": {
-              "$ref": "#/components/schemas/Dataset-Input"
+              "$ref": "#/components/schemas/Dataset"
             },
             "type": "array",
             "title": "Datasets"
@@ -4270,145 +3922,7 @@
           "grid": {
             "anyOf": [
               {
-                "$ref": "#/components/schemas/GridSpec-Input"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          }
-        },
-        "additionalProperties": false,
-        "type": "object",
-        "required": [
-          "coordinates",
-          "bounds",
-          "time_origin"
-        ],
-        "title": "Scene"
-      },
-      "Scene-Output": {
-        "properties": {
-          "scene_type": {
-            "type": "string",
-            "const": "LOW_ALTITUDE",
-            "title": "Scene Type",
-            "default": "LOW_ALTITUDE"
-          },
-          "network_version": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Network Version",
-            "description": "Upstream airway network version; separate from the compiled scene content version."
-          },
-          "coordinates": {
-            "$ref": "#/components/schemas/CoordinateSpec"
-          },
-          "bounds": {
-            "$ref": "#/components/schemas/Bounds3D"
-          },
-          "resolution": {
-            "prefixItems": [
-              {
-                "type": "number",
-                "gt": 0
-              },
-              {
-                "type": "number",
-                "gt": 0
-              },
-              {
-                "type": "number",
-                "gt": 0
-              }
-            ],
-            "type": "array",
-            "maxItems": 3,
-            "minItems": 3,
-            "title": "Resolution",
-            "default": [
-              25,
-              25,
-              10
-            ]
-          },
-          "horizon_s": {
-            "type": "number",
-            "title": "Horizon S",
-            "default": 3600,
-            "gt": 0
-          },
-          "time_origin": {
-            "type": "string",
-            "format": "date-time",
-            "title": "Time Origin"
-          },
-          "airways": {
-            "items": {
-              "$ref": "#/components/schemas/Airway"
-            },
-            "type": "array",
-            "title": "Airways"
-          },
-          "connectors": {
-            "items": {
-              "$ref": "#/components/schemas/Connector"
-            },
-            "type": "array",
-            "title": "Connectors"
-          },
-          "obstacles": {
-            "items": {
-              "$ref": "#/components/schemas/Volume"
-            },
-            "type": "array",
-            "title": "Obstacles"
-          },
-          "dynamic_obstacles": {
-            "items": {
-              "$ref": "#/components/schemas/TimedTrajectory"
-            },
-            "type": "array",
-            "title": "Dynamic Obstacles"
-          },
-          "control_zones": {
-            "items": {
-              "$ref": "#/components/schemas/ControlZone"
-            },
-            "type": "array",
-            "title": "Control Zones"
-          },
-          "rules": {
-            "items": {
-              "$ref": "#/components/schemas/Rule-Output"
-            },
-            "type": "array",
-            "title": "Rules"
-          },
-          "datasets": {
-            "items": {
-              "$ref": "#/components/schemas/Dataset-Output"
-            },
-            "type": "array",
-            "title": "Datasets"
-          },
-          "profiles": {
-            "items": {
-              "$ref": "#/components/schemas/AircraftProfile"
-            },
-            "type": "array",
-            "title": "Profiles"
-          },
-          "grid": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/GridSpec-Output"
+                "$ref": "#/components/schemas/GridSpec"
               },
               {
                 "type": "null"
@@ -4601,7 +4115,7 @@
         "type": "object",
         "title": "ScopeGrid"
       },
-      "SingleRequest-Input": {
+      "SingleRequest": {
         "properties": {
           "scene_id": {
             "anyOf": [
@@ -4617,53 +4131,7 @@
           "scene": {
             "anyOf": [
               {
-                "$ref": "#/components/schemas/Scene-Input"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "task": {
-            "$ref": "#/components/schemas/Task"
-          },
-          "time_budget_s": {
-            "anyOf": [
-              {
-                "type": "number",
-                "gt": 0
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Time Budget S"
-          }
-        },
-        "additionalProperties": false,
-        "type": "object",
-        "required": [
-          "task"
-        ],
-        "title": "SingleRequest"
-      },
-      "SingleRequest-Output": {
-        "properties": {
-          "scene_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Scene Id"
-          },
-          "scene": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/Scene-Output"
+                "$ref": "#/components/schemas/Scene"
               },
               {
                 "type": "null"
@@ -4958,7 +4426,7 @@
           "scene": {
             "anyOf": [
               {
-                "$ref": "#/components/schemas/Scene-Input"
+                "$ref": "#/components/schemas/Scene"
               },
               {
                 "type": "null"

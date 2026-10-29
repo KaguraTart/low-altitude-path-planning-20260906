@@ -75,7 +75,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: 构建不可变镜像
-        run: docker build --build-arg GIT_SHA="$GITHUB_SHA" -t "uav-ci:$GITHUB_SHA" .
+        run: |
+          digest=$(sed -n 's/^ARG BASE_IMAGE=.*@//p' Dockerfile)
+          selected_base=
+          for repository in docker.io/library/python public.ecr.aws/docker/library/python; do
+            candidate="$repository:3.11-slim@$digest"
+            if docker pull "$candidate"; then
+              selected_base=$candidate
+              break
+            fi
+          done
+          test -n "$selected_base"
+          docker build --build-arg BASE_IMAGE="$selected_base" --build-arg GIT_SHA="$GITHUB_SHA" -t "uav-ci:$GITHUB_SHA" .
       - name: 验证实际 v2 镜像、异步、Swagger 和文档
         run: bash tools/check_docker_release.sh "uav-ci:$GITHUB_SHA" "$GITHUB_SHA" output/ci-docker
       - uses: actions/upload-artifact@v4

@@ -1,5 +1,7 @@
 # 接口字段与修改说明
 
+文档日期：2026-10-30。
+
 本说明解释 `test_api` 测试 JSON 的输入、输出和修改方法。服务地址为 `https://api.kaguratart.com`。Swagger 地址为 [在线接口文档](https://api.kaguratart.com/docs#/)。
 
 按业务需求查找接口，见[需求与 API 对照表](REQUIREMENTS_API_MAPPING.md)。

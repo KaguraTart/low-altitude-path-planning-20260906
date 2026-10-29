@@ -1,5 +1,11 @@
 # 部署与回滚
 
+文档日期：2026-10-30。
+
+当前本地正式镜像：`low-altitude-path-planning:b118f86df64dec85071cbd301ab9a5042fbdf17a`。服务端口为 `18000`，资源为 2 CPU、2 GiB。新契约为 `2026-10-29`，内部高度基准为 EG。
+
+该次构建通过清华 PyPI 镜像下载相同锁定版本的依赖。发布检查已核对原生扩展、镜像提交、API 文档、运行 OpenAPI、坐标换算和异步结果。完整容器接口实测见 [`../../test_api/reports/20261029_docker/REPORT.md`](../../test_api/reports/20261029_docker/REPORT.md)。
+
 接口字段与示例见 [`../../docs/API.md`](../../docs/API.md)。服务仅提供 `/api/v2`。本文件说明构建、验证、发布和回滚步骤。
 
 ## 1. 运行配置
