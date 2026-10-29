@@ -1,5 +1,7 @@
 # 低空无人机路径规划
 
+文档日期：2026-10-29。
+
 本项目提供航路规划、管制区避让和多机协同规划服务。本次交付聚焦 ENG-06 航路航线网络规划与 ENG-07 低空三维路径规划。
 
 当前接口为 `/api/v2`。软件版本为 2.0.0。请求和响应使用 JSON，外部几何使用 WGS84 经纬度 WKT。内部计算使用米和秒，垂直基准统一为 EG 椭球高。契约版本为 `2026-10-29`，接口路径仍为 `/api/v2`。
@@ -104,7 +106,7 @@ bash tools/check_docker_release.sh "low-altitude-path-planning:$UAV_BUILD_SHA" \
 
 ## 测试与数据
 
-向对接方提供整个 [`test_api/`](test_api/README.md) 目录。对方使用 Python 3.11 或更新版本运行 `python run_tests.py`，即可测试 `https://api.kaguratart.com` 的全部接口和三套各 1000 个任务。目录内附完整输入和历史公网实测报告。本次契约须重新联调，旧报告不作为新版本验收证据。
+向对接方提供整个 [`test_api/`](test_api/README.md) 目录。对方使用 Python 3.11 或更新版本运行 `python run_tests.py`，即可测试 `https://api.kaguratart.com` 的全部接口和三套各 1000 个任务。目录内附完整输入和实测报告。[2026-10-29 本地测试](test_api/reports/20261029_local/REPORT.md)通过 22 项检查，覆盖 14 个接口和三套各 1000 个任务。
 
 测试按接口、规划、原生核和集成流程分类。目录说明与分类运行命令见 [`tests/README.md`](tests/README.md)。
 

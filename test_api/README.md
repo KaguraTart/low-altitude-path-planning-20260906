@@ -1,5 +1,7 @@
 # 接口测试包
 
+文档日期：2026-10-29。
+
 本目录提供完整输入、测试脚本和测试报告。脚本通过 HTTPS 调用当前 `/api/v2` 接口。
 
 默认服务地址为 `https://api.kaguratart.com`。Swagger 地址为 [`https://api.kaguratart.com/docs#/`](https://api.kaguratart.com/docs#/)。
@@ -7,6 +9,8 @@
 接口字段、测试 JSON 参数和修改步骤见 [接口字段与修改说明](API_FIELDS.md)。
 
 按业务需求选择接口，见[需求与 API 对照表](REQUIREMENTS_API_MAPPING.md)。表中包含源清单 ENG-06/ENG-07 全部 41 项需求、平台责任、真实接口、输入输出、测试证据和未交付项。
+
+最新本地完整测试见 [2026-10-29 测试报告](reports/20261029_local/REPORT.md)：22 项检查通过，覆盖 14 个接口及三套各 1000 个任务。
 
 历史公网实测记录见 [测试报告](reports/20261017T135804Z_public/REPORT.md)。该报告保留原始输入输出，不证明 2026-10-29 契约已部署或通过。
 
