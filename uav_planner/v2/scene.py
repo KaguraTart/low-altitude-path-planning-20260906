@@ -744,22 +744,30 @@ class CompiledScene:
         # use. It never expands or shrinks the permitted flight width.
         safe_parts = []
         _, vertical = self.clearance(profile)
-        obstacles = self.obstacles + self.zones + self.grid_volumes
-        for other in self.rules.selected(task):
-            if get(other, "rule_type") in {"BUILDING", "NO_FLY", "ZONE"}:
-                for volume in self.rule_scopes.get(str(get(other, "id")), []):
-                    ceiling = get(other, "content").get("heightCeiling") if get(other, "rule_type") == "NO_FLY" else None
-                    if ceiling is not None:
-                        volume = replace(volume, max_altitude=min(volume.max_altitude, ceiling-self.origin_alt_ellipsoid))
-                    if volume.max_altitude >= volume.min_altitude:
-                        obstacles.append(volume)
+        selected = self.rules.selected(task)
+        selection = tuple(str(get(r,"id")) for r in selected)
+        if not hasattr(self,"_width_obstacle_cache"):
+            self._width_obstacle_cache = {}
+        if selection not in self._width_obstacle_cache:
+            obstacles = self.obstacles + self.zones + self.grid_volumes
+            for other in selected:
+                if get(other, "rule_type") in {"BUILDING", "NO_FLY", "ZONE"}:
+                    for volume in self.rule_scopes.get(str(get(other, "id")), []):
+                        ceiling = get(other, "content").get("heightCeiling") if get(other, "rule_type") == "NO_FLY" else None
+                        if ceiling is not None:
+                            volume = replace(volume, max_altitude=min(volume.max_altitude, ceiling-self.origin_alt_ellipsoid))
+                        if volume.max_altitude >= volume.min_altitude:
+                            obstacles.append(volume)
+            self._width_obstacle_cache[selection] = (obstacles, STRtree([v.geometry for v in obstacles]), max((v.buffer_m for v in obstacles),default=0))
+        obstacles, tree, max_buffer = self._width_obstacle_cache[selection]
         for airway in self.airways:
             if refs and airway.id not in refs:
                 continue
             half_width = min(airway.half_width, c["width"] / 2)
             if half_width <= margin:
                 continue
-            spans = _geometry_intervals(airway.centerline.buffer(half_width - margin), p0, p1)
+            corridor = self._rule_geometry(("width_airway", str(get(rule,"id")), airway.id, margin), lambda: airway.centerline.buffer(half_width-margin))
+            spans = _geometry_intervals(corridor, p0, p1)
             spans = [(max(a,c),min(b,d)) for a,b in spans for c,d in parts if max(a,c) <= min(b,d)+EPS]
             for a, b in spans:
                 first, last = p0 + a * (p1-p0), p0 + b * (p1-p0)
@@ -773,9 +781,10 @@ class CompiledScene:
                 fractions = lengths / lengths[-1] if lengths[-1] > EPS else np.linspace(0,1,len(vertices))
                 xyz = np.c_[vertices, first[2] + fractions * (last[2]-first[2])]
                 seconds = t0 + (a + fractions*(b-a))*(t1-t0)
+                candidates = self._query(tree,obstacles,np.min(xyz,axis=0),np.max(xyz,axis=0),half_width+c["bufferWidth"]+max_buffer)
                 collision = any(self.volume_intervals(volume, xyz[i], xyz[i+1], seconds[i], seconds[i+1],
                                                      horizontal=half_width+c["bufferWidth"]+volume.buffer_m, vertical=vertical)
-                                for volume in obstacles for i in range(len(xyz)-1))
+                                for volume in candidates for i in range(len(xyz)-1))
                 if not collision:
                     safe_parts.append((a,b))
         return all(_covers(safe_parts, a, b) for a,b in parts)
