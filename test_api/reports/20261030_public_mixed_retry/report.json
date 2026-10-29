@@ -1,0 +1,135 @@
+{
+  "base_url": "https://api.kaguratart.com",
+  "started_at": "2026-10-29T16:12:11.637Z",
+  "finished_at": "2026-10-29T16:13:17.095Z",
+  "status": "passed",
+  "service_version": null,
+  "checks": [
+    {
+      "name": "mixed 1000 任务规划及验证",
+      "status": "passed",
+      "message": "检查通过。",
+      "elapsed_ms": 65450.85
+    }
+  ],
+  "coverage": [
+    {
+      "method": "POST",
+      "path": "/api/v2/scenes",
+      "status": "passed"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v2/plan/batch",
+      "status": "passed"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v2/validate",
+      "status": "passed"
+    }
+  ],
+  "benchmarks": [
+    {
+      "suite": "mixed",
+      "task_count": 1000,
+      "success_count": 1000,
+      "failed_count": 0,
+      "conflict_count": 0,
+      "elapsed_ms": 47159.686,
+      "response_path": "http/002_post_api_v2_plan_batch_output.json",
+      "status": "passed"
+    }
+  ],
+  "exchanges": [
+    {
+      "method": "POST",
+      "path": "/api/v2/scenes",
+      "request_path": "http/001_post_api_v2_scenes_request.json",
+      "expected_status": 200,
+      "input": {
+        "path": "001_post_api_v2_scenes_input.json",
+        "bytes": 378690,
+        "sha256": "386f8dada3669070822f8a697ea2306020d24ef88a539282fb9c69e577a28725"
+      },
+      "input_path": "http/001_post_api_v2_scenes_input.json",
+      "elapsed_ms": 14114.211,
+      "http_status": 200,
+      "headers": {
+        "Content-Type": "application/json",
+        "Content-Length": "803",
+        "Date": "Thu, 29 Oct 2026 16:12:25 GMT",
+        "Server": "cloudflare"
+      },
+      "output": {
+        "path": "001_post_api_v2_scenes_output.json",
+        "bytes": 803,
+        "sha256": "fde5ec42493dd9d0411bc26e465157b4960cf5974a6838c94233a6778ef55e3b"
+      },
+      "response_path": "http/001_post_api_v2_scenes_output.json",
+      "status": "passed"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v2/plan/batch",
+      "request_path": "http/002_post_api_v2_plan_batch_request.json",
+      "expected_status": 200,
+      "input": {
+        "path": "002_post_api_v2_plan_batch_input.json",
+        "bytes": 569185,
+        "sha256": "8a007df6efa43a844db6b802007ade7b1e11c2924fabcada879635c9fe0dbee5"
+      },
+      "input_path": "http/002_post_api_v2_plan_batch_input.json",
+      "elapsed_ms": 47116.596,
+      "http_status": 200,
+      "headers": {
+        "Content-Type": "application/json",
+        "Content-Length": "8014820",
+        "Date": "Thu, 29 Oct 2026 16:12:59 GMT",
+        "Server": "cloudflare"
+      },
+      "output": {
+        "path": "002_post_api_v2_plan_batch_output.json",
+        "bytes": 8014820,
+        "sha256": "1fb6a4d06b72424ffa8051f2a9263fc8952508b33bd234b649228ac50cf42d16"
+      },
+      "response_path": "http/002_post_api_v2_plan_batch_output.json",
+      "status": "passed"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v2/validate",
+      "request_path": "http/003_post_api_v2_validate_request.json",
+      "expected_status": 200,
+      "input": {
+        "path": "003_post_api_v2_validate_input.json",
+        "bytes": 1647,
+        "sha256": "a0d45da118032f82b926c70b9882fd3e2bff15e202068c04d3363fc70d0b28d8"
+      },
+      "input_path": "http/003_post_api_v2_validate_input.json",
+      "elapsed_ms": 4150.234,
+      "http_status": 200,
+      "headers": {
+        "Content-Type": "application/json",
+        "Content-Length": "5396",
+        "Date": "Thu, 29 Oct 2026 16:13:16 GMT",
+        "Server": "cloudflare"
+      },
+      "output": {
+        "path": "003_post_api_v2_validate_output.json",
+        "bytes": 5396,
+        "sha256": "dcb6233f9085b5a07c6c5396db766a24ae32c877ac4fd8ad508edc0b8c9d0c48"
+      },
+      "response_path": "http/003_post_api_v2_validate_output.json",
+      "status": "passed"
+    }
+  ],
+  "summary": {
+    "passed": 1,
+    "failed": 0,
+    "operation_count": 3,
+    "covered_operations": 3
+  },
+  "scope": "仅复测 mixed 1000 任务规划及验证；不重复接口示例",
+  "benchmark_status": "passed"
+}

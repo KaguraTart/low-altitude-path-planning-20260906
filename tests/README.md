@@ -6,6 +6,10 @@
 
 向对接方提供独立的 [`../test_api/`](../test_api/README.md) 目录。该目录包含公网接口脚本、完整输入、测试报告和完整 HTTP 记录。使用 Python 3.11 或更新版本即可运行。
 
+## 最新验证
+
+2026-10-30 复核：413 项自动化测试通过。2 CPU、2 GiB 容器通过 22 项 HTTP 检查，覆盖 14 个 v2 接口及三套各 1000 个任务。完整请求、响应与运行时间见 [`../test_api/reports/README.md`](../test_api/reports/README.md)。
+
 ## 目录
 
 | 目录 | 检查内容 |

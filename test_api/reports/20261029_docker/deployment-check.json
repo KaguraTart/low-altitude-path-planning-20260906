@@ -1,0 +1,16 @@
+{
+  "status": "passed",
+  "base_url": "http://127.0.0.1:18000",
+  "api_version": "2.0.0",
+  "git_sha": "b118f86df64dec85071cbd301ab9a5042fbdf17a",
+  "coordinate_roundtrip": true,
+  "native_available": true,
+  "openapi_paths": 14,
+  "scene_id": "scene-7c275914974255e95897",
+  "swagger_ui": true,
+  "job_health_checked": true,
+  "batch_success_count": 2,
+  "async_job_id": "5e3b3adb54dc40af",
+  "checked_at": "2026-10-29T16:04:46Z",
+  "openapi_snapshot_matches": true
+}

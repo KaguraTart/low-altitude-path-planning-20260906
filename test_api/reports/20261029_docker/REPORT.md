@@ -81,3 +81,7 @@
 - `http/*_input.json` 保存实际发送的完整 JSON 输入。
 - `http/*_output.json`、`http/*_output.html` 保存实际收到的完整响应。
 - `REPORT.md` 保存本报告。
+
+## 正式部署复核
+
+2026-10-30 将修正 OpenAPI 快照后的镜像 `b118f86df64dec85071cbd301ab9a5042fbdf17a` 部署到本地正式服务。坐标换算、批量规划、异步作业和运行规范一致性均通过。记录见 [deployment-check.json](deployment-check.json)。

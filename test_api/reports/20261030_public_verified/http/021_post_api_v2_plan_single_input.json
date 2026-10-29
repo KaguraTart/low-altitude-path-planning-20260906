@@ -1,0 +1,1 @@
+{"scene_id": "scene-fa47d18076d16d10f597", "task": {"id": "demo-v2-001", "start_wkt": "POINT Z (104.771029580333 29.330902187336 80)", "goal_wkt": "POINT Z (104.782354963949 29.33090161953 80)", "departure_time": "2026-10-16T09:00:00+08:00", "alt_reference": "EG", "route_mode": "strict", "engine_id": "ENG-06"}}

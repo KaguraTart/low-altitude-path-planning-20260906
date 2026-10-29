@@ -106,7 +106,7 @@ bash tools/check_docker_release.sh "low-altitude-path-planning:$UAV_BUILD_SHA" \
 
 ## 测试与数据
 
-向对接方提供整个 [`test_api/`](test_api/README.md) 目录。对方使用 Python 3.11 或更新版本运行 `python run_tests.py`，即可测试 `https://api.kaguratart.com` 的全部接口和三套各 1000 个任务。目录内附完整输入和实测报告。[2026-10-29 本地测试](test_api/reports/20261029_local/REPORT.md)通过 22 项检查，覆盖 14 个接口和三套各 1000 个任务。
+向对接方提供整个 [`test_api/`](test_api/README.md) 目录。对方使用 Python 3.11 或更新版本运行 `python run_tests.py`，即可测试 `https://api.kaguratart.com` 的全部接口和三套各 1000 个任务。目录内附完整输入和实测报告。最新容器与公网记录见 [测试索引](test_api/reports/README.md)。[2026-10-29 本地测试](test_api/reports/20261029_local/REPORT.md)通过 22 项检查，覆盖 14 个接口和三套各 1000 个任务。
 
 测试按接口、规划、原生核和集成流程分类。目录说明与分类运行命令见 [`tests/README.md`](tests/README.md)。
 
