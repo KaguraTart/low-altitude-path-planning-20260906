@@ -37,12 +37,12 @@ if str(ROOT) not in sys.path:
 
 SEED = 20261016
 SUITES = ("strict", "mixed", "free")
-FROZEN_DIRECTORY = ROOT / "input" / "v2_benchmarks"
+FROZEN_DIRECTORY = ROOT / "input" / "engine_contract_20261029"
 TIME_ORIGIN = datetime(2026, 10, 16, 1, tzinfo=timezone.utc)
 COORDINATES = {
-    "origin_lon": 104.78, "origin_lat": 29.34, "origin_alt_msl": 0,
-    "max_radius_m": 10000, "terrain_msl_m": 0,
-    "terrain_source": "synthetic-flat-msl-v1",
+    "origin_lon": 104.78, "origin_lat": 29.34, "origin_alt_ellipsoid": 0,
+    "max_radius_m": 10000, "terrain_ellipsoid_m": 0,
+    "terrain_source": "synthetic-flat-eg-v1",
 }
 HORIZONTAL_SEPARATION = 12.0
 VERTICAL_SEPARATION = 12.0
@@ -141,7 +141,7 @@ def analytic_reference(anchors: list[list[float]], profile: dict[str, Any],
 
 
 def _geo(frame: Any, geometry: Any) -> str:
-    return frame.to_wgs84(geometry, "MSL", TIME_ORIGIN)
+    return frame.to_wgs84(geometry, "EG", TIME_ORIGIN)
 
 
 def _grid(frame: Any, point: list[float]) -> dict[str, float]:
@@ -153,8 +153,8 @@ def _grid(frame: Any, point: list[float]) -> dict[str, float]:
 
 def _mixed_rules() -> list[dict[str, Any]]:
     definitions = {
-        "HEIGHT_LAYER": ({"minHeight": 60, "maxHeight": 140, "altDatum": "MSL"}, []),
-        "WIDTH": ({"width": 20, "bufferWidth": 1}, []),
+        "HEIGHT_LAYER": ({"minHeight": 60, "maxHeight": 140, "altDatum": "EG"}, []),
+        "WIDTH": ({"width": 40, "bufferWidth": 1}, []),
         "DIRECTION": ({"direction": "ONE_WAY"}, []),
         "SPEED": ({"maxSpeed": 4, "cruiseSpeed": 4}, []),
         "TIME": ({"dailyStart": "09:00", "dailyEnd": "10:00", "weekdays": [5], "latestArrival": "09:59"}, []),
@@ -162,7 +162,7 @@ def _mixed_rules() -> list[dict[str, Any]]:
         "CLIMB": ({"maxClimbRate": 1, "maxDescentRate": 1}, []),
         "TURN": ({"maxTurnAngle": 100, "minTurnRadius": 0}, []),
         "SEPARATION": ({"horizontalSeparation": 12, "verticalSeparation": 12}, []),
-        "NO_FLY": ({"noFlyMode": "PERMANENT", "includeBuffer": True}, ["no-fly-0"]),
+        "NO_FLY": ({"noFlyMode": "STANDARD", "includeBuffer": True}, ["no-fly-0"]),
         "BUILDING": ({"avoidMode": "BUFFER", "safeDistance": 8}, []),
         "ZONE": ({"zoneLevels": ["restricted"], "coverageThreshold": 0}, ["zone-0"]),
         "WEATHER": ({"maxWindSpeed": 8, "noPrecipitation": True, "noIcing": True}, ["weather-v1"]),
@@ -212,7 +212,7 @@ def generate_suite(suite: str) -> dict[str, Any]:
         line = LineString(anchors)
         scene["airways"].append({
             "id": airway_id, "centerLine": _geo(frame, line), "widthMeters": 60,
-            "minAltitude": 60, "maxAltitude": 140, "altReference": "MSL",
+            "minAltitude": 60, "maxAltitude": 140, "altReference": "EG",
             "startGrid": _grid(frame, anchors[0]), "endGrid": _grid(frame, anchors[-1]),
             "direction": "FORWARD", "status": "ACTIVE",
         })
@@ -222,13 +222,13 @@ def generate_suite(suite: str) -> dict[str, Any]:
         bad_bounds.append(bad)
         scene["obstacles"].append({
             "id": f"building-{group}", "geometry_wkt": _geo(frame, box(bad[0], bad[1], bad[3], bad[4])),
-            "min_altitude": 40, "max_altitude": 160, "alt_reference": "MSL", "buffer_m": 2,
+            "min_altitude": 40, "max_altitude": 160, "alt_reference": "EG", "buffer_m": 2,
         })
         if group < 10:
             for zone_kind, shift, level in (("no-fly", 60, "prohibited"), ("zone", 120, "restricted")):
                 scene["control_zones"].append({
                     "id": f"{zone_kind}-{group}", "geom": _geo(frame, box(bad[0] + shift, bad[1], bad[3] + shift, bad[4])),
-                    "minAlt": 40, "maxAlt": 160, "altReference": "MSL",
+                    "minAlt": 40, "maxAlt": 160, "altReference": "EG",
                     "zoneType": zone_kind, "level": level,
                 })
         group_ids = []
@@ -239,14 +239,14 @@ def generate_suite(suite: str) -> dict[str, Any]:
                 "id": task_id, "start_wkt": _geo(frame, Point(anchors[0])),
                 "goal_wkt": _geo(frame, Point(anchors[-1])),
                 "departure_time": timestamp(0), "latest_arrival": timestamp(3500),
-                "alt_reference": "MSL", "route_mode": route_mode, "profile_id": profile["id"],
+                "alt_reference": "EG", "route_mode": route_mode, "profile_id": profile["id"],
                 "payload_kg": .1, "priority": 0,
                 "waypoints": [{"wkt": _geo(frame, Point(p)), "hover_s": 1.5 if category == "right-angle-yaw-hover" else 0}
                               for p in anchors[1:-1]],
             }
             if mixed:
                 task["state"] = {"battery_percent": 80, "remaining_flight_time_s": 1700,
-                                 "remaining_range_m": 4500, "home_wkt": task["goal_wkt"], "alt_reference": "MSL"}
+                                 "remaining_range_m": 4500, "home_wkt": task["goal_wkt"], "alt_reference": "EG"}
                 if group == 80:
                     task["state"]["battery_percent"] = 10
                     task["goal_wkt"] = _geo(frame, Point([anchors[-1][0], anchors[-1][1] + 80, 100]))
@@ -310,7 +310,7 @@ def _witnesses(workload: dict[str, Any]) -> list[dict[str, Any]]:
         "PAYLOAD": {"points": [a, b], "times": [0, 100], "task_patch": {"payload_kg": .2}},
         "WAYPOINT": {"points": [a, b], "times": [0, 100], "task_patch": {"waypoints": [{"local": [75, 180, 100]}]}},
         "RTL": {"kind": "rtl", "task_patch": {"state": {"battery_percent": 10, "remaining_flight_time_s": 1700,
-                                                                      "remaining_range_m": 4500, "home_wkt": workload["tasks"][0]["goal_wkt"], "alt_reference": "MSL"}}},
+                                                                      "remaining_range_m": 4500, "home_wkt": workload["tasks"][0]["goal_wkt"], "alt_reference": "EG"}}},
     }
     return [{"rule_type": kind, "task_id": workload["tasks"][0]["id"], "kind": "violation", **case}
             for kind, case in cases.items()]
@@ -319,7 +319,7 @@ def _witnesses(workload: dict[str, Any]) -> list[dict[str, Any]]:
 def freeze(directory: Path = FROZEN_DIRECTORY) -> dict[str, Any]:
     """Create once; changed generated bytes or modified frozen files are fatal."""
     generated = {f"{suite}.json": canonical_bytes(generate_suite(suite)) for suite in SUITES}
-    manifest = {"format_version": 1, "seed": SEED, "frozen_at": "2026-10-16T01:00:00+00:00",
+    manifest = {"format_version": 1, "seed": SEED, "frozen_at": "2026-10-29T00:00:00+00:00",
                 "canonicalization": "UTF-8, sorted keys, compact separators, newline, no NaN",
                 "files": {name: {"sha256": sha256(data), "bytes": len(data), "task_count": 1000}
                           for name, data in generated.items()}}
@@ -422,7 +422,7 @@ def validate_reference(workload: dict[str, Any]) -> dict[str, Any]:
         errors = compiled.check_path(points, times, task, profile)
         if errors:
             raise AssertionError(f"Invalid constructive reference {task.id}: {errors[:4]}")
-        local = np.asarray(compiled.frame.to_local(reference["trajectory_wkt"], "MSL", TIME_ORIGIN).coords)
+        local = np.asarray(compiled.frame.to_local(reference["trajectory_wkt"], "EG", TIME_ORIGIN).coords)
         if not np.allclose(local, points, atol=.0001, rtol=0):
             raise AssertionError(f"Reference geographic/local mismatch: {task.id}")
         departure = (task.departure_time - TIME_ORIGIN).total_seconds()

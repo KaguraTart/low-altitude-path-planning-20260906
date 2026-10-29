@@ -4,7 +4,7 @@
 
 完整字段以运行服务的 `/openapi.json` 为准。打开 `/docs` 可查看 Swagger 并直接调用接口。
 
-按业务需求查找接口，见[路径规划需求与 API 对照](REQUIREMENTS_API_MAPPING.md)。该表列出 901–916 项需求的接口地址、参数和调用方法，未提供的业务接口标为“暂无”。
+按业务需求查找接口，见[路径规划需求与 API 对照](REQUIREMENTS_API_MAPPING.md)。该表逐项列出 ENG-06/ENG-07 的 41 项需求、平台责任、接口输入输出和验证证据，未提供的业务接口标为“暂无”。
 
 ## 目录
 
@@ -52,14 +52,14 @@ curl --fail-with-body -sS http://127.0.0.1:8000/api/v2/health
 
 外部几何使用 WGS84，轴序固定为 **经度、纬度、高度**。任务起终点和业务航点必须是 `POINT Z`，航路中心线必须是 `LINESTRING Z`。体积边界为 `POLYGON` 或 `MULTIPOLYGON` 的平面足迹，垂直范围由单独字段确定；足迹 WKT 中的 Z 不改变体积上下限。空几何、非有限坐标、自相交等无效拓扑和 `GEOMETRYCOLLECTION` 会被拒绝。
 
-每个场景以 `coordinates.origin_lon/origin_lat` 建立局部 AEQD 投影。`x` 向东，`y` 向北，单位为米。`z = MSL 高度 - origin_alt_msl`，单位为米。`bounds`、`resolution`、规则距离和网格使用此坐标系。`max_radius_m` 指定场景覆盖半径，默认 50000 m。可按实际范围设置更大的正数。
+每个场景以 `coordinates.origin_lon/origin_lat` 建立局部 AEQD 投影。`x` 向东，`y` 向北，单位为米。`z = EG 椭球高 - origin_alt_ellipsoid`，单位为米。`bounds`、`resolution`、规则距离和网格使用此坐标系。`max_radius_m` 指定场景覆盖半径，默认 50000 m。可按实际范围设置更大的正数。
 
-| `alt_reference` / `altReference` | 输入 Z 的含义 | 转成 MSL 的依据 |
+| `alt_reference` / `altReference` | 输入 Z 的含义 | 转成 EG 的依据 |
 |------|------|------|
-| `MSL` | 海拔米 | 直接使用 |
-| `AGL` | 离地米 | `MSL = Z + 地形海拔`；需要场景 terrain 数据或声明的常量 `terrain_msl_m` |
-| `ELLIPSOID` | WGS84 椭球高米 | `MSL = Z - geoid_separation_m`；需提供大地水准面差 |
-| `QNE` / `QNH` | 相应气压高度米 | `MSL = Z + offset_m`；需有效位置、时刻内唯一的 `height_corrections` 记录 |
+| `EG` / `ELLIPSOID` | WGS84 椭球高米 | 直接使用；ELLIPSOID 为兼容别名 |
+| `MSL` | 海拔米 | `EG = Z + geoid_separation_m`；必须提供差值及非空 `geoid_source` |
+| `AGL` | 离地米 | `EG = Z + 地形椭球高`；需要 terrain 数据或常量 `terrain_ellipsoid_m` |
+| `QNE` / `QNH` | 相应气压高度米 | `EG = Z + offset_m`；需在该位置和时刻唯一有效的高度改正，`target_reference="EG"` |
 
 服务不会猜高度基准或用零代替缺少的证据。独立坐标转换端点只接受 `CoordinateSpec` 的常量地形；场景规划会将 terrain 空间场注册为转换回调，按位置和有效时间读取。数据的来源、版本和有效期由上游负责。QNE/QNH 转换必须有带时区的 `at`；缺少修正报 `HEIGHT_REFERENCE_UNAVAILABLE`，同时匹配多条修正报 `AMBIGUOUS_HEIGHT_CORRECTION`。
 
@@ -73,7 +73,7 @@ curl --fail-with-body -sS http://127.0.0.1:8000/api/v2/health
 | `prefer` | 允许航路外飞行；候选图代价中，航路外基础距离代价为航路内的 2 倍；其余安全、规则和性能约束照常执行 |
 | `free` | 不要求航路包含；其余安全、规则和性能约束照常执行 |
 
-中心线 Z 是参考高度。`minAltitude/maxAltitude` 和 `altReference` 确定可用高度带。`widthMeters` 是航路全宽，编译时除以 2。规则 `WIDTH.content.width` 是半宽。可用宽度再扣除 `bufferWidth` 和飞机安全裕度。
+中心线 Z 是参考高度。`minAltitude/maxAltitude` 和 `altReference` 确定可用高度带。`widthMeters` 是航路全宽，编译时除以 2。规则 `WIDTH.content.width` 同样是全宽。可用中心半宽为 `min(widthMeters,width)/2` 再扣除飞机水平净空；`bufferWidth` 是走廊外侧保护距离，不增加允许飞行范围。障碍在有效高度和时间内进入已用航路段中心线 `min(width,widthMeters)/2 + bufferWidth` 的保护范围时，该段不可用；占用网格和选定规避规则的 scope 几何同样参与硬检查；检查只在 WIDTH 及规避规则实际生效的时间和空间交集内执行。
 
 严格模式下，航路外起终点需显式提交 `connectors`，任务填写 `start_connector_id` / `end_connector_id`；`Connector.airway_ids` 指定可以接入的航路。接驳仅授权实际起点到首次进入航路、最后离开航路到实际终点的连续部分，不能当作中段捷径。接驳体也有高度、时间和净空限制。中心线、端点和接驳未连通时直接失败。
 
@@ -101,6 +101,8 @@ curl --fail-with-body -sS http://127.0.0.1:8000/api/v2/health
 
 | 字段 | 类型 | 必填 / 默认 | 含义 |
 |------|------|------|------|
+| `scene_type` | `LOW_ALTITUDE` | `LOW_ALTITUDE` | 当前仅提供低空场景；地面、水上拒绝输入 |
+| `network_version` | string/null | null | 平台路网版本，用于追溯；场景另有内容哈希版本 |
 | `coordinates` | `CoordinateSpec` | 必填 | 投影原点与高度换算证据 |
 | `bounds` | `Bounds3D` | 必填 | 局部米制 `x_min/x_max/y_min/y_max/z_min/z_max`，每轴 max 必须大于 min |
 | `resolution` | `[number,number,number]` | `[25,25,10]` | 局部 x/y/z 搜索分辨率，均须 >0 |
@@ -131,13 +133,13 @@ curl --fail-with-body -sS http://127.0.0.1:8000/api/v2/health
 | 字段 | 类型 / 默认 | 含义 |
 |------|------|------|
 | `origin_lon` / `origin_lat` | number，必填 | 经度 `[-180,180]`、纬度 `[-90,90]` |
-| `origin_alt_msl` | number，0 | 局部 z=0 的 MSL 海拔 |
+| `origin_alt_ellipsoid` | number，0 | 局部 z=0 的 EG 椭球高 |
 | `max_radius_m` | number，50000 | 场景覆盖半径，单位米；可设置任意正有限值 |
-| `terrain_msl_m` / `terrain_source` | number / string，null | 声明的平地海拔与来源；非平地区域应提供 terrain 空间场 |
+| `terrain_ellipsoid_m` / `terrain_source` | number / string，null | 声明的平地椭球高与来源；非平地区域应提供 terrain 空间场 |
 | `geoid_separation_m` / `geoid_source` | number / string，null | 椭球高减 MSL 的差值与来源 |
 | `height_corrections` | `HeightCorrection[]`，`[]` | QNE/QNH 的显式修正 |
 
-`HeightCorrection` 必填 `reference`（`QNE/QNH`）、`offset_m`、非空 `source/version`、`valid_from/valid_to`；可选 `geometry_wkt` 限定 WGS84 平面覆盖。有效期必须递增，修正采用 `valid_from <= at < valid_to`。
+`HeightCorrection.target_reference` 固定为 EG，`offset_m=EG−输入高度`；必填 `reference`（`QNE/QNH`）、`offset_m`、非空 `source/version`、`valid_from/valid_to`；可选 `geometry_wkt` 限定 WGS84 平面覆盖。有效期必须递增，修正采用 `valid_from <= at < valid_to`。
 
 ### 2.4 航路、障碍、接驳和管制区
 
@@ -149,6 +151,7 @@ curl --fail-with-body -sS http://127.0.0.1:8000/api/v2/health
 | `minAltitude` / `maxAltitude` | number，必填 | 硬高度上下界，max >= min |
 | `altReference` | 高度枚举，必填 | 上下界和中心线的基准 |
 | `startGrid` / `endGrid` | `GeographicBounds`，必填 | 端点范围元数据；规范键为 `minLon/maxLon/minLat/maxLat/minAlt/maxAlt` |
+| `allowed_profile_ids` | string[]，`[]` | 航路机型准入白名单；空数组不限制。strict/prefer 中，不准入航路体为禁入区，重叠获准航路不能抵消该禁入；free 不使用航路准入 |
 | `status` | `ACTIVE/INACTIVE`，`ACTIVE` | 非活动航路不授权严格飞行 |
 | `direction` | `BOTH/FORWARD/REVERSE`，`BOTH` | 相对中心线顺序的通行方向 |
 | `valid_from` / `valid_to` | timestamp，可省略 | 航路有效时段 |
@@ -179,11 +182,11 @@ curl --fail-with-body -sS http://127.0.0.1:8000/api/v2/health
 
 `Dataset` 必填 `id/kind/version`；`kind` 为 `terrain/weather/signal/noise/area/grid/risk/corridor` 之一；可选 `valid_from/valid_to`、`geometry_wkt`、`cells`（默认 `[]`）。数据集和单元格的有效期共同约束适用范围。
 
-`FieldCell` 的 `geometry_wkt`（WGS84 足迹）与 `bounds`（局部 AEQD 六个边界）必须二选一；`values` 必填。WKT 格可用 `min_altitude/max_altitude` 限定 MSL 海拔；使用 `bounds` 时其局部 z 范围生效。可选 `valid_from/valid_to` 为带时区时间。未给高度界限的足迹格覆盖全高度。
+`FieldCell` 的 `geometry_wkt`（WGS84 足迹）与 `bounds`（局部 AEQD 六个边界）必须二选一；`values` 必填。WKT 格可用 `min_altitude/max_altitude` 限定 EG 椭球高；使用 `bounds` 时其局部 z 范围生效。可选 `valid_from/valid_to` 为带时区时间。未给高度界限的足迹格覆盖全高度。
 
 | 数据类型 | `values` 允许键 | 单位与解释 |
 |------|------|------|
-| `terrain` | `elevation_msl_m`、`terrain_msl_m`、`nodata` | MSL 米；前者为规范键。可用地形必须有有限海拔 |
+| `terrain` | `elevation_ellipsoid_m`、`terrain_ellipsoid_m`、`nodata` | EG 米；前者为规范键。可用地形必须有有限椭球高 |
 | `weather` | `wind_speed_mps`、`windSpeed`、`precipitation`、`precipitation_mm_h`、`icing`、`nodata` | 风 m/s；降水和结冰可为布尔或非负数，0/false 表示无 |
 | `signal` | `bands`、`signal_strength_dbm`、`nodata` | `bands` 为频段到 dBm 的对象，如 `{"2.4GHz":-60,"5.8GHz":-70}`；亦可给统一强度 |
 | `noise` / `risk` | `noise_db` / `risk`、`nodata` | 噪声 dB；风险数值，供代价计算 |
@@ -191,7 +194,7 @@ curl --fail-with-body -sS http://127.0.0.1:8000/api/v2/health
 | `grid` | `adminCode/gridCode/code/occupied/nodata` | 区域编码与占用属性 |
 | `corridor` | `nodata` | 明确允许穿行的几何区域 |
 
-未知 `values` 键报 `INVALID_INPUT`。规则引用天气、信号或风险场时，缺少匹配数据集、版本、单元格或必要数值会拒绝编译。规划经过未覆盖、过期或 `nodata=true` 的相关空间场时视为不可通行。terrain 一旦配置，也必须在飞行位置与时间全程有效；不能把缺地形当平地。重叠有效地形格取较高海拔，避免低估地面。
+未知 `values` 键报 `INVALID_INPUT`。规则引用天气、信号或风险场时，缺少匹配数据集、版本、单元格或必要数值会拒绝编译。规划经过未覆盖、过期或 `nodata=true` 的相关空间场时视为不可通行。terrain 一旦配置，也必须在飞行位置与时间全程有效；不能把缺地形当平地。重叠有效地形格取较高椭球高，避免低估地面。
 
 算法不拉取实时天气、不测量无线信号；平台向服务提供已有观测/预报和质量标记，服务据此规划与验证。实际天气采集、链路监测和飞控执行由平台完成。
 
@@ -221,6 +224,7 @@ curl --fail-with-body -sS http://127.0.0.1:8000/api/v2/health
 | `departure_time` | timestamp，必填 | 最早起飞时间，必须在场景时域内 |
 | `alt_reference` | 高度枚举，必填 | 本任务起终点、航点与输出 WKT 的高度基准 |
 | `route_mode` | `strict/prefer/free`，`strict` | 路径模式 |
+| `engine_id` | `ENG-06/ENG-07`，可省略 | strict/prefer 自动归属 ENG-06；free 自动归属 ENG-07。显式值须与模式一致 |
 | `waypoints` | `Waypoint[]`，`[]` | 按顺序经过的中间业务航点，不重复放起终点；执行 WAYPOINT 规则 |
 | `earliest_arrival/latest_arrival` | timestamp/null | 终点到达窗口；最晚到达不能早于 departure |
 | `profile_id` | string，`dji_mini_4_pro` | 引用场景配置或内置默认机型 |
@@ -260,43 +264,49 @@ RTL 是**根据提交时当前状态生成的返航方案**：触发后将目标
 
 ## 3. 全部规则
 
-每条 `Rule` 必填 `id`、`rule_type`、非空 `content`；可选 `resource_ids`（默认 `[]`）、`effective_start/effective_end`。`content` 采用下表精确键名，未知类型、未知键、错误类型、反向区间和缺少必要字段都会报 `INVALID_INPUT`。时间与空间适用范围在整段上求交，不能只检查端点。无 `resource_ids` 时按规则类别选择场景中对应资源；给出引用时每个 ID 都必须存在。
+每条 `Rule` 必填 `id`、`rule_type`、非空 `content`；兼容样例名 `type`、`constraints`，分别对应前两项业务字段。可选 `scope`、`resource_ids`（默认 `[]`）、`effective_start/effective_end`。规则有效期可输入无时区时间（按 Asia/Shanghai 解释）；空字符串转 null。其他对象时间仍必须带时区。`content` 采用下表精确键名，未知类型、未知键、错误类型、反向区间和缺少必要字段都会报 `INVALID_INPUT`。时间与空间适用范围在整段上求交，不能只检查端点。无 `resource_ids` 时按规则类别选择场景中对应资源；给出引用时每个 ID 都必须存在。
+
+平台管理规则 CRUD、规则绑定和机型准入关系。引擎消费本次 `scene.rules`、`task.rule_ids`、`airways[].allowed_profile_ids`，执行约束；没有对应的管理端点。未选择有效 CLIMB/TURN 规则时，使用爬升 5 m/s、下降 3 m/s、转角 90°、半径 10 m 的默认约束，机型和航路限制继续取更严格值。
+
+`scope` 是规则外层作用域，与 `content.scope` 的 AREA 类型字段不同。`scope.grid[]` 每项填 `{x,y,z}` 或 `{geometry:"POINT Z / POLYGON Z ..."}`。索引必须能通过 `scene.grid` 的原点、分辨率和维度解析；不能将北斗编码整数直接当局部索引。几何形式的 Z 使用 EG。`scope.geom[]` 每项填 `type` 和适用的 `geom/center_point/boundary_2d`，类型为 CONTROL_ZONE、NO_FLY_ZONE、ADMIN_DIVISION、AIRSPACE、LANDING_SITE。行政区使用二维边界（支持 MULTIPOLYGON）和可选 POINT 中心；其余体几何使用 POLYGON Z，起降场使用 POINT Z。非起降场要素必须提供区域 geom 或 boundary_2d，单独 center_point 不能代表区域；同时给出 geom 与 boundary_2d 时，水平足迹须在 0.1 m 容差内一致。天气、信号作用域只限定检查范围，仍须提供版本化数据值。
+
+ENG-06 消费 HEIGHT_LAYER、WIDTH、DIRECTION、PRIORITY、SPEED、TIME、AREA、CLIMB、TURN、WAYPOINT；ENG-07 消费 HEIGHT_LAYER、BUILDING、NO_FLY、ZONE、WEATHER、SIGNAL、CLIMB、TURN、HOVER、ENDURANCE、PAYLOAD、RTL、PRIORITY、WAYPOINT。此为业务归属，通用安全校验仍执行输入中选定的适用规则。SEPARATION 保留全局多机间隔检查，携带 scope 会被拒绝；区域邻近提醒归属 ENG-11，不在本次 ENG-06/07 交付范围。
 
 | 类型 | `content` 全部允许键 | 执行语义和数据要求 |
 |------|------|------|
-| `HEIGHT_LAYER` | `minHeight,maxHeight,layerStep,minAltitude,maxAltitude,altDatum` | 至少给一个高度上下界；`altDatum` 为五类高度基准，默认 MSL；layerStep >0，用高度层锚定巡航高度，爬降过渡仍查上下界；AGL 必须有地形 |
-| `WIDTH` | `width,bufferWidth` | width 必填且 >0，表示半宽；bufferWidth >=0。需要航路，实际可用半宽再减飞机半径与安全裕度 |
-| `DIRECTION` | `direction,directions` | 至少给一项；direction=`ONE_WAY/BIDIRECTIONAL`。directions 是 `[0,360)` 角度数组，东为 0°、逆时针；单向未给角度时按引用航路方向检查 |
+| `HEIGHT_LAYER` | `minHeight,maxHeight,layerStep,minAltitude,maxAltitude,altDatum` | 至少给一个高度上下界；`altDatum` 支持 EG/MSL/AGL/ELLIPSOID/QNE/QNH，默认 EG；layerStep >0，用高度层锚定巡航高度，爬降过渡仍查上下界；AGL 必须有地形 |
+| `WIDTH` | `width,bufferWidth` | width 必填且 >0，表示全宽；bufferWidth >=0 是外侧保护带。需要航路，可用半宽取规则与航路全宽较小值的一半，再减飞机净空 |
+| `DIRECTION` | `direction,directions` | 至少给一项；direction=`ONE_WAY/BIDIRECTIONAL`。directions 是 `[0,360)` 角度数组，北为 0°，顺时针增加；单向未给角度时按引用航路方向检查 |
 | `SPEED` | `minSpeed,maxSpeed,cruiseSpeed` | m/s；max/cruise >0，min >=0，min<=max。巡航和物理起停加减速阶段区分处理 |
-| `TIME` | `dailyStart,dailyEnd,weekdays,earliestDeparture,latestArrival` | 搜索将日历开放期转为起飞窗口，冲突时可重试后续窗口；日内时间 `HH:mm`，Asia/Shanghai；dailyStart/dailyEnd 必须成对，支持跨午夜；weekdays 为 ISO 1–7 整数；earliestDeparture/latestArrival 也是日内 `HH:mm` |
-| `AREA` | `scope,adminCodes,gridCodes,zoneIds` | scope 必填=`INCLUDE/EXCLUDE`；需可解析的区域、网格码或管制几何；INCLUDE 要求整段留在包含区，EXCLUDE 禁止穿入 |
+| `TIME` | `dailyStart,dailyEnd,weekdays,earliestDeparture,latestArrival` | 搜索将日历开放期转为起飞窗口，冲突时可重试后续窗口；日内时间 `HH:mm`，Asia/Shanghai；dailyStart/dailyEnd 必须成对，支持跨午夜；weekdays 为 0–6 整数，0 周日、1 周一至 6 周六；earliestDeparture/latestArrival 也是日内 `HH:mm` |
+| `AREA` | `scope,minLon,minLat,maxLon,maxLat,areaWkt,adminCodes,gridCodes,zoneIds` | scope=BBOX 时填四个经纬度边界，WKT 时填 areaWkt；两者均为允许区域。兼容 INCLUDE/EXCLUDE 与资源/编码引用；所有模式检查完整包络 |
 | `CLIMB` | `maxClimbRate,maxDescentRate` | m/s；与机型能力取更严格限制，逐段检查 |
 | `TURN` | `maxTurnAngle,minTurnRadius` | 角度 `0<=值<=180`，半径米 >=0；约束完整转弯累计角及几何半径 |
-| `SEPARATION` | `verticalSeparation,horizontalSeparation` | 米，>=0；与飞机尺寸和安全裕度取保守值，连续时空检查双方同时过近 |
-| `NO_FLY` | `noFlyMode,heightCeiling,includeBuffer` | noFlyMode 必填=`PERMANENT/TEMPORARY`；临时规则须显式起止有效期；需要匹配管制几何；heightCeiling 为 MSL 米；includeBuffer 是保留开关，当前管制区附加缓冲为 0，飞机净空单独参与检查 |
-| `BUILDING` | `avoidMode,safeDistance,bufferRadius` | avoidMode 必填=`BUFFER/CORRIDOR`；距离米 >=0；需障碍几何，CORRIDOR 还需明确 corridor 数据集，不能把建筑整体当穿行区 |
+| `SEPARATION` | `verticalSeparation,horizontalSeparation` | 米，>=0；全局连续时空间隔，与飞机尺寸和安全裕度取保守值；不接受 scope |
+| `NO_FLY` | `noFlyMode,heightCeiling,includeBuffer` | noFlyMode 必填=`STANDARD/PERMANENT/TEMPORARY`；临时规则须显式起止有效期；需要匹配管制几何；heightCeiling 为 EG 米；includeBuffer 是保留开关，当前管制区附加缓冲为 0，飞机净空单独参与检查 |
+| `BUILDING` | `avoidMode,safeDistance,bufferRadius` | avoidMode 必填=`STRICT/BUFFER/CORRIDOR`；距离米 >=0；需障碍几何，CORRIDOR 还需明确 corridor 数据集，不能把建筑整体当穿行区 |
 | `ZONE` | `zoneLevels,coverageThreshold` | 至少给一项；zoneLevels 为非空字符串数组；coverageThreshold 为 0–1，记录覆盖阈值；碰撞结果由真实管制体决定 |
 | `WEATHER` | `maxWindSpeed,noPrecipitation,noIcing` | 至少给一项；风 m/s，后两项 boolean；需 versioned weather 格场，相应风/降水/结冰数值必须存在，全程有效且覆盖 |
 | `SIGNAL` | `minSignalStrength,bands,band_policy` | 强度 dBm 必填；bands 为非空字符串数组；band_policy=`any`（默认）或 `all`；需 signal 格场，并匹配飞机支持频段 |
-| `PRIORITY` | `priorityScene,costBonus` | 两者必填；场景=`LOW_RISK/FAST/QUIET`，bonus 为 0–1；LOW_RISK 需 risk 格场，QUIET 需 noise 格场，覆盖缺口不放行；影响候选路线代价 |
+| `PRIORITY` | `priorityScene,costBonus` | 两者必填；场景=`PLANNING/LOW_RISK/FAST/QUIET`，bonus 为 0–1；LOW_RISK 需 risk 格场，QUIET 需 noise 格场，覆盖缺口不放行；影响候选路线代价 |
 | `HOVER` | `maxHoverTime,defaultHoverTime` | 秒 >=0，default <= max；只允许明确标记的业务航点悬停，实际持续时间不能超限 |
 | `ENDURANCE` | `maxRange,minEndurance` | 米 / 秒，均 >0；minEndurance 是机型容量最低要求；同时检查路径与当前剩余续航/航程 |
 | `PAYLOAD` | `maxPayloadKg` | kg >=0，必填；检查机型载荷能力与实际任务载荷 |
-| `WAYPOINT` | `maxWaypoints,minWaypointInterval` | maxWaypoints 为 >=2 的整数，计起点+业务中间点+终点，不计搜索采样点；间隔为米 >=0 |
-| `RTL` | `rtlAltitude,rtlOnLowBattery,lowBatteryPercent` | 三项必填；rtlAltitude 为 **MSL 海拔米**且 >=0，其余为 boolean、0–100。低电开关启用时要求完整上游状态；达到阈值生成 home 返航方案，并检查当前剩余资源 |
+| `WAYPOINT` | `maxWaypoints,minWaypointInterval` | maxWaypoints 为 >=0 的整数，只计 task.waypoints 中途经点，不计起终点和搜索采样点；间隔为米 >=0 |
+| `RTL` | `rtlAltitude,rtlOnLowBattery,lowBatteryPercent` | 三项必填；rtlAltitude 为 **EG 椭球高米**且 >=0，其余为 boolean、0–100。低电开关启用时要求完整上游状态；达到阈值生成 home 返航方案，并检查当前剩余资源 |
 
-示例规则（加入上面的严格航路场景即可运行）：
+规则结构示例（引用 ID 和坐标基准须与实际场景一致）：
 
 ```json
 [
-  {"id":"height-1","rule_type":"HEIGHT_LAYER","content":{"minAltitude":60,"maxAltitude":120,"altDatum":"MSL"}},
+  {"id":"height-1","rule_type":"HEIGHT_LAYER","content":{"minAltitude":60,"maxAltitude":120,"altDatum":"EG"}},
   {"id":"speed-1","rule_type":"SPEED","content":{"maxSpeed":8,"cruiseSpeed":5}},
   {"id":"width-1","rule_type":"WIDTH","resource_ids":["demo-airway"],"content":{"width":40,"bufferWidth":2}},
   {"id":"separation-1","rule_type":"SEPARATION","content":{"horizontalSeparation":15,"verticalSeparation":12}}
 ]
 ```
 
-调用方检查路线 `status`、`validation.valid` 和 `rule_report`。报告记录每条规则的执行状态。未选择或未生效的规则标为不适用。缺少必要引用数据时返回错误。
+调用方检查路线 `status`、`validation.valid` 和 `rule_report`。报告记录每条规则的执行状态。未选择或未生效的规则标为不适用。默认 CLIMB/TURN 也应在报告中保留执行记录。缺少必要引用数据时返回错误。
 
 ## 4. 返回与错误
 
@@ -304,11 +314,13 @@ RTL 是**根据提交时当前状态生成的返航方案**：触发后将目标
 
 | 对象 | 返回字段 |
 |------|------|
-| 场景注册/查询 | `scene_id`、`scene_version`（SHA-256）、`status="ready"`、`compilation_ms`、`coordinate_context`、`warnings`、`counts`（airways/obstacles/control_zones/rules/datasets 数量） |
+| 场景注册/查询 | `scene_id`、`scene_version`（SHA-256）、`scene_type`、`network_version`、`status="ready"`、`compilation_ms`、`coordinate_context`、`warnings`、`counts`（airways/obstacles/control_zones/rules/datasets 数量） |
 | 坐标转换 | `geometries_wkt`（与输入顺序相同）、`direction`、`alt_reference`、`coordinate_context` |
 | health | `status="ok"/"degraded"`、`api_version`、`native_available`、`jobs`；缺原生扩展时 degraded，不能据此承诺可规划 |
 | version | `api_version`、`engine`（available/engine/version/error/git_sha）、`default_profile`；`engine.git_sha` 为运行镜像的构建 revision，本地未设置时为 `unknown` |
-| capabilities | `api_version/route_modes/default_route_mode/rule_types/altitude_references/geometric_tolerance_m/grid_formats/scene_lifecycle`；`scene_limits`、`max_registered_scenes`、`max_registered_scene_bytes`、`max_scene_radius_m` 为 null，表示未设置固定资源上限 |
+| capabilities | `api_version/contract_version/route_modes/default_route_mode/rule_types/engine_rules/canonical_alt_reference/altitude_references/geometric_tolerance_m/grid_formats/scene_lifecycle`；`scene_limits`、`max_registered_scenes`、`max_registered_scene_bytes`、`max_scene_radius_m` 为 null，表示未设置固定资源上限 |
+
+`capabilities.contract_version="2026-10-29"` 标记本次契约；`engine_rules` 给出两引擎规则分配，`canonical_alt_reference="EG"` 声明内部高度基准。
 
 `coordinate_context` 包含 EPSG:4326、轴序、局部 AEQD CRS、原点、半径、高度数据来源与气压修正版本。几何容差为 0.1 m，用于数值和离散近似处理。安全距离使用场景与机型配置值。
 
@@ -320,6 +332,9 @@ RTL 是**根据提交时当前状态生成的返航方案**：触发后将目标
 | `status` | `planned/failed/timeout` | 逐任务结果；HTTP 200 不代表每个任务成功 |
 | `code` / `message` | string/null / string | 失败代码和解释；成功时 code 通常 null |
 | `route_mode` | 路径枚举 | 实际任务模式 |
+| `engine_id` | `ENG-06/ENG-07` | 本任务实际归属 |
+| `alt_reference` | 高度枚举 | 输出 WKT 使用的任务高度基准，失败结果也返回 |
+| `coordinate_context` | object | canonical_alt_reference=EG、origin_alt_ellipsoid、投影与高度证据；用于解释局部运动段 |
 | `start_wkt/goal_wkt` | WKT | 本次生效的起终点；触发 RTL 时 goal 为 home |
 | `departure_time` | timestamp | 请求的最早起飞时刻；实际出发看首个 vertex time |
 | `time_origin` | timestamp/null | 本结果数字时间的场景零点；成功路线会填写 |
@@ -410,8 +425,8 @@ v2 OpenAPI 为所有端点声明同一 `ErrorEnvelope`，覆盖 `400/404/429/500
     "coordinates": {
       "origin_lon": 104.77,
       "origin_lat": 29.33,
-      "origin_alt_msl": 0,
-      "terrain_msl_m": 0,
+      "origin_alt_ellipsoid": 0,
+      "terrain_ellipsoid_m": 0,
       "terrain_source": "example-flat-terrain-20261016"
     },
     "bounds": {"x_min": -500, "x_max": 2000, "y_min": -500, "y_max": 1000, "z_min": 0, "z_max": 300},
@@ -425,7 +440,7 @@ v2 OpenAPI 为所有端点声明同一 `ErrorEnvelope`，覆盖 `400/404/429/500
         "widthMeters": 100,
         "minAltitude": 50,
         "maxAltitude": 150,
-        "altReference": "MSL",
+        "altReference": "EG",
         "startGrid": {"minLon":104.7709,"maxLon":104.7711,"minLat":29.3309,"maxLat":29.3311,"minAlt":50,"maxAlt":150},
         "endGrid": {"minLon":104.7799,"maxLon":104.7801,"minLat":29.3309,"maxLat":29.3311,"minAlt":50,"maxAlt":150},
         "status": "ACTIVE",
@@ -442,7 +457,7 @@ v2 OpenAPI 为所有端点声明同一 `ErrorEnvelope`，覆盖 `400/404/429/500
     "start_wkt": "POINT Z (104.771 29.331 80)",
     "goal_wkt": "POINT Z (104.780 29.331 80)",
     "departure_time": "2026-10-16T09:00:00+08:00",
-    "alt_reference": "MSL",
+    "alt_reference": "EG",
     "route_mode": "strict",
     "latest_arrival": "2026-10-16T09:30:00+08:00"
   },
@@ -462,7 +477,23 @@ curl --fail-with-body -sS http://127.0.0.1:18000/api/v2/examples/single -o singl
 
 ```json
 {
+  "engine_id": "ENG-06",
   "task_id": "demo-v2-001",
+  "alt_reference": "EG",
+  "coordinate_context": {
+    "input_horizontal_crs": "EPSG:4326",
+    "axis_order": "longitude,latitude,altitude",
+    "local_horizontal_crs": "+proj=aeqd +lat_0=29.33 +lon_0=104.77 +datum=WGS84 +units=m +no_defs +type=crs",
+    "local_axis_order": "east_m,north_m,ellipsoid_minus_origin_m",
+    "canonical_alt_reference": "EG",
+    "origin_lon": 104.77,
+    "origin_lat": 29.33,
+    "origin_alt_ellipsoid": 0.0,
+    "max_radius_m": 50000.0,
+    "terrain_source": "example-flat-terrain-20261016",
+    "geoid_source": null,
+    "height_correction_versions": []
+  },
   "status": "planned",
   "code": null,
   "message": "",
@@ -473,15 +504,30 @@ curl --fail-with-body -sS http://127.0.0.1:18000/api/v2/examples/single -o singl
   "departure_time": "2026-10-16T09:00:00+08:00",
   "time_origin": "2026-10-16T09:00:00+08:00",
   "action": "mission",
-  "vertex_times_s": [0.0, 2.5, 174.82834746683343, 177.32834746683343],
+  "vertex_times_s": [
+    0.0,
+    2.5,
+    174.82834746683343,
+    177.32834746683343
+  ],
   "motion_segments": [
     {
-      "airway_ids": ["demo-airway"],
+      "airway_ids": [
+        "demo-airway"
+      ],
       "kind": "line",
       "start_time_s": 0.0,
       "end_time_s": 177.32834746683343,
-      "start": [97.12685972800742, 110.8416525552106, 80.0],
-      "end": [971.2685960957951, 110.88275614663762, 80.0],
+      "start": [
+        97.12685972800742,
+        110.8416525552106,
+        80.0
+      ],
+      "end": [
+        971.2685960957951,
+        110.88275614663762,
+        80.0
+      ],
       "length_m": 874.1417373341671,
       "distance_m": 0.0,
       "points": [],
@@ -509,14 +555,93 @@ curl --fail-with-body -sS http://127.0.0.1:18000/api/v2/examples/single -o singl
     }
   ],
   "keypoints": [
-    {"types":["START"],"wkt":"POINT Z (104.771 29.331 80)","time_s":0.0,"grid_indices":[23,24,8],"grid_code":null,"waypoint_index":null},
-    {"types":["GOAL"],"wkt":"POINT Z (104.78 29.331 80)","time_s":177.32834746683343,"grid_indices":[58,24,8],"grid_code":null,"waypoint_index":null}
+    {
+      "types": [
+        "START"
+      ],
+      "wkt": "POINT Z (104.771 29.331 80)",
+      "time_s": 0.0,
+      "grid_indices": [
+        23,
+        24,
+        8
+      ],
+      "grid_code": null,
+      "waypoint_index": null
+    },
+    {
+      "types": [
+        "GOAL"
+      ],
+      "wkt": "POINT Z (104.78 29.331 80)",
+      "time_s": 177.32834746683343,
+      "grid_indices": [
+        58,
+        24,
+        8
+      ],
+      "grid_code": null,
+      "waypoint_index": null
+    }
   ],
-  "metrics": {"distance_m":874.1417373341671,"flight_time_s":177.32834746683343,"wait_time_s":0.0},
-  "validation": {"valid":true,"violations":[]},
+  "metrics": {
+    "distance_m": 874.1417373341671,
+    "flight_time_s": 177.32834746683343,
+    "wait_time_s": 0.0
+  },
+  "validation": {
+    "valid": true,
+    "violations": []
+  },
   "rule_report": [
-    {"rule_id":"speed-1","rule_type":"SPEED","status":"applied","message":"","details":{"reasons":[],"dataset_versions":{}},"reasons":[],"dataset_versions":{}},
-    {"rule_id":"separation-1","rule_type":"SEPARATION","status":"applied","message":"","details":{"reasons":[],"dataset_versions":{}},"reasons":[],"dataset_versions":{}}
+    {
+      "rule_id": "speed-1",
+      "rule_type": "SPEED",
+      "status": "applied",
+      "message": "",
+      "details": {
+        "reasons": [],
+        "dataset_versions": {}
+      },
+      "reasons": [],
+      "dataset_versions": {}
+    },
+    {
+      "rule_id": "separation-1",
+      "rule_type": "SEPARATION",
+      "status": "applied",
+      "message": "",
+      "details": {
+        "reasons": [],
+        "dataset_versions": {}
+      },
+      "reasons": [],
+      "dataset_versions": {}
+    },
+    {
+      "rule_id": "default:CLIMB",
+      "rule_type": "CLIMB",
+      "status": "applied",
+      "message": "",
+      "details": {
+        "reasons": [],
+        "dataset_versions": {}
+      },
+      "reasons": [],
+      "dataset_versions": {}
+    },
+    {
+      "rule_id": "default:TURN",
+      "rule_type": "TURN",
+      "status": "applied",
+      "message": "",
+      "details": {
+        "reasons": [],
+        "dataset_versions": {}
+      },
+      "reasons": [],
+      "dataset_versions": {}
+    }
   ]
 }
 ```
@@ -611,8 +736,8 @@ print(json.dumps(job["result"], ensure_ascii=False))
 {
   "geometries_wkt": ["POINT Z (104.771 29.331 80)"],
   "direction": "wgs84_to_local",
-  "alt_reference": "MSL",
-  "coordinates": {"origin_lon":104.77,"origin_lat":29.33,"origin_alt_msl":20},
+  "alt_reference": "EG",
+  "coordinates": {"origin_lon":104.77,"origin_lat":29.33,"origin_alt_ellipsoid":20},
   "at": "2026-10-16T09:00:00+08:00"
 }
 ```
@@ -627,7 +752,7 @@ print(json.dumps(job["result"], ensure_ascii=False))
 {
   "connectors": [
     {"id":"launch-connector","geometry_wkt":"POLYGON ((104.770 29.330,104.772 29.330,104.772 29.332,104.770 29.332,104.770 29.330))",
-     "min_altitude":50,"max_altitude":150,"alt_reference":"MSL","airway_ids":["demo-airway"]}
+     "min_altitude":50,"max_altitude":150,"alt_reference":"EG","airway_ids":["demo-airway"]}
   ],
   "datasets": [
     {"id":"weather-20261016","kind":"weather","version":"2026-10-16-09",

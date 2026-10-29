@@ -55,6 +55,8 @@ class ValidationResponse(RouteValidation):
 
 
 class SceneResponse(StrictModel):
+    network_version: str | None = None
+    scene_type: Literal["LOW_ALTITUDE"] = "LOW_ALTITUDE"
     scene_id: str
     scene_version: str
     status: Literal["ready"]
@@ -101,6 +103,9 @@ class VersionResponse(StrictModel):
 
 
 class Capabilities(StrictModel):
+    contract_version: str
+    engine_rules: dict[str,list[str]]
+    canonical_alt_reference: Literal["EG"]
     api_version: str
     route_modes: list[str]
     default_route_mode: str

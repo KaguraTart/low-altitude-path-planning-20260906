@@ -509,6 +509,7 @@ ValidationResult validate_motion(const std::vector<MotionPrimitive>& ps,const Li
         }
     }
     int previous=-1;
+    int previous_horizontal=-1;
     double continuous_arc_sweep=0;
     for(size_t i=0;i<ps.size();++i) {
         if(ps[i].length<=EPS)continue;
@@ -526,11 +527,17 @@ ValidationResult validate_motion(const std::vector<MotionPrimitive>& ps,const Li
             double ah=std::hypot(a[0],a[1]),bh=std::hypot(b[0],b[1]);
             double horizontal_angle=0;
             if(ah>EPS&&bh>EPS)horizontal_angle=std::atan2(a[0]*b[1]-a[1]*b[0],a[0]*b[0]+a[1]*b[1]);
-            double tangent_difference=distance(a,b);
+            // Turning radius constrains horizontal heading, not a stopped
+            // transition from vertical climb to cruise. Retain the last
+            // horizontal tangent so a vertical leg cannot hide a heading turn.
+            if(bh>EPS && previous_horizontal>=0) {
+                auto horizontal=tangent(ps[previous_horizontal],true);
+                horizontal_angle=std::atan2(horizontal[0]*b[1]-horizontal[1]*b[0],horizontal[0]*b[0]+horizontal[1]*b[1]);
+            }
             double sweeps=0;bool has_yaw=false;
             for(size_t j=static_cast<size_t>(previous)+1;j<i;++j)if(ps[j].kind=="yaw"){sweeps+=ps[j].sweep;has_yaw=true;}
-            if(rmin>0&&tangent_difference>1e-5)
-                out.violations.push_back({static_cast<int>(i),"TURN_RADIUS_BYPASS",tangent_difference,0});
+            if(rmin>0&&bh>EPS&&std::abs(horizontal_angle)>1e-5)
+                out.violations.push_back({static_cast<int>(i),"TURN_RADIUS_BYPASS",std::abs(horizontal_angle),0});
             if(has_yaw) {
                 check_max(out,static_cast<int>(i),"YAW_HEADING_MISMATCH",std::abs(std::remainder(sweeps-horizontal_angle,2*3.141592653589793)),0);
                 check_max(out,static_cast<int>(i),"TURN_ANGLE",std::abs(sweeps)*180/3.141592653589793,limit_value(limits,"max_turn_angle_deg",180));
@@ -539,6 +546,8 @@ ValidationResult validate_motion(const std::vector<MotionPrimitive>& ps,const Li
                 out.violations.push_back({static_cast<int>(i),"MISSING_YAW_TRANSITION",std::abs(horizontal_angle),0});
             check_max(out,static_cast<int>(i),"TURN_ANGLE",std::abs(horizontal_angle)*180/3.141592653589793,limit_value(limits,"max_turn_angle_deg",180));
         }
+        auto direction=tangent(ps[i],true);
+        if(std::hypot(direction[0],direction[1])>EPS)previous_horizontal=static_cast<int>(i);
         previous=static_cast<int>(i);
     }
     return out;

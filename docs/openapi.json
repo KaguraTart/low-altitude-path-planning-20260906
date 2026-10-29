@@ -345,7 +345,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/Scene"
+                "$ref": "#/components/schemas/Scene-Input"
               }
             }
           },
@@ -620,7 +620,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/SingleRequest"
+                "$ref": "#/components/schemas/SingleRequest-Input"
               }
             }
           },
@@ -711,7 +711,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/BatchRequest"
+                "$ref": "#/components/schemas/BatchRequest-Input"
               }
             }
           },
@@ -893,7 +893,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/BatchRequest"
+                "$ref": "#/components/schemas/BatchRequest-Input"
               }
             }
           },
@@ -1078,7 +1078,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/SingleRequest"
+                  "$ref": "#/components/schemas/SingleRequest-Output"
                 }
               }
             }
@@ -1159,7 +1159,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/BatchRequest"
+                  "$ref": "#/components/schemas/BatchRequest-Output"
                 }
               }
             }
@@ -1430,6 +1430,7 @@
               {
                 "type": "string",
                 "enum": [
+                  "EG",
                   "MSL",
                   "AGL",
                   "ELLIPSOID",
@@ -1450,6 +1451,13 @@
       },
       "Airway": {
         "properties": {
+          "allowed_profile_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Allowed Profile Ids"
+          },
           "id": {
             "type": "string",
             "minLength": 1,
@@ -1475,6 +1483,7 @@
           "altReference": {
             "type": "string",
             "enum": [
+              "EG",
               "MSL",
               "AGL",
               "ELLIPSOID",
@@ -1567,7 +1576,7 @@
         ],
         "title": "Airway"
       },
-      "BatchRequest": {
+      "BatchRequest-Input": {
         "properties": {
           "scene_id": {
             "anyOf": [
@@ -1583,7 +1592,69 @@
           "scene": {
             "anyOf": [
               {
-                "$ref": "#/components/schemas/Scene"
+                "$ref": "#/components/schemas/Scene-Input"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "tasks": {
+            "items": {
+              "$ref": "#/components/schemas/Task"
+            },
+            "type": "array",
+            "minItems": 1,
+            "title": "Tasks"
+          },
+          "request_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Request Id"
+          },
+          "time_budget_s": {
+            "anyOf": [
+              {
+                "type": "number",
+                "gt": 0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Time Budget S"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "tasks"
+        ],
+        "title": "BatchRequest"
+      },
+      "BatchRequest-Output": {
+        "properties": {
+          "scene_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Scene Id"
+          },
+          "scene": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Scene-Output"
               },
               {
                 "type": "null"
@@ -1753,6 +1824,25 @@
       },
       "Capabilities": {
         "properties": {
+          "contract_version": {
+            "type": "string",
+            "title": "Contract Version"
+          },
+          "engine_rules": {
+            "additionalProperties": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "type": "object",
+            "title": "Engine Rules"
+          },
+          "canonical_alt_reference": {
+            "type": "string",
+            "const": "EG",
+            "title": "Canonical Alt Reference"
+          },
           "api_version": {
             "type": "string",
             "title": "Api Version"
@@ -1848,6 +1938,9 @@
         "additionalProperties": false,
         "type": "object",
         "required": [
+          "contract_version",
+          "engine_rules",
+          "canonical_alt_reference",
           "api_version",
           "route_modes",
           "default_route_mode",
@@ -1947,6 +2040,7 @@
           "alt_reference": {
             "type": "string",
             "enum": [
+              "EG",
               "MSL",
               "AGL",
               "ELLIPSOID",
@@ -2059,6 +2153,7 @@
           "altReference": {
             "type": "string",
             "enum": [
+              "EG",
               "MSL",
               "AGL",
               "ELLIPSOID",
@@ -2172,6 +2267,7 @@
           "alt_reference": {
             "type": "string",
             "enum": [
+              "EG",
               "MSL",
               "AGL",
               "ELLIPSOID",
@@ -2226,6 +2322,7 @@
           "alt_reference": {
             "type": "string",
             "enum": [
+              "EG",
               "MSL",
               "AGL",
               "ELLIPSOID",
@@ -2266,9 +2363,10 @@
             "ge": -90,
             "le": 90
           },
-          "origin_alt_msl": {
+          "origin_alt_ellipsoid": {
             "type": "number",
-            "title": "Origin Alt Msl",
+            "title": "Origin Alt Ellipsoid",
+            "description": "WGS84 ellipsoid height (EG) of the local origin, metres. local z = EG - origin_alt_ellipsoid.",
             "default": 0
           },
           "max_radius_m": {
@@ -2277,7 +2375,7 @@
             "default": 50000,
             "gt": 0
           },
-          "terrain_msl_m": {
+          "terrain_ellipsoid_m": {
             "anyOf": [
               {
                 "type": "number"
@@ -2286,7 +2384,7 @@
                 "type": "null"
               }
             ],
-            "title": "Terrain Msl M"
+            "title": "Terrain Ellipsoid M"
           },
           "geoid_separation_m": {
             "anyOf": [
@@ -2337,7 +2435,85 @@
         ],
         "title": "CoordinateSpec"
       },
-      "Dataset": {
+      "Dataset-Input": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Id"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "terrain",
+              "weather",
+              "signal",
+              "noise",
+              "area",
+              "grid",
+              "risk",
+              "corridor"
+            ],
+            "title": "Kind"
+          },
+          "version": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Version"
+          },
+          "valid_from": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Valid From"
+          },
+          "valid_to": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Valid To"
+          },
+          "cells": {
+            "items": {
+              "$ref": "#/components/schemas/FieldCell"
+            },
+            "type": "array",
+            "title": "Cells"
+          },
+          "geometry_wkt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Geometry Wkt"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "id",
+          "kind",
+          "version"
+        ],
+        "title": "Dataset"
+      },
+      "Dataset-Output": {
         "properties": {
           "id": {
             "type": "string",
@@ -2659,7 +2835,122 @@
         ],
         "title": "GridRange"
       },
-      "GridSpec": {
+      "GridSpec-Input": {
+        "properties": {
+          "crs": {
+            "type": "string",
+            "title": "Crs",
+            "default": "LOCAL_AEQD"
+          },
+          "origin": {
+            "prefixItems": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "number"
+              }
+            ],
+            "type": "array",
+            "maxItems": 3,
+            "minItems": 3,
+            "title": "Origin"
+          },
+          "resolution": {
+            "prefixItems": [
+              {
+                "type": "number",
+                "gt": 0
+              },
+              {
+                "type": "number",
+                "gt": 0
+              },
+              {
+                "type": "number",
+                "gt": 0
+              }
+            ],
+            "type": "array",
+            "maxItems": 3,
+            "minItems": 3,
+            "title": "Resolution"
+          },
+          "shape": {
+            "prefixItems": [
+              {
+                "type": "integer",
+                "exclusiveMinimum": 0.0
+              },
+              {
+                "type": "integer",
+                "exclusiveMinimum": 0.0
+              },
+              {
+                "type": "integer",
+                "exclusiveMinimum": 0.0
+              }
+            ],
+            "type": "array",
+            "maxItems": 3,
+            "minItems": 3,
+            "title": "Shape"
+          },
+          "occupied": {
+            "items": {
+              "prefixItems": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "integer"
+                }
+              ],
+              "type": "array",
+              "maxItems": 3,
+              "minItems": 3
+            },
+            "type": "array",
+            "title": "Occupied"
+          },
+          "occupied_ranges": {
+            "items": {
+              "$ref": "#/components/schemas/GridRange"
+            },
+            "type": "array",
+            "title": "Occupied Ranges"
+          },
+          "cells": {
+            "items": {
+              "$ref": "#/components/schemas/GridCell"
+            },
+            "type": "array",
+            "title": "Cells"
+          },
+          "codes": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object",
+            "title": "Codes"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "origin",
+          "resolution",
+          "shape"
+        ],
+        "title": "GridSpec"
+      },
+      "GridSpec-Output": {
         "properties": {
           "crs": {
             "type": "string",
@@ -2812,6 +3103,12 @@
       },
       "HeightCorrection": {
         "properties": {
+          "target_reference": {
+            "type": "string",
+            "const": "EG",
+            "title": "Target Reference",
+            "default": "EG"
+          },
           "reference": {
             "type": "string",
             "enum": [
@@ -2866,7 +3163,8 @@
           "valid_from",
           "valid_to"
         ],
-        "title": "HeightCorrection"
+        "title": "HeightCorrection",
+        "description": "Pressure correction: EG ellipsoid altitude = reported altitude + offset_m."
       },
       "JobError": {
         "properties": {
@@ -3383,9 +3681,36 @@
       },
       "RouteResult": {
         "properties": {
+          "engine_id": {
+            "type": "string",
+            "enum": [
+              "ENG-06",
+              "ENG-07"
+            ],
+            "title": "Engine Id"
+          },
           "task_id": {
             "type": "string",
             "title": "Task Id"
+          },
+          "alt_reference": {
+            "type": "string",
+            "enum": [
+              "EG",
+              "MSL",
+              "AGL",
+              "ELLIPSOID",
+              "QNE",
+              "QNH"
+            ],
+            "title": "Alt Reference"
+          },
+          "coordinate_context": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/JsonValue"
+            },
+            "type": "object",
+            "title": "Coordinate Context"
           },
           "status": {
             "type": "string",
@@ -3505,7 +3830,10 @@
         "additionalProperties": false,
         "type": "object",
         "required": [
+          "engine_id",
           "task_id",
+          "alt_reference",
+          "coordinate_context",
           "status",
           "route_mode",
           "start_wkt",
@@ -3535,7 +3863,7 @@
         ],
         "title": "RouteValidation"
       },
-      "Rule": {
+      "Rule-Input": {
         "properties": {
           "id": {
             "type": "string",
@@ -3573,7 +3901,112 @@
               "$ref": "#/components/schemas/JsonValue"
             },
             "type": "object",
-            "title": "Content"
+            "title": "Content",
+            "description": "Rule parameters. HEIGHT_LAYER defaults to EG metres; WIDTH.width is full width in metres; DIRECTION.directions uses north=0 degrees clockwise; TIME.weekdays uses Sunday=0, Monday=1 through Saturday=6."
+          },
+          "scope": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RuleScope"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Rule application geometry in WGS84/EG. Missing scope applies to the scene. Grid indices require scene.grid geometry metadata."
+          },
+          "resource_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Resource Ids"
+          },
+          "effective_start": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Effective Start"
+          },
+          "effective_end": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Effective End"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "id",
+          "rule_type",
+          "content"
+        ],
+        "title": "Rule"
+      },
+      "Rule-Output": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Id"
+          },
+          "rule_type": {
+            "type": "string",
+            "enum": [
+              "HEIGHT_LAYER",
+              "WIDTH",
+              "DIRECTION",
+              "SPEED",
+              "TIME",
+              "AREA",
+              "CLIMB",
+              "TURN",
+              "SEPARATION",
+              "NO_FLY",
+              "BUILDING",
+              "ZONE",
+              "WEATHER",
+              "SIGNAL",
+              "PRIORITY",
+              "HOVER",
+              "ENDURANCE",
+              "PAYLOAD",
+              "WAYPOINT",
+              "RTL"
+            ],
+            "title": "Rule Type"
+          },
+          "content": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/JsonValue"
+            },
+            "type": "object",
+            "title": "Content",
+            "description": "Rule parameters. HEIGHT_LAYER defaults to EG metres; WIDTH.width is full width in metres; DIRECTION.directions uses north=0 degrees clockwise; TIME.weekdays uses Sunday=0, Monday=1 through Saturday=6."
+          },
+          "scope": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RuleScope"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Rule application geometry in WGS84/EG. Missing scope applies to the scene. Grid indices require scene.grid geometry metadata."
           },
           "resource_ids": {
             "items": {
@@ -3695,8 +4128,47 @@
         ],
         "title": "RuleReport"
       },
-      "Scene": {
+      "RuleScope": {
         "properties": {
+          "grid": {
+            "items": {
+              "$ref": "#/components/schemas/ScopeGrid"
+            },
+            "type": "array",
+            "title": "Grid"
+          },
+          "geom": {
+            "items": {
+              "$ref": "#/components/schemas/ScopeGeometry"
+            },
+            "type": "array",
+            "title": "Geom"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "RuleScope"
+      },
+      "Scene-Input": {
+        "properties": {
+          "scene_type": {
+            "type": "string",
+            "const": "LOW_ALTITUDE",
+            "title": "Scene Type",
+            "default": "LOW_ALTITUDE"
+          },
+          "network_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Network Version",
+            "description": "Upstream airway network version; separate from the compiled scene content version."
+          },
           "coordinates": {
             "$ref": "#/components/schemas/CoordinateSpec"
           },
@@ -3776,14 +4248,14 @@
           },
           "rules": {
             "items": {
-              "$ref": "#/components/schemas/Rule"
+              "$ref": "#/components/schemas/Rule-Input"
             },
             "type": "array",
             "title": "Rules"
           },
           "datasets": {
             "items": {
-              "$ref": "#/components/schemas/Dataset"
+              "$ref": "#/components/schemas/Dataset-Input"
             },
             "type": "array",
             "title": "Datasets"
@@ -3798,7 +4270,145 @@
           "grid": {
             "anyOf": [
               {
-                "$ref": "#/components/schemas/GridSpec"
+                "$ref": "#/components/schemas/GridSpec-Input"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "coordinates",
+          "bounds",
+          "time_origin"
+        ],
+        "title": "Scene"
+      },
+      "Scene-Output": {
+        "properties": {
+          "scene_type": {
+            "type": "string",
+            "const": "LOW_ALTITUDE",
+            "title": "Scene Type",
+            "default": "LOW_ALTITUDE"
+          },
+          "network_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Network Version",
+            "description": "Upstream airway network version; separate from the compiled scene content version."
+          },
+          "coordinates": {
+            "$ref": "#/components/schemas/CoordinateSpec"
+          },
+          "bounds": {
+            "$ref": "#/components/schemas/Bounds3D"
+          },
+          "resolution": {
+            "prefixItems": [
+              {
+                "type": "number",
+                "gt": 0
+              },
+              {
+                "type": "number",
+                "gt": 0
+              },
+              {
+                "type": "number",
+                "gt": 0
+              }
+            ],
+            "type": "array",
+            "maxItems": 3,
+            "minItems": 3,
+            "title": "Resolution",
+            "default": [
+              25,
+              25,
+              10
+            ]
+          },
+          "horizon_s": {
+            "type": "number",
+            "title": "Horizon S",
+            "default": 3600,
+            "gt": 0
+          },
+          "time_origin": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Time Origin"
+          },
+          "airways": {
+            "items": {
+              "$ref": "#/components/schemas/Airway"
+            },
+            "type": "array",
+            "title": "Airways"
+          },
+          "connectors": {
+            "items": {
+              "$ref": "#/components/schemas/Connector"
+            },
+            "type": "array",
+            "title": "Connectors"
+          },
+          "obstacles": {
+            "items": {
+              "$ref": "#/components/schemas/Volume"
+            },
+            "type": "array",
+            "title": "Obstacles"
+          },
+          "dynamic_obstacles": {
+            "items": {
+              "$ref": "#/components/schemas/TimedTrajectory"
+            },
+            "type": "array",
+            "title": "Dynamic Obstacles"
+          },
+          "control_zones": {
+            "items": {
+              "$ref": "#/components/schemas/ControlZone"
+            },
+            "type": "array",
+            "title": "Control Zones"
+          },
+          "rules": {
+            "items": {
+              "$ref": "#/components/schemas/Rule-Output"
+            },
+            "type": "array",
+            "title": "Rules"
+          },
+          "datasets": {
+            "items": {
+              "$ref": "#/components/schemas/Dataset-Output"
+            },
+            "type": "array",
+            "title": "Datasets"
+          },
+          "profiles": {
+            "items": {
+              "$ref": "#/components/schemas/AircraftProfile"
+            },
+            "type": "array",
+            "title": "Profiles"
+          },
+          "grid": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/GridSpec-Output"
               },
               {
                 "type": "null"
@@ -3817,6 +4427,23 @@
       },
       "SceneResponse": {
         "properties": {
+          "network_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Network Version"
+          },
+          "scene_type": {
+            "type": "string",
+            "const": "LOW_ALTITUDE",
+            "title": "Scene Type",
+            "default": "LOW_ALTITUDE"
+          },
           "scene_id": {
             "type": "string",
             "title": "Scene Id"
@@ -3869,7 +4496,112 @@
         ],
         "title": "SceneResponse"
       },
-      "SingleRequest": {
+      "ScopeGeometry": {
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "CONTROL_ZONE",
+              "NO_FLY_ZONE",
+              "ADMIN_DIVISION",
+              "AIRSPACE",
+              "LANDING_SITE"
+            ],
+            "title": "Type"
+          },
+          "geom": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Geom"
+          },
+          "center_point": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Center Point"
+          },
+          "boundary_2d": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Boundary 2D"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "type"
+        ],
+        "title": "ScopeGeometry"
+      },
+      "ScopeGrid": {
+        "properties": {
+          "x": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "X"
+          },
+          "y": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Y"
+          },
+          "z": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Z"
+          },
+          "geometry": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Geometry"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "ScopeGrid"
+      },
+      "SingleRequest-Input": {
         "properties": {
           "scene_id": {
             "anyOf": [
@@ -3885,7 +4617,53 @@
           "scene": {
             "anyOf": [
               {
-                "$ref": "#/components/schemas/Scene"
+                "$ref": "#/components/schemas/Scene-Input"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "task": {
+            "$ref": "#/components/schemas/Task"
+          },
+          "time_budget_s": {
+            "anyOf": [
+              {
+                "type": "number",
+                "gt": 0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Time Budget S"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "task"
+        ],
+        "title": "SingleRequest"
+      },
+      "SingleRequest-Output": {
+        "properties": {
+          "scene_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Scene Id"
+          },
+          "scene": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Scene-Output"
               },
               {
                 "type": "null"
@@ -3917,6 +4695,21 @@
       },
       "Task": {
         "properties": {
+          "engine_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "ENG-06",
+                  "ENG-07"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Engine Id"
+          },
           "id": {
             "type": "string",
             "minLength": 1,
@@ -3938,6 +4731,7 @@
           "alt_reference": {
             "type": "string",
             "enum": [
+              "EG",
               "MSL",
               "AGL",
               "ELLIPSOID",
@@ -4094,6 +4888,7 @@
           "alt_reference": {
             "type": "string",
             "enum": [
+              "EG",
               "MSL",
               "AGL",
               "ELLIPSOID",
@@ -4163,7 +4958,7 @@
           "scene": {
             "anyOf": [
               {
-                "$ref": "#/components/schemas/Scene"
+                "$ref": "#/components/schemas/Scene-Input"
               },
               {
                 "type": "null"
@@ -4334,6 +5129,7 @@
           "alt_reference": {
             "type": "string",
             "enum": [
+              "EG",
               "MSL",
               "AGL",
               "ELLIPSOID",

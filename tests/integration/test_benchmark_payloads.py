@@ -22,12 +22,12 @@ class Response(BytesIO):
 @pytest.fixture
 def small_run(monkeypatch, tmp_path):
     workload = {"scene": {
-        "coordinates": {"origin_lon": 104, "origin_lat": 29, "terrain_msl_m": 0},
+        "coordinates": {"origin_lon": 104, "origin_lat": 29, "terrain_ellipsoid_m": 0},
         "bounds": {"x_min": -500, "x_max": 500, "y_min": -500, "y_max": 500, "z_min": 0, "z_max": 300},
         "time_origin": benchmark.timestamp(0),
         "datasets": [{"id": "terrain", "kind": "terrain", "version": "test-data-1", "cells": [{
             "bounds": {"x_min": -500, "x_max": 500, "y_min": -500, "y_max": 500, "z_min": 0, "z_max": 300},
-            "values": {"elevation_msl_m": 0}}]}]},
+            "values": {"elevation_ellipsoid_m": 0}}]}]},
                 "tasks": [{"id": f"task-{i}", "waypoints": [{"wkt": "POINT Z (1 2 3)"}]} for i in range(10)]}
     result = {"success_count": 10, "failed_count": 0, "conflicts": [], "routes": [
         {"task_id": task["id"], "status": "planned", "trajectory_wkt": "POINT Z (1 2 3)",

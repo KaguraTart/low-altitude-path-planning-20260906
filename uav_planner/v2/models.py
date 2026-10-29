@@ -38,7 +38,7 @@ def _timestamp(value: object) -> object:
 
 
 Timestamp = Annotated[AwareDatetime, BeforeValidator(_timestamp)]
-AltitudeReference = Literal["MSL", "AGL", "ELLIPSOID", "QNE", "QNH"]
+AltitudeReference = Literal["EG", "MSL", "AGL", "ELLIPSOID", "QNE", "QNH"]
 RouteMode = Literal["strict", "prefer", "free"]
 RULE_TYPES = (
     "HEIGHT_LAYER", "WIDTH", "DIRECTION", "SPEED", "TIME", "AREA", "CLIMB",
@@ -137,6 +137,9 @@ class GeographicBounds(StrictModel):
 
 
 class HeightCorrection(StrictModel):
+    """Pressure correction: EG ellipsoid altitude = reported altitude + offset_m."""
+
+    target_reference: Literal["EG"] = "EG"
     reference: Literal["QNE", "QNH"]
     offset_m: Number
     source: StrictStr = Field(min_length=1)
@@ -155,9 +158,9 @@ class HeightCorrection(StrictModel):
 class CoordinateSpec(StrictModel):
     origin_lon: Annotated[Number, Field(ge=-180, le=180)]
     origin_lat: Annotated[Number, Field(ge=-90, le=90)]
-    origin_alt_msl: Number = 0
+    origin_alt_ellipsoid: Number = Field(default=0, description="WGS84 ellipsoid height (EG) of the local origin, metres. local z = EG - origin_alt_ellipsoid.")
     max_radius_m: Positive = 50000
-    terrain_msl_m: Number | None = None
+    terrain_ellipsoid_m: Number | None = None
     geoid_separation_m: Number | None = None
     terrain_source: StrictStr | None = None
     geoid_source: StrictStr | None = None
@@ -233,6 +236,7 @@ class TurnConstraint(StrictModel):
 
 
 class Airway(StrictModel):
+    allowed_profile_ids: list[StrictStr] = Field(default_factory=list)
     id: StrictStr = Field(min_length=1)
     centerLine: GeographicWKT
     widthMeters: Positive
@@ -340,17 +344,98 @@ class ControlZone(StrictModel):
         return self.effective_end
 
 
+class ScopeGrid(StrictModel):
+    x: StrictInt | None = None
+    y: StrictInt | None = None
+    z: StrictInt | None = None
+    geometry: GeographicWKT | None = None
+
+    @model_validator(mode="after")
+    def located(self) -> ScopeGrid:
+        indices = (self.x, self.y, self.z)
+        if self.geometry is not None:
+            if any(i is not None for i in indices):
+                raise ValueError("scope grid uses geometry or x/y/z, not both")
+            geom = from_wkt(self.geometry)
+            if geom.geom_type not in {"Point", "Polygon"} or not geom.has_z:
+                raise ValueError("scope grid geometry requires POINT Z or POLYGON Z")
+        elif any(i is None or i < 0 for i in indices):
+            raise ValueError("scope grid requires nonnegative x, y and z indices")
+        return self
+
+
+class ScopeGeometry(StrictModel):
+    type: Literal["CONTROL_ZONE", "NO_FLY_ZONE", "ADMIN_DIVISION", "AIRSPACE", "LANDING_SITE"]
+    geom: GeographicWKT | None = None
+    center_point: GeographicWKT | None = None
+    boundary_2d: GeographicWKT | None = None
+
+    @model_validator(mode="after")
+    def consistent(self) -> ScopeGeometry:
+        if not any((self.geom, self.center_point, self.boundary_2d)):
+            raise ValueError("scope feature requires a geometry")
+        if self.type != "LANDING_SITE" and not (self.geom or self.boundary_2d):
+            raise ValueError("region scope requires geom or boundary_2d; a center is not a region")
+        if self.geom:
+            if self.type == "ADMIN_DIVISION":
+                raise ValueError("ADMIN_DIVISION uses boundary_2d and center_point")
+            validated_wkt(self.geom, kind="Point" if self.type == "LANDING_SITE" else "Polygon", require_z=True)
+        if self.center_point:
+            if self.type in {"NO_FLY_ZONE", "AIRSPACE"}:
+                raise ValueError("this scope feature does not use center_point")
+            validated_wkt(self.center_point, kind="Point", require_z=self.type != "ADMIN_DIVISION")
+        if self.boundary_2d:
+            geom = from_wkt(self.boundary_2d)
+            if geom.geom_type not in {"Polygon", "MultiPolygon"} or geom.has_z:
+                raise ValueError("boundary_2d requires a two-dimensional POLYGON or MULTIPOLYGON")
+        return self
+
+
+class RuleScope(StrictModel):
+    grid: list[ScopeGrid] = Field(default_factory=list)
+    geom: list[ScopeGeometry] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def nonempty(self) -> RuleScope:
+        if not self.grid and not self.geom:
+            raise ValueError("scope requires grid or geom entries")
+        return self
+
+
 class Rule(StrictModel):
     id: StrictStr = Field(min_length=1)
-    rule_type: RuleType
-    content: dict[StrictStr, JsonValue]
+    rule_type: RuleType = Field(validation_alias=AliasChoices("rule_type", "type"))
+    content: dict[StrictStr, JsonValue] = Field(validation_alias=AliasChoices("content", "constraints"), description="Rule parameters. HEIGHT_LAYER defaults to EG metres; WIDTH.width is full width in metres; DIRECTION.directions uses north=0 degrees clockwise; TIME.weekdays uses Sunday=0, Monday=1 through Saturday=6.")
+    scope: RuleScope | None = Field(default=None, description="Rule application geometry in WGS84/EG. Missing scope applies to the scene. Grid indices require scene.grid geometry metadata.")
     resource_ids: list[StrictStr] = Field(default_factory=list)
     effective_start: Timestamp | None = None
     effective_end: Timestamp | None = None
 
+    @field_validator("effective_start", "effective_end", mode="before")
+    @classmethod
+    def platform_timestamp(cls, value: object) -> object:
+        if value == "":
+            return None
+        if isinstance(value, str):
+            try:
+                parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+            except ValueError:
+                return value
+            if parsed.tzinfo is None:
+                from zoneinfo import ZoneInfo
+                return parsed.replace(tzinfo=ZoneInfo("Asia/Shanghai"))
+        return value
+
     @model_validator(mode="after")
     def consistent(self) -> Rule:
         _ordered_times(self.effective_start, self.effective_end)
+        if self.scope:
+            grid_types = {"BUILDING", "WEATHER", "SIGNAL", "WIDTH", "PRIORITY"}
+            geom_types = {"NO_FLY", "ZONE", "AREA", "PRIORITY"}
+            if self.scope.grid and self.rule_type not in grid_types:
+                raise ValueError("scope.grid is not applicable to this rule type")
+            if self.scope.geom and self.rule_type not in geom_types:
+                raise ValueError("scope.geom is not applicable to this rule type")
         return self
 
 
@@ -450,6 +535,8 @@ class TimedTrajectory(StrictModel):
 
 
 class Scene(StrictModel):
+    scene_type: Literal["LOW_ALTITUDE"] = "LOW_ALTITUDE"
+    network_version: StrictStr | None = Field(default=None, description="Upstream airway network version; separate from the compiled scene content version.")
     coordinates: CoordinateSpec
     bounds: Bounds3D
     resolution: tuple[Positive, Positive, Positive] = (25, 25, 10)
@@ -519,6 +606,7 @@ class AircraftState(StrictModel):
 
 
 class Task(StrictModel):
+    engine_id: Literal["ENG-06", "ENG-07"] | None = None
     id: StrictStr = Field(min_length=1)
     start_wkt: GeographicWKT
     goal_wkt: GeographicWKT
@@ -544,6 +632,11 @@ class Task(StrictModel):
 
     @model_validator(mode="after")
     def consistent(self) -> Task:
+        expected = "ENG-07" if self.route_mode == "free" else "ENG-06"
+        if self.engine_id is None:
+            self.engine_id = expected
+        elif self.engine_id != expected:
+            raise ValueError("ENG-06 uses strict/prefer; ENG-07 uses free")
         _ordered_times(self.earliest_arrival, self.latest_arrival, equal=True)
         if self.latest_arrival is not None and self.latest_arrival < self.departure_time:
             raise ValueError("latest_arrival precedes departure_time")
@@ -636,7 +729,10 @@ class RuleReport(StrictModel):
 
 
 class RouteResult(StrictModel):
+    engine_id: Literal["ENG-06", "ENG-07"]
     task_id: StrictStr
+    alt_reference: AltitudeReference
+    coordinate_context: dict[StrictStr, JsonValue]
     status: Literal["planned", "failed", "timeout"]
     code: StrictStr | None = None
     message: StrictStr = ""

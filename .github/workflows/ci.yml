@@ -26,7 +26,7 @@ jobs:
       - name: 保存冻结输入及提交版本
         run: |
           mkdir -p /tmp/ci-v2/input
-          cp -R input/v2_benchmarks /tmp/ci-v2/input/v2_benchmarks
+          cp -R input/engine_contract_20261029 /tmp/ci-v2/input/engine_contract_20261029
           printf '{"git_sha":"%s","run_id":"%s"}\n' "$GITHUB_SHA" "$GITHUB_RUN_ID" > /tmp/ci-v2/context.json
 
       - uses: actions/setup-python@v5
@@ -59,7 +59,7 @@ jobs:
           curl --fail --silent --show-error http://127.0.0.1:8000/api/v2/health > /tmp/ci-v2/health.json
           python tools/smoke_v2.py --base-url http://127.0.0.1:8000 --expected-git-sha "$GITHUB_SHA" --archive-dir /tmp/ci-v2/output/http-smoke > /tmp/ci-v2/smoke.json
           python -S test_api/run_tests.py --base-url http://127.0.0.1:8000 --examples-only --output /tmp/ci-v2/output/test-api > /tmp/ci-v2/test-api.log
-          python tools/benchmark_v2.py --base-url http://127.0.0.1:8000 --scales 10 100 --repeats 1 --functional-only --input-directory /tmp/ci-v2/input/v2_benchmarks --output /tmp/ci-v2/output/benchmarks > /tmp/ci-v2/benchmark.log
+          python tools/benchmark_v2.py --base-url http://127.0.0.1:8000 --scales 10 100 --repeats 1 --functional-only --input-directory /tmp/ci-v2/input/engine_contract_20261029 --output /tmp/ci-v2/output/benchmarks > /tmp/ci-v2/benchmark.log
 
       - uses: actions/upload-artifact@v4
         if: always()
@@ -96,7 +96,7 @@ jobs:
       - name: 保存完整输入及提交版本
         run: |
           mkdir -p /tmp/ci-v2-large/input
-          cp -R input/v2_benchmarks /tmp/ci-v2-large/input/v2_benchmarks
+          cp -R input/engine_contract_20261029 /tmp/ci-v2-large/input/engine_contract_20261029
           printf '{"git_sha":"%s","run_id":"%s"}\n' "$GITHUB_SHA" "$GITHUB_RUN_ID" > /tmp/ci-v2-large/context.json
       - uses: actions/setup-python@v5
         with:
@@ -114,7 +114,7 @@ jobs:
             sleep 1
           done
           curl --fail --silent --show-error http://127.0.0.1:8000/api/v2/health > /tmp/ci-v2-large/health.json
-          python tools/benchmark_v2.py --base-url http://127.0.0.1:8000 --scales 1000 --repeats 1 --functional-only --input-directory /tmp/ci-v2-large/input/v2_benchmarks --output /tmp/ci-v2-large/output/benchmarks > /tmp/ci-v2-large/benchmark.log
+          python tools/benchmark_v2.py --base-url http://127.0.0.1:8000 --scales 1000 --repeats 1 --functional-only --input-directory /tmp/ci-v2-large/input/engine_contract_20261029 --output /tmp/ci-v2-large/output/benchmarks > /tmp/ci-v2-large/benchmark.log
       - uses: actions/upload-artifact@v4
         if: always()
         with:

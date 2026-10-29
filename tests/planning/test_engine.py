@@ -45,7 +45,7 @@ def test_midsegment_obstacle_blocks_straight_line_and_is_not_ignored():
     request=example_request()
     frame=CoordinateFrame(request["scene"]["coordinates"])
     request["scene"]["obstacles"]=[{"id":"wall","geometry_wkt":frame.to_wgs84(Polygon([(600,0),(700,0),(700,300),(600,300)])),
-        "min_altitude":0,"max_altitude":300,"alt_reference":"MSL"}]
+        "min_altitude":0,"max_altitude":300,"alt_reference":"EG"}]
     result=plan_single_v2(**request)
     assert result["status"]=="failed",result
 
@@ -116,8 +116,8 @@ def test_mutually_conflicting_external_tracks_are_both_reserved():
     request=example_request();frame=CoordinateFrame(request["scene"]["coordinates"])
     from shapely.geometry import LineString
     request["scene"]["dynamic_obstacles"]=[
-        {"id":"first","trajectory_wkt":frame.to_wgs84(LineString([(650,250,80),(650,100,80)])),"vertex_times_s":[0,200],"alt_reference":"MSL"},
-        {"id":"second","trajectory_wkt":frame.to_wgs84(LineString([(650,250,80),(650,100,80),(650,100,80)])),"vertex_times_s":[0,1,300],"alt_reference":"MSL"}]
+        {"id":"first","trajectory_wkt":frame.to_wgs84(LineString([(650,250,80),(650,100,80)])),"vertex_times_s":[0,200],"alt_reference":"EG"},
+        {"id":"second","trajectory_wkt":frame.to_wgs84(LineString([(650,250,80),(650,100,80),(650,100,80)])),"vertex_times_s":[0,1,300],"alt_reference":"EG"}]
     result=plan_single_v2(**request)
     if result["status"]=="planned":
         assert result["vertex_times_s"][0]>200
@@ -139,10 +139,10 @@ def test_strict_route_can_adjust_reference_centerline_altitude():
     from shapely.geometry import box
     request=example_request();frame=CoordinateFrame(request["scene"]["coordinates"])
     request["scene"]["obstacles"]=[{"id":"full-width-wall","geometry_wkt":frame.to_wgs84(box(400,0,800,200)),
-        "min_altitude":50,"max_altitude":100,"alt_reference":"MSL"}]
+        "min_altitude":50,"max_altitude":100,"alt_reference":"EG"}]
     result=plan_single_v2(**request)
     assert result["status"]=="planned",result
-    rows=frame.to_local(result["trajectory_wkt"],"MSL").coords
+    rows=frame.to_local(result["trajectory_wkt"],"EG").coords
     assert max(p[2] for p in rows)>105.3
     check=validate_route_v2(**request,trajectory_wkt=result["trajectory_wkt"],vertex_times_s=result["vertex_times_s"],
                             motion_segments=result["motion_segments"])

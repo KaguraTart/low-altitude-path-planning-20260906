@@ -19,7 +19,7 @@ def setup():
     def airway(id,x0,x1):
         grid={"minLon":104.76,"maxLon":104.80,"minLat":29.32,"maxLat":29.34,"minAlt":0,"maxAlt":300}
         return {"id":id,"centerLine":frame.to_wgs84(LineString([(x0,100,80),(x1,100,80)])),
-            "widthMeters":100,"minAltitude":50,"maxAltitude":150,"altReference":"MSL",
+            "widthMeters":100,"minAltitude":50,"maxAltitude":150,"altReference":"EG",
             "startGrid":grid,"endGrid":grid}
     value["scene"]["airways"]=[airway("a",100,650),airway("b",600,1200)]
     value["task"]["aircraft"]={"radius_m":.01,"height_m":.01,"safety_margin_m":0}
@@ -31,7 +31,7 @@ def test_overlapping_collinear_airways_switch_only_when_previous_coverage_ends()
     assert result["status"]=="planned",result
     events=[k for k in result["keypoints"] if "AIRWAY_SWITCH" in k["types"]]
     assert len(events)==1
-    point=np.asarray(frame.to_local(events[0]["wkt"],"MSL").coords[0])
+    point=np.asarray(frame.to_local(events[0]["wkt"],"EG").coords[0])
     compiled=CompiledScene(value["scene"]);a=compiled.resources["a"]
     usable=compiled._buffered(a,-.01)
     assert point[0]==pytest.approx(usable.bounds[2],abs=1e-5)
@@ -52,7 +52,7 @@ def test_switch_timestamp_uses_acceleration_law_and_grid_codes():
     result=plan_single_v2(**value)
     assert result["status"]=="planned",result
     event=next(k for k in result["keypoints"] if "AIRWAY_SWITCH" in k["types"])
-    point=np.asarray(frame.to_local(event["wkt"],"MSL").coords[0])
+    point=np.asarray(frame.to_local(event["wkt"],"EG").coords[0])
     compiled=CompiledScene(value["scene"])
     expected=compiled._buffered(compiled.resources["a"],-.01).bounds[2]
     assert point[0]==pytest.approx(expected,abs=1e-6)
@@ -71,7 +71,7 @@ def test_airway_validity_boundary_triggers_handoff_at_actual_position():
     assert result["status"]=="planned",result
     event=next(k for k in result["keypoints"] if "AIRWAY_SWITCH" in k["types"])
     assert event["time_s"]==pytest.approx(50)
-    point=frame.to_local(event["wkt"],"MSL").coords[0]
+    point=frame.to_local(event["wkt"],"EG").coords[0]
     assert point[0]==pytest.approx(391,abs=1e-5)
 
 
@@ -129,7 +129,7 @@ def test_arc_switch_is_on_actual_circle_and_preserves_exported_motion():
     before=motion.times.copy();result=_result(compiled,compiled.model,task,profile,motion)
     events=[k for k in result["keypoints"] if "AIRWAY_SWITCH" in k["types"]]
     assert events
-    event=events[0];point=np.asarray(frame.to_local(event["wkt"],"MSL").coords[0])
+    event=events[0];point=np.asarray(frame.to_local(event["wkt"],"EG").coords[0])
     arc=next(p for p in motion.primitives if p.kind=="arc")
     assert np.linalg.norm(point[:2]-arc.center[:2])==pytest.approx(arc.radius,abs=1e-6)
     assert point[1]==pytest.approx(109.99,abs=1e-5)

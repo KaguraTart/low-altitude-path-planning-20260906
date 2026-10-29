@@ -23,7 +23,7 @@ def setup(content, *, origin="2026-10-16T09:00:00+08:00", duration=60, rules=Non
     frame=CoordinateFrame(scene["coordinates"])
     from shapely.geometry import Point
     task=Task.model_validate({"id":"task","start_wkt":frame.to_wgs84(Point(100,100,80)),
-        "goal_wkt":frame.to_wgs84(Point(200,100,80)),"departure_time":at,"alt_reference":"MSL","route_mode":"free"})
+        "goal_wkt":frame.to_wgs84(Point(200,100,80)),"departure_time":at,"alt_reference":"EG","route_mode":"free"})
     motion=SimpleNamespace(points=np.asarray([[100,100,80],[200,100,80]]),times=np.asarray([125,125+duration]))
     return compiled,task,motion
 
@@ -96,7 +96,7 @@ def test_selected_rules_intersect_and_unselected_rules_do_not_apply():
 def test_scoped_rule_is_skipped_only_when_xy_candidate_misses_scope():
     frame=CoordinateFrame({"origin_lon":104.77,"origin_lat":29.33})
     obstacle={"id":"scope","geometry_wkt":frame.to_wgs84(box(500,500,600,600)),
-        "min_altitude":0,"max_altitude":300,"alt_reference":"MSL"}
+        "min_altitude":0,"max_altitude":300,"alt_reference":"EG"}
     rules=[{"id":"scoped","rule_type":"TIME","resource_ids":["scope"],"content":{"earliestDeparture":"09:05"}}]
     compiled,task,motion=setup({},rules=rules,obstacles=[obstacle])
     assert departure_windows(compiled,task,motion,0,600)==[(0,600)]

@@ -31,7 +31,7 @@ def validate(value, route, **updates):
 def test_timed_thin_wall_is_checked_on_accelerating_motion():
     value,frame=request()
     value["scene"]["obstacles"]=[{"id":"thin-wall","geometry_wkt":frame.to_wgs84(box(104.7,90,105.1,110)),
-        "min_altitude":70,"max_altitude":90,"alt_reference":"MSL","valid_from":at(value,2.15),"valid_to":at(value,2.25)}]
+        "min_altitude":70,"max_altitude":90,"alt_reference":"EG","valid_from":at(value,2.15),"valid_to":at(value,2.25)}]
     route=plan_single_v2(**value)
     assert route["status"]!="planned",route
 
@@ -94,7 +94,7 @@ def test_rtl_home_uses_state_datum_and_rtl_transit_is_checked():
     value["scene"]["rules"]=[{"id":"rtl","rule_type":"RTL","content":{
         "rtlAltitude":100,"rtlOnLowBattery":True,"lowBatteryPercent":20}}]
     value["task"]["state"]={"at":at(value,0),"battery_percent":10,"remaining_flight_time_s":1000,
-        "remaining_range_m":5000,"home_wkt":frame.to_wgs84(Point(500,100,180)),"alt_reference":"ELLIPSOID"}
+        "remaining_range_m":5000,"home_wkt":frame.to_wgs84(Point(500,100,80)),"alt_reference":"ELLIPSOID"}
     route=plan_single_v2(**value)
     assert route["status"]=="planned",route
     assert from_wkt(route["goal_wkt"]).z==pytest.approx(80)
@@ -170,7 +170,7 @@ def test_arc_wkt_must_keep_the_certified_spatial_approximation():
 def test_dynamic_clearance_combines_obstacle_separation_and_aircraft_size():
     value,frame=request();value["task"].pop("aircraft")
     value["scene"]["dynamic_obstacles"]=[{"id":"wide","trajectory_wkt":frame.to_wgs84(
-        LineString([(500,122,80),(500.001,122,80)])),"vertex_times_s":[0,300],"alt_reference":"MSL",
+        LineString([(500,122,80),(500.001,122,80)])),"vertex_times_s":[0,300],"alt_reference":"EG",
         "horizontal_separation_m":20}]
     route=plan_single_v2(**value)
     if route["status"]=="planned":

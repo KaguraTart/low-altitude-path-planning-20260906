@@ -6,7 +6,7 @@ neither a thin obstacle nor a short-lived restriction can hide between samples.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from collections import OrderedDict
 from datetime import datetime, timedelta
 from math import acos, atan2, ceil, degrees, isfinite, pi, sin
@@ -16,7 +16,7 @@ import numpy as np
 from shapely import force_2d, from_wkt, intersects_xy
 from shapely.geometry import LineString, Point, box
 from shapely.geometry.base import BaseGeometry
-from shapely.ops import unary_union
+from shapely.ops import unary_union, substring
 from shapely.prepared import prep
 from shapely.strtree import STRtree
 
@@ -84,7 +84,7 @@ class PreparedVolume:
     geometry: BaseGeometry
     min_altitude: float
     max_altitude: float
-    alt_reference: str = "MSL"
+    alt_reference: str = "EG"
     buffer_m: float = 0
     valid_from_s: float = -float("inf")
     valid_to_s: float = float("inf")
@@ -153,8 +153,8 @@ class CompiledScene:
         self.bounds = self.model.bounds
         self.resolution = self.model.resolution
         self.horizon_s = self.model.horizon_s
-        self.origin_alt_msl = self.model.coordinates.origin_alt_msl
-        self.terrain_constant = self.model.coordinates.terrain_msl_m
+        self.origin_alt_ellipsoid = self.model.coordinates.origin_alt_ellipsoid
+        self.terrain_constant = self.model.coordinates.terrain_ellipsoid_m
         self.warnings: list[str] = []
         self.resources: dict[str, Any] = {}
         self.airways: list[PreparedAirway] = []
@@ -204,6 +204,8 @@ class CompiledScene:
         self._max_obstacle_buffer = max((v.buffer_m for v in self.obstacles + self.grid_volumes), default=0)
         self._max_zone_buffer = max((v.buffer_m for v in self.zones), default=0)
         self.corridor = unary_union([a.geometry for a in self.airways if a.status == "ACTIVE"])
+        from .scopes import compile_scopes
+        self.rule_scopes = compile_scopes(self)
         self.rules = RuleSet(self, self.model.rules)
 
     @staticmethod
@@ -225,10 +227,10 @@ class CompiledScene:
     def _footprint(self, wkt: str) -> BaseGeometry:
         # Footprint Z is extraneous: the explicit vertical datum/limits are authoritative.
         geographic = force_2d(from_wkt(wkt))
-        return self.frame.to_local(geographic.wkt, "MSL", self.time_origin)
+        return self.frame.to_local(geographic.wkt, "EG", self.time_origin)
 
     def _volume_args(self, item: Any, geometry: BaseGeometry, kind: str) -> dict:
-        reference = get(item, "alt_reference", "MSL")
+        reference = get(item, "alt_reference", "EG")
         lo, hi = get(item, "min_altitude"), get(item, "max_altitude")
         # AGL varies by terrain cell and is clipped later against its exact region.
         if reference not in {"AGL", "QNE", "QNH"}:
@@ -254,12 +256,12 @@ class CompiledScene:
                     lo, hi = bounds.z_min, bounds.z_max
                 else:
                     geom = self._footprint(item.geometry_wkt)
-                    lo = -float("inf") if item.min_altitude is None else item.min_altitude - self.origin_alt_msl
-                    hi = float("inf") if item.max_altitude is None else item.max_altitude - self.origin_alt_msl
+                    lo = -float("inf") if item.min_altitude is None else item.min_altitude - self.origin_alt_ellipsoid
+                    hi = float("inf") if item.max_altitude is None else item.max_altitude - self.origin_alt_ellipsoid
                 if not isinstance(item.values, dict):
                     invalid("Field values must be an object", dataset_id=dataset.id)
                 allowed_keys = {
-                    "terrain": {"elevation_msl_m", "terrain_msl_m", "nodata"},
+                    "terrain": {"elevation_ellipsoid_m", "terrain_ellipsoid_m", "nodata"},
                     "weather": {"wind_speed_mps", "windSpeed", "precipitation", "precipitation_mm_h", "icing", "nodata"},
                     "signal": {"bands", "signal_strength_dbm", "nodata"},
                     "noise": {"noise_db", "nodata"}, "risk": {"risk", "nodata"},
@@ -272,8 +274,8 @@ class CompiledScene:
                     invalid("Unknown field dataset values", dataset_id=dataset.id, fields=sorted(unknown))
                 if "nodata" in item.values and not isinstance(item.values["nodata"], bool):
                     invalid("Dataset nodata flag must be boolean", dataset_id=dataset.id)
-                if dataset.kind == "terrain" and not item.values.get("nodata", False) and not _finite(item.values.get("elevation_msl_m", item.values.get("terrain_msl_m"))):
-                    invalid("Terrain cell requires a finite elevation_msl_m", dataset_id=dataset.id)
+                if dataset.kind == "terrain" and not item.values.get("nodata", False) and not _finite(item.values.get("elevation_ellipsoid_m", item.values.get("terrain_ellipsoid_m"))):
+                    invalid("Terrain cell requires a finite elevation_ellipsoid_m", dataset_id=dataset.id)
                 cells.append(PreparedCell(geom, lo, hi, item.values,
                                           self._seconds(get(item, "valid_from"), -float("inf")),
                                           self._seconds(get(item, "valid_to"), float("inf"))))
@@ -315,11 +317,12 @@ class CompiledScene:
         if key in self._resource_selection_cache:
             return self._resource_selection_cache[key]
         refs = set(map(str, get(rule, "resource_ids", [])))
-        candidates = self.obstacles if kind == "BUILDING" else self.zones
+        scoped = self.rule_scopes.get(str(get(rule, "id")), [])
+        candidates = scoped or (self.obstacles + self.grid_volumes if kind == "BUILDING" else self.zones)
         if refs:
             candidates = [r for r in candidates if r.id in refs]
         levels = get(rule, "content", {}).get("zoneLevels") if kind == "ZONE" else None
-        result = [r for r in candidates if not levels or str(get(r.source, "level")) in set(map(str, levels))]
+        result = [r for r in candidates if r.kind == "rule_scope" or not levels or str(get(r.source, "level")) in set(map(str, levels))]
         self._resource_selection_cache[key] = result
         return result
 
@@ -359,7 +362,7 @@ class CompiledScene:
                 invalid("Pressure altitude resource has missing correction coverage at the requested location/time", resource_id=volume.id, reference=volume.alt_reference)
             for a, b, offset in datum:
                 overlap = [(max(a, c), min(b, d)) for c, d in intervals if max(a, c) <= min(b, d) + EPS]
-                output.extend(_clip_scalar(overlap, p0[2], p1[2], lo + offset - self.origin_alt_msl, hi + offset - self.origin_alt_msl))
+                output.extend(_clip_scalar(overlap, p0[2], p1[2], lo + offset - self.origin_alt_ellipsoid, hi + offset - self.origin_alt_ellipsoid))
             return _merge(output)
         if volume.alt_reference != "AGL":
             return _clip_scalar(intervals, p0[2], p1[2], lo, hi)
@@ -368,7 +371,7 @@ class CompiledScene:
         output = []
         for a, b, elevation in terrain_parts:
             overlap = [(max(a, c), min(b, d)) for c, d in intervals if max(a, c) <= min(b, d) + EPS]
-            output.extend(_clip_scalar(overlap, p0[2], p1[2], lo + elevation - self.origin_alt_msl, hi + elevation - self.origin_alt_msl))
+            output.extend(_clip_scalar(overlap, p0[2], p1[2], lo + elevation - self.origin_alt_ellipsoid, hi + elevation - self.origin_alt_ellipsoid))
         return _merge(output)
 
     def terrain_parts(self, p0: np.ndarray, p1: np.ndarray, t0: float, t1: float) -> list[tuple[float, float, float]]:
@@ -381,7 +384,7 @@ class CompiledScene:
             if t1 < ds.valid_from_s or t0 > ds.valid_to_s:
                 continue
             for cell in self._query(ds.tree, ds.cells, p0, p1):
-                elevation = cell.values.get("elevation_msl_m", cell.values.get("terrain_msl_m"))
+                elevation = cell.values.get("elevation_ellipsoid_m", cell.values.get("terrain_ellipsoid_m"))
                 parts = _geometry_intervals(cell.geometry, p0, p1)
                 parts = _clip_scalar(parts, t0, t1, max(ds.valid_from_s, cell.valid_from_s), min(ds.valid_to_s, cell.valid_to_s))
                 if cell.values.get("nodata", False) or not _finite(elevation):
@@ -418,7 +421,7 @@ class CompiledScene:
         return result
 
     def _terrain_at_geographic(self, lon: float, lat: float, at: datetime | None) -> float | None:
-        point = self.frame.to_local(Point(lon, lat).wkt, "MSL", at)
+        point = self.frame.to_local(Point(lon, lat).wkt, "EG", at)
         t = self._seconds(at, 0)
         xyz = np.array([point.x, point.y, 0.0])
         elevations = [v for _, _, v in self.terrain_parts(xyz, xyz, t, t)]
@@ -429,6 +432,10 @@ class CompiledScene:
         if active is None:
             return []
         temporal = _clip_scalar([(0, 1)], t0, t1, active[0], active[1])
+        scopes = self.rule_scopes.get(str(get(rule, "id")), [])
+        if scopes and get(rule, "rule_type") not in {"NO_FLY", "ZONE", "BUILDING"}:
+            spatial = [part for volume in scopes for part in self.volume_intervals(volume, p0, p1, t0, t1)]
+            temporal = _merge([(max(a, c), min(b, d)) for a, b in temporal for c, d in spatial if max(a, c) <= min(b, d) + EPS])
         refs = list(map(str, get(rule, "resource_ids", [])))
         kind = get(rule, "rule_type")
         # Dataset and avoidance references describe forbidden/required fields, not rule applicability.
@@ -448,6 +455,10 @@ class CompiledScene:
         if rid in self._area_cache:
             return self._area_cache[rid]
         content = get(rule, "content", {})
+        if content.get("scope") in {"BBOX", "WKT"}:
+            geometry = box(content["minLon"], content["minLat"], content["maxLon"], content["maxLat"]).wkt if content["scope"] == "BBOX" else content["areaWkt"]
+            self._area_cache[rid] = [self._footprint(geometry)]
+            return self._area_cache[rid]
         refs = set(map(str, get(rule, "resource_ids", []))) | set(map(str, content.get("zoneIds", [])))
         output = [self.resources[ref].geometry for ref in refs if ref in self.resources]
         missing = refs - self.resources.keys()
@@ -488,7 +499,7 @@ class CompiledScene:
 
     def area_allowed(self, rule: Any, p0: np.ndarray, p1: np.ndarray, parts: list, profile: Any, t0: float = 0, t1: float = 0) -> bool:
         margin, vertical = self.clearance(profile)
-        include = get(rule, "content")["scope"] == "INCLUDE"
+        include = get(rule, "content")["scope"] != "EXCLUDE"
         content = get(rule, "content")
         refs = set(map(str, get(rule, "resource_ids", []))) | set(map(str, content.get("zoneIds", [])))
         codes = set(content.get("adminCodes", [])) | set(content.get("gridCodes", []))
@@ -545,13 +556,13 @@ class CompiledScene:
     def height_part_allowed(self, p0: np.ndarray, p1: np.ndarray, t0: float, t1: float, content: dict) -> bool:
         lo = content.get("minAltitude", content.get("minHeight", -float("inf")))
         hi = content.get("maxAltitude", content.get("maxHeight", float("inf")))
-        reference = content.get("altDatum", "MSL")
+        reference = content.get("altDatum", "EG")
         if reference == "AGL":
             parts = self.terrain_parts(p0, p1, t0, t1)
             if not _covers([(a, b) for a, b, _ in parts]):
                 return False
             for a, b, terrain in parts:
-                heights = np.array([p0[2] + a * (p1[2] - p0[2]), p0[2] + b * (p1[2] - p0[2])]) + self.origin_alt_msl - terrain
+                heights = np.array([p0[2] + a * (p1[2] - p0[2]), p0[2] + b * (p1[2] - p0[2])]) + self.origin_alt_ellipsoid - terrain
                 if np.min(heights) < lo - EPS or np.max(heights) > hi + EPS:
                     return False
         elif reference in {"QNE", "QNH"}:
@@ -559,16 +570,16 @@ class CompiledScene:
             if not _covers([(a, b) for a, b, _ in parts]):
                 return False
             for a, b, offset in parts:
-                heights = np.array([p0[2] + a * (p1[2] - p0[2]), p0[2] + b * (p1[2] - p0[2])]) + self.origin_alt_msl - offset
+                heights = np.array([p0[2] + a * (p1[2] - p0[2]), p0[2] + b * (p1[2] - p0[2])]) + self.origin_alt_ellipsoid - offset
                 if np.min(heights) < lo - EPS or np.max(heights) > hi + EPS:
                     return False
-        elif reference == "MSL":
-            if min(p0[2], p1[2]) + self.origin_alt_msl < lo - EPS or max(p0[2], p1[2]) + self.origin_alt_msl > hi + EPS:
+        elif reference == "EG":
+            if min(p0[2], p1[2]) + self.origin_alt_ellipsoid < lo - EPS or max(p0[2], p1[2]) + self.origin_alt_ellipsoid > hi + EPS:
                 return False
         else:
             for p, t in ((p0, t0), (p1, t1)):
                 geographic = from_wkt(self.frame.to_wgs84(Point(p)))
-                height = self.frame.altitude_from_msl(float(p[2]) + self.origin_alt_msl, reference, geographic.x, geographic.y, self.time_origin + timedelta(seconds=float(t)))
+                height = self.frame.altitude_from_ellipsoid(float(p[2]) + self.origin_alt_ellipsoid, reference, geographic.x, geographic.y, self.time_origin + timedelta(seconds=float(t)))
                 if not lo - EPS <= height <= hi + EPS:
                     return False
         step = content.get("layerStep")
@@ -577,14 +588,14 @@ class CompiledScene:
             # but a level leg must use a registered layer anchored at its lower bound.
             if abs(p1[2] - p0[2]) <= EPS:
                 anchor = content.get("minHeight", content.get("minAltitude", 0))
-                height = p0[2] + self.origin_alt_msl
+                height = p0[2] + self.origin_alt_ellipsoid
                 if reference == "AGL":
                     layer_heights = [height - terrain for _, _, terrain in self.terrain_parts(p0, p1, t0, t1)]
                 elif reference in {"QNE", "QNH"}:
                     layer_heights = [height - offset for _, _, offset in self.datum_parts(reference, p0, p1, t0, t1)]
-                elif reference == "ELLIPSOID":
+                elif reference == "MSL":
                     # The bounds check above already verifies the declared geoid.
-                    layer_heights = [height + self.model.coordinates.geoid_separation_m]
+                    layer_heights = [height - self.model.coordinates.geoid_separation_m]
                 else:
                     layer_heights = [height]
                 return all(abs((value - anchor) / step - round((value - anchor) / step)) < 1e-5 for value in layer_heights)
@@ -628,7 +639,8 @@ class CompiledScene:
             if len(zi):
                 target[np.ix_(xi, yi, zi)] |= mask[:, :, None]
 
-        for volume in self.obstacles + self.zones + self.grid_volumes:
+        restricted_airways = [a for a in self.airways if get(task, "route_mode") != "free" and a.status == "ACTIVE" and a.source.allowed_profile_ids and get(profile, "id") not in a.source.allowed_profile_ids]
+        for volume in self.obstacles + self.zones + self.grid_volumes + restricted_airways:
             if not volume.valid_from_s <= time_s <= volume.valid_to_s:
                 continue
             geom = self._buffered(volume, margin + volume.buffer_m + half_horizontal)
@@ -636,14 +648,14 @@ class CompiledScene:
                 if self.terrain_constant is not None:
                     terrain_regions = [(geom, self.terrain_constant)]
                 else:
-                    terrain_regions = [(geom.intersection(c.geometry), float(c.values.get("elevation_msl_m", c.values.get("terrain_msl_m")))) for d in self.datasets_for(None, "terrain") if d.valid_from_s <= time_s <= d.valid_to_s for c in d.cells if _finite(c.values.get("elevation_msl_m", c.values.get("terrain_msl_m"))) and c.valid_from_s <= time_s <= c.valid_to_s]
+                    terrain_regions = [(geom.intersection(c.geometry), float(c.values.get("elevation_ellipsoid_m", c.values.get("terrain_ellipsoid_m")))) for d in self.datasets_for(None, "terrain") if d.valid_from_s <= time_s <= d.valid_to_s for c in d.cells if _finite(c.values.get("elevation_ellipsoid_m", c.values.get("terrain_ellipsoid_m"))) and c.valid_from_s <= time_s <= c.valid_to_s]
                 for region, elevation in terrain_regions:
-                    raster(region, volume.min_altitude + elevation - self.origin_alt_msl - vertical - half_vertical, volume.max_altitude + elevation - self.origin_alt_msl + vertical + half_vertical)
+                    raster(region, volume.min_altitude + elevation - self.origin_alt_ellipsoid - vertical - half_vertical, volume.max_altitude + elevation - self.origin_alt_ellipsoid + vertical + half_vertical)
             elif volume.alt_reference in {"QNE", "QNH"}:
                 for correction in self.model.coordinates.height_corrections:
                     if correction.reference == volume.alt_reference and self._seconds(correction.valid_from, 0) <= time_s <= self._seconds(correction.valid_to, 0):
                         region = geom.intersection(self._footprint(correction.geometry_wkt)) if correction.geometry_wkt else geom
-                        raster(region, volume.min_altitude + correction.offset_m - self.origin_alt_msl - vertical - half_vertical, volume.max_altitude + correction.offset_m - self.origin_alt_msl + vertical + half_vertical)
+                        raster(region, volume.min_altitude + correction.offset_m - self.origin_alt_ellipsoid - vertical - half_vertical, volume.max_altitude + correction.offset_m - self.origin_alt_ellipsoid + vertical + half_vertical)
             else:
                 raster(geom, volume.min_altitude - vertical - half_vertical, volume.max_altitude + vertical + half_vertical)
         # Dataset fields must be present and safe in the full node-centered cell.
@@ -652,15 +664,34 @@ class CompiledScene:
                 continue
             kind = get(rule, "rule_type")
             c = get(rule, "content")
+            scope_mask = None
+            scopes = self.rule_scopes.get(str(get(rule, "id")), [])
+            if scopes:
+                scope_mask = np.zeros_like(blocked)
+                for volume in scopes:
+                    raster(volume.geometry.buffer(margin + half_horizontal), volume.min_altitude - vertical - half_vertical, volume.max_altitude + vertical + half_vertical, scope_mask)
+            if kind in {"NO_FLY", "ZONE", "BUILDING"}:
+                for volume in self.volumes_for(rule, kind):
+                    if not volume.valid_from_s <= time_s <= volume.valid_to_s:
+                        continue
+                    if volume.alt_reference not in {"EG", "ELLIPSOID"}:
+                        continue
+                    extra = max(c.get("safeDistance", 0), c.get("bufferRadius", 0) if c.get("avoidMode") == "BUFFER" else 0)
+                    if kind != "NO_FLY" or c.get("includeBuffer", False):
+                        extra += volume.buffer_m
+                    ceiling = min(volume.max_altitude, c.get("heightCeiling", float("inf")) - self.origin_alt_ellipsoid)
+                    raster(volume.geometry.buffer(margin + half_horizontal + extra), volume.min_altitude - vertical - half_vertical, ceiling + vertical + half_vertical)
             if kind == "AREA":
                 geom = unary_union(self.area_for(rule))
                 if c["scope"] == "EXCLUDE":
-                    raster(geom.buffer(margin + half_horizontal), low[2], high[2])
+                    forbidden = np.zeros_like(blocked)
+                    raster(geom.buffer(margin + half_horizontal), low[2], high[2], forbidden)
+                    blocked |= forbidden if scope_mask is None else forbidden & scope_mask
                 else:
                     allowed = np.zeros_like(blocked)
                     raster(geom.buffer(-margin - half_horizontal), low[2], high[2], allowed)
-                    blocked |= ~allowed
-            if kind not in {"WEATHER", "SIGNAL", "PRIORITY"} or kind == "PRIORITY" and c["priorityScene"] == "FAST":
+                    blocked |= ~allowed if scope_mask is None else ~allowed & scope_mask
+            if kind not in {"WEATHER", "SIGNAL", "PRIORITY"} or kind == "PRIORITY" and c["priorityScene"] in {"FAST", "PLANNING"}:
                 continue
             dataset_kind = kind.lower() if kind != "PRIORITY" else "noise" if c["priorityScene"] == "QUIET" else "risk"
             allowed = np.zeros_like(blocked)
@@ -676,7 +707,7 @@ class CompiledScene:
                     safe = self.priority_data_covered(rule, point, point, time_s, time_s) if kind == "PRIORITY" else self.field_part_allowed(rule, point, point, time_s, time_s, profile)
                     if safe:
                         raster(cell.geometry.buffer(-margin - half_horizontal), max(low[2], cell.min_altitude + vertical + half_vertical), min(high[2], cell.max_altitude - vertical - half_vertical), allowed)
-            blocked |= ~allowed
+            blocked |= ~allowed if scope_mask is None else ~allowed & scope_mask
         result = np.argwhere(blocked).astype(np.int64, copy=False)
         cache[cache_key] = result
         return result
@@ -695,17 +726,59 @@ class CompiledScene:
                 return True
         return False
 
-    def width_allowed(self, rule: Any, p0: np.ndarray, p1: np.ndarray, parts: list, profile: Any) -> bool:
+    def width_allowed(self, rule: Any, p0: np.ndarray, p1: np.ndarray, parts: list, profile: Any, t0: float = 0, t1: float = 0, task: Any = None) -> bool:
         refs = set(map(str, get(rule, "resource_ids", [])))
         c = get(rule, "content")
         margin, _ = self.clearance(profile)
-        # width is HALF width; bufferWidth is additional mandatory clearance.
-        radius = c["width"] - c.get("bufferWidth", 0) - margin
+        # width is the full flyable corridor width. bufferWidth protects its exterior.
+        radius = c["width"] / 2 - margin
         if radius <= 0:
             return False
-        geom = self._rule_geometry(("width", str(get(rule, "id")), margin), lambda: unary_union([a.centerline.buffer(min(a.half_width, c["width"]) - c.get("bufferWidth", 0) - margin) for a in self.airways if (not refs or a.id in refs) and min(a.half_width, c["width"]) > c.get("bufferWidth", 0) + margin]))
+        geom = self._rule_geometry(("width", str(get(rule, "id")), margin), lambda: unary_union([a.centerline.buffer(min(a.half_width, c["width"] / 2) - margin) for a in self.airways if (not refs or a.id in refs) and min(a.half_width, c["width"] / 2) > margin]))
         allowed = _geometry_intervals(geom, p0, p1)
-        return all(_covers(allowed, a, b) for a, b in parts)
+        if not all(_covers(allowed, a, b) for a, b in parts):
+            return False
+        if c.get("bufferWidth", 0) <= 0:
+            return True
+        # The exterior protection band belongs to the centerline segment in
+        # use. It never expands or shrinks the permitted flight width.
+        safe_parts = []
+        _, vertical = self.clearance(profile)
+        obstacles = self.obstacles + self.zones + self.grid_volumes
+        for other in self.rules.selected(task):
+            if get(other, "rule_type") in {"BUILDING", "NO_FLY", "ZONE"}:
+                for volume in self.rule_scopes.get(str(get(other, "id")), []):
+                    ceiling = get(other, "content").get("heightCeiling") if get(other, "rule_type") == "NO_FLY" else None
+                    if ceiling is not None:
+                        volume = replace(volume, max_altitude=min(volume.max_altitude, ceiling-self.origin_alt_ellipsoid))
+                    if volume.max_altitude >= volume.min_altitude:
+                        obstacles.append(volume)
+        for airway in self.airways:
+            if refs and airway.id not in refs:
+                continue
+            half_width = min(airway.half_width, c["width"] / 2)
+            if half_width <= margin:
+                continue
+            spans = _geometry_intervals(airway.centerline.buffer(half_width - margin), p0, p1)
+            spans = [(max(a,c),min(b,d)) for a,b in spans for c,d in parts if max(a,c) <= min(b,d)+EPS]
+            for a, b in spans:
+                first, last = p0 + a * (p1-p0), p0 + b * (p1-p0)
+                d0 = airway.centerline.project(Point(first[:2]))
+                d1 = airway.centerline.project(Point(last[:2]))
+                centerline = substring(airway.centerline, d0, d1)
+                vertices = np.asarray(centerline.coords)
+                if len(vertices) == 1:
+                    vertices = np.repeat(vertices, 2, axis=0)
+                lengths = np.r_[0, np.cumsum(np.linalg.norm(np.diff(vertices, axis=0), axis=1))]
+                fractions = lengths / lengths[-1] if lengths[-1] > EPS else np.linspace(0,1,len(vertices))
+                xyz = np.c_[vertices, first[2] + fractions * (last[2]-first[2])]
+                seconds = t0 + (a + fractions*(b-a))*(t1-t0)
+                collision = any(self.volume_intervals(volume, xyz[i], xyz[i+1], seconds[i], seconds[i+1],
+                                                     horizontal=half_width+c["bufferWidth"]+volume.buffer_m, vertical=vertical)
+                                for volume in obstacles for i in range(len(xyz)-1))
+                if not collision:
+                    safe_parts.append((a,b))
+        return all(_covers(safe_parts, a, b) for a,b in parts)
 
     def rule_volume_collision(self, rule: Any, p0: np.ndarray, p1: np.ndarray, t0: float, t1: float, profile: Any) -> bool:
         kind, content = get(rule, "rule_type"), get(rule, "content")
@@ -715,7 +788,7 @@ class CompiledScene:
         tree, collection = (self._obstacle_tree, self.obstacles + self.grid_volumes) if kind == "BUILDING" else (self._zone_tree, self.zones)
         spatial = {id(v) for v in self._query(tree, collection, p0, p1, horizontal + max_extra + (self._max_obstacle_buffer if kind == "BUILDING" else self._max_zone_buffer))}
         for volume in candidates:
-            if id(volume) not in spatial:
+            if volume.kind != "rule_scope" and id(volume) not in spatial:
                 continue
             extra = 0
             if kind == "BUILDING":
@@ -728,11 +801,9 @@ class CompiledScene:
             active = self.rules.interval(rule, t0, t1)
             intervals = _clip_scalar(intervals, t0, t1, *active) if active else []
             if kind == "NO_FLY" and "heightCeiling" in content:
-                intervals = _clip_scalar(intervals, p0[2], p1[2], -float("inf"), content["heightCeiling"] - self.origin_alt_msl + vertical)
+                intervals = _clip_scalar(intervals, p0[2], p1[2], -float("inf"), content["heightCeiling"] - self.origin_alt_ellipsoid + vertical)
             if intervals and kind == "BUILDING" and content["avoidMode"] == "CORRIDOR":
-                corridor = unary_union([d.geometry for d in self.datasets_for(rule, "corridor")])
-                allowed = _geometry_intervals(corridor.buffer(-horizontal), p0, p1)
-                if all(_covers(allowed, a, b) for a, b in intervals):
+                if self._corridor_exempts(volume,p0,p1,t0,t1,None,profile,occupied=intervals,rules=[rule]):
                     continue
             if intervals:
                 return True
@@ -795,13 +866,14 @@ class CompiledScene:
 
     def cost_multiplier(self, point_xyz: Any, time_s: float, task: Any, profile: Any = None) -> float:
         point = np.asarray(point_xyz, float)
-        cost = 2.0 if get(task, "route_mode", "strict") == "prefer" and not self.corridor.covers(Point(point[:2])) else 1.0
+        eligible_corridor = self._rule_geometry(("admission", get(profile, "id")), lambda: unary_union([a.geometry for a in self.airways if a.status == "ACTIVE" and (not a.source.allowed_profile_ids or get(profile, "id") in a.source.allowed_profile_ids)]))
+        cost = 2.0 if get(task, "route_mode", "strict") == "prefer" and not eligible_corridor.covers(Point(point[:2])) else 1.0
         for rule in self.rules.selected(task):
-            if get(rule, "rule_type") != "PRIORITY" or not self.rules.active(rule, time_s):
+            if get(rule, "rule_type") != "PRIORITY" or not self.rule_parts(rule, point, point, time_s, time_s):
                 continue
             c = get(rule, "content")
             scene = c["priorityScene"]
-            if scene == "FAST":
+            if scene in {"FAST", "PLANNING"}:
                 cost *= 1 - c["costBonus"]
                 continue
             kind, key = ("noise", "noise_db") if scene == "QUIET" else ("risk", "risk")
@@ -853,7 +925,7 @@ class CompiledScene:
         margin, vertical = self.clearance(profile)
         covered = []
         for airway in self._query(self._airway_tree, self.airways, p0, p1):
-            if airway.status != "ACTIVE":
+            if airway.status != "ACTIVE" or (airway.source.allowed_profile_ids and get(profile, "id") not in airway.source.allowed_profile_ids):
                 continue
             if airway.direction != "BOTH" and np.linalg.norm(p1[:2] - p0[:2]) > EPS:
                 a, b = airway.centerline.project(Point(p0[:2])), airway.centerline.project(Point(p1[:2]))
@@ -865,7 +937,7 @@ class CompiledScene:
     def airway_ids_for_segment(self, p0: Any, p1: Any, t0: float, t1: float, profile: Any = None) -> list[str]:
         p0, p1 = np.asarray(p0, float), np.asarray(p1, float)
         return [a.id for a in self._query(self._airway_tree, self.airways, p0, p1)
-                if a.status == "ACTIVE" and self.volume_intervals(a, p0, p1, t0, t1)]
+                if a.status == "ACTIVE" and (not a.source.allowed_profile_ids or get(profile, "id") in a.source.allowed_profile_ids) and self.volume_intervals(a, p0, p1, t0, t1)]
 
     def _corridor_allowed(self, p0: np.ndarray, p1: np.ndarray, t0: float, t1: float, task: Any, profile: Any, connector_context: dict | None = None) -> bool:
         covered = self._airway_intervals(p0, p1, t0, t1, profile)
@@ -904,6 +976,32 @@ class CompiledScene:
                 contexts[i][str(ref)] = (0.0, first_a if i == first_i else 1.0) if field_name == "start_connector_id" else (last_b if i == last_i else 0.0, 1.0)
         return contexts
 
+    def _corridor_exempts(self, volume, p0, p1, t0, t1, task, profile, *, occupied=None, rules=None):
+        horizontal, vertical = self.clearance(profile)
+        if occupied is None:
+            occupied = self.volume_intervals(volume,p0,p1,t0,t1,horizontal=horizontal+volume.buffer_m,vertical=vertical)
+        authorized = []
+        for rule in self.rules.selected(task) if rules is None else rules:
+            if rule.rule_type != "BUILDING" or rule.content.get("avoidMode") != "CORRIDOR" or (rule.resource_ids and volume.id not in rule.resource_ids):
+                continue
+            active = self.rules.interval(rule,t0,t1)
+            if active is None:
+                continue
+            scope = self.rule_scopes.get(rule.id)
+            applicable = [(0.,1.)] if not scope else [part for v in scope for part in self.volume_intervals(v,p0,p1,t0,t1)]
+            applicable = _clip_scalar(applicable,t0,t1,*active)
+            for dataset in self.datasets_for(rule,"corridor"):
+                cells = dataset.cells or [PreparedCell(dataset.geometry,-float("inf"),float("inf"),{})]
+                for cell in cells:
+                    if cell.values.get("nodata",False):
+                        continue
+                    footprint = cell.geometry.intersection(dataset.geometry)
+                    allowed = _geometry_intervals(footprint.buffer(-horizontal) if horizontal else footprint,p0,p1)
+                    allowed = _clip_scalar(allowed,p0[2],p1[2],cell.min_altitude+vertical,cell.max_altitude-vertical)
+                    allowed = _clip_scalar(allowed,t0,t1,max(dataset.valid_from_s,cell.valid_from_s),min(dataset.valid_to_s,cell.valid_to_s))
+                    authorized.extend((max(a,c),min(b,d)) for a,b in allowed for c,d in applicable if max(a,c)<=min(b,d)+EPS)
+        return bool(occupied) and all(_covers(authorized,a,b) for a,b in occupied)
+
     def _check_geometry(self, p0: Any, p1: Any, t0: float = 0, t1: float = 0, task: Any = None, profile: Any = None, connector_context: dict | None = None, *, include_rules: bool = True) -> list[dict]:
         p0, p1 = np.asarray(p0, float), np.asarray(p1, float)
         errors: list[dict] = []
@@ -918,20 +1016,23 @@ class CompiledScene:
             if not _covers([(a, b) for a, b, _ in terrain]):
                 errors.append({"rule_id": None, "rule_type": "TERRAIN_NODATA", "reason": "segment crosses missing or expired terrain data"})
             for a, c, elevation in terrain:
-                if min(p0[2] + a * (p1[2] - p0[2]), p0[2] + c * (p1[2] - p0[2])) - vertical + self.origin_alt_msl <= elevation + EPS:
+                if min(p0[2] + a * (p1[2] - p0[2]), p0[2] + c * (p1[2] - p0[2])) - vertical + self.origin_alt_ellipsoid <= elevation + EPS:
                     errors.append({"rule_id": None, "rule_type": "TERRAIN", "reason": "swept aircraft intersects the terrain surface"})
                     break
         for volume in self._query(self._obstacle_tree, self.obstacles + self.grid_volumes, p0, p1, horizontal + self._max_obstacle_buffer):
             if self.volume_intervals(volume, p0, p1, t0, t1, horizontal=horizontal + volume.buffer_m, vertical=vertical):
                 # Explicit BUILDING CORRIDOR may permit traversing an obstacle only
                 # when its own rule fully covers this segment in a body-clear corridor.
-                corridor_rules = [r for r in self.rules.selected(task) if get(r, "rule_type") == "BUILDING" and get(r, "content").get("avoidMode") == "CORRIDOR" and (not get(r, "resource_ids") or volume.id in get(r, "resource_ids"))]
-                if corridor_rules and all(not self.rule_volume_collision(r, p0, p1, t0, t1, profile) for r in corridor_rules):
+                if self._corridor_exempts(volume, p0, p1, t0, t1, task, profile):
                     continue
                 errors.append({"rule_id": None, "rule_type": "BUILDING" if volume.kind == "obstacle" else "GRID", "reason": "segment intersects an occupied volume", "resource_id": volume.id})
         for volume in self._query(self._zone_tree, self.zones, p0, p1, horizontal + self._max_zone_buffer):
             if self.volume_intervals(volume, p0, p1, t0, t1, horizontal=horizontal + volume.buffer_m, vertical=vertical):
                 errors.append({"rule_id": None, "rule_type": "ZONE", "reason": "segment intersects an active control zone", "resource_id": volume.id})
+        if get(task, "route_mode", "free") != "free":
+            for airway in self._query(self._airway_tree, self.airways, p0, p1, horizontal):
+                if airway.status == "ACTIVE" and airway.source.allowed_profile_ids and get(profile, "id") not in airway.source.allowed_profile_ids and self.volume_intervals(airway,p0,p1,t0,t1,horizontal=horizontal,vertical=vertical):
+                    errors.append({"rule_type":"AIRCRAFT_ADMISSION","reason":"aircraft profile is not admitted to this airway","resource_id":airway.id})
         if get(task, "route_mode", "free") == "strict" and not self._corridor_allowed(p0, p1, t0, t1, task, profile, connector_context):
             errors.append({"rule_id": None, "rule_type": "CORRIDOR", "reason": "swept segment is outside active airway/authorized endpoint connector"})
         # Search edges must respect mandatory geometric/field rules. Dynamic limits

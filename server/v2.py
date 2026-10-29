@@ -51,8 +51,11 @@ def version():
 @router.get("/capabilities",response_model=Capabilities)
 def capabilities():
     from uav_planner.v2.budgets import SCENE_LIMITS
-    return {"api_version":"2.0.0","route_modes":["strict","prefer","free"],"default_route_mode":"strict",
-            "rule_types":list(RULE_TYPES),"altitude_references":["MSL","AGL","ELLIPSOID","QNE","QNH"],
+    return {"contract_version":"2026-10-29", "engine_rules":{
+                "ENG-06":["HEIGHT_LAYER","WIDTH","DIRECTION","PRIORITY","SPEED","TIME","AREA","CLIMB","TURN","WAYPOINT"],
+                "ENG-07":["HEIGHT_LAYER","BUILDING","NO_FLY","ZONE","WEATHER","SIGNAL","CLIMB","TURN","HOVER","ENDURANCE","PAYLOAD","RTL","PRIORITY","WAYPOINT"]},
+            "canonical_alt_reference":"EG", "api_version":"2.0.0","route_modes":["strict","prefer","free"],"default_route_mode":"strict",
+            "rule_types":list(RULE_TYPES),"altitude_references":["EG","MSL","AGL","ELLIPSOID","QNE","QNH"],
             "geometric_tolerance_m":.1,"max_scene_radius_m":None,
             "grid_formats":["regular_sparse_indices","regular_index_ranges","explicit_bounds_cells"],
             "scene_limits":SCENE_LIMITS,"max_registered_scenes":registry.max_scenes,
@@ -106,7 +109,7 @@ def job(job_id: str):
 
 
 def example_request() -> dict:
-    context={"origin_lon":104.77,"origin_lat":29.33,"terrain_msl_m":0,"terrain_source":"example-flat-terrain-v1"}
+    context={"origin_lon":104.77,"origin_lat":29.33,"terrain_ellipsoid_m":0,"terrain_source":"example-flat-terrain-v1"}
     frame=CoordinateFrame(context)
     start,goal=Point(100,100,80),Point(1200,100,80)
     line=frame.to_wgs84(LineString([start,goal]))
@@ -116,9 +119,9 @@ def example_request() -> dict:
     return {"scene":{"coordinates":context,"bounds":{"x_min":0,"x_max":1500,"y_min":0,"y_max":500,"z_min":0,"z_max":300},
                      "time_origin":"2026-10-16T09:00:00+08:00","resolution":[25,25,10],"horizon_s":3600,
                      "airways":[{"id":"demo-airway","centerLine":line,"widthMeters":100,"minAltitude":50,"maxAltitude":150,
-                                 "altReference":"MSL","startGrid":grid(start),"endGrid":grid(goal)}]},
+                                 "altReference":"EG","startGrid":grid(start),"endGrid":grid(goal)}]},
             "task":{"id":"demo-v2-001","start_wkt":frame.to_wgs84(start),"goal_wkt":frame.to_wgs84(goal),
-                    "departure_time":"2026-10-16T09:00:00+08:00","alt_reference":"MSL","route_mode":"strict"}}
+                    "departure_time":"2026-10-16T09:00:00+08:00","alt_reference":"EG","route_mode":"strict"}}
 
 
 @router.get("/examples/single",response_model=SingleRequest)

@@ -13,7 +13,7 @@ from uav_planner.v2.rules import RULE_KEYS, _daily_interval_allowed, separation_
 
 
 ORIGIN = datetime.fromisoformat("2026-10-16T08:00:00+08:00")
-COORD = {"origin_lon": 104.0, "origin_lat": 29.0, "origin_alt_msl": 0}
+COORD = {"origin_lon": 104.0, "origin_lat": 29.0, "origin_alt_ellipsoid": 0}
 FRAME = CoordinateFrame(COORD)
 PROFILE = {"radius_m": 0, "height_m": 0, "safety_margin_m": 0, "max_speed_mps": 100,
            "climb_speed_mps": 100, "descent_speed_mps": 100, "endurance_s": 1000,
@@ -33,7 +33,7 @@ def base_scene(rule_type=None, content=None, refs=None):
 
 
 def task(**kwargs):
-    return {"id": "t", "route_mode": "free", "departure_time": ORIGIN, "alt_reference": "MSL", "payload_kg": 0,
+    return {"id": "t", "route_mode": "free", "departure_time": ORIGIN, "alt_reference": "EG", "payload_kg": 0,
             "start_wkt": geo(Point(0, 0, 100)), "goal_wkt": geo(Point(100, 0, 100)), **kwargs}
 
 
@@ -48,12 +48,12 @@ def rule_fails(errors, kind):
 def airway(id="a", width=100):
     grid = {"minLon": 103.99, "maxLon": 104.01, "minLat": 28.99, "maxLat": 29.01, "minAlt": 0, "maxAlt": 200}
     return {"id": id, "centerLine": geo(LineString([(-100, 0, 100), (200, 0, 100)])), "widthMeters": width,
-            "minAltitude": 0, "maxAltitude": 200, "altReference": "MSL", "startGrid": grid, "endGrid": grid}
+            "minAltitude": 0, "maxAltitude": 200, "altReference": "EG", "startGrid": grid, "endGrid": grid}
 
 
 def zone(id="z", **kwargs):
     return {"id": id, "geom": geo(box(40, -1, 41, 1)), "minAlt": 90, "maxAlt": 110,
-            "altReference": "MSL", "zoneType": "POLYGON", "level": "A", **kwargs}
+            "altReference": "EG", "zoneType": "POLYGON", "level": "A", **kwargs}
 
 
 def dataset(kind, values, bounds=None, id="d", **kwargs):
@@ -65,53 +65,54 @@ def test_all20_registry_is_complete():
 
 
 def test_height_layer_bounds_and_terrain_between_vertices():
-    scene = base_scene("HEIGHT_LAYER", {"minAltitude": 90, "maxAltitude": 100, "altDatum": "MSL"})
+    scene = base_scene("HEIGHT_LAYER", {"minAltitude": 90, "maxAltitude": 100, "altDatum": "EG"})
     assert not rule_fails(check(scene), "HEIGHT_LAYER")
     assert rule_fails(check(scene, [[0, 0, 100.01], [100, 0, 100.01]]), "HEIGHT_LAYER")
     scene["rules"][0]["content"] = {"minAltitude": 40, "maxAltitude": 200, "altDatum": "AGL"}
-    scene["datasets"] = [dataset("terrain", {"elevation_msl_m": 0}), dataset("terrain", {"elevation_msl_m": 70}, {"x_min": 49, "x_max": 51, "y_min": -5, "y_max": 5, "z_min": -100, "z_max": 500}, id="hill")]
+    scene["datasets"] = [dataset("terrain", {"elevation_ellipsoid_m": 0}), dataset("terrain", {"elevation_ellipsoid_m": 70}, {"x_min": 49, "x_max": 51, "y_min": -5, "y_max": 5, "z_min": -100, "z_max": 500}, id="hill")]
     assert rule_fails(check(scene), "HEIGHT_LAYER")
 
 
-@pytest.mark.parametrize("reference", ["QNE", "QNH", "ELLIPSOID"])
+@pytest.mark.parametrize("reference", ["QNE", "QNH", "MSL"])
 def test_height_layer_step_uses_the_declared_vertical_datum(reference):
     scene = base_scene("HEIGHT_LAYER", {"minHeight": 0, "maxHeight": 200,
                                          "layerStep": 20, "altDatum": reference})
     scene["coordinates"] = {**COORD}
-    if reference == "ELLIPSOID":
+    if reference == "MSL":
         scene["coordinates"]["geoid_separation_m"] = 5
-        on_layer_msl = 75
+        scene["coordinates"]["geoid_source"] = "test-geoid"
+        on_layer_eg = 85
     else:
         scene["coordinates"]["height_corrections"] = [{
             "reference": reference, "offset_m": 5, "source": "test-pressure",
             "version": "test-data-1", "valid_from": ORIGIN,
             "valid_to": ORIGIN + timedelta(hours=1),
         }]
-        on_layer_msl = 85
-    # MSL 80 is a multiple of the step, but its declared-datum height is not.
+        on_layer_eg = 85
+    # EG 80 is a multiple of the step, but its declared-datum height is not.
     assert rule_fails(check(scene, [[0, 0, 80], [100, 0, 80]]), "HEIGHT_LAYER")
-    assert not rule_fails(check(scene, [[0, 0, on_layer_msl], [100, 0, on_layer_msl]]), "HEIGHT_LAYER")
+    assert not rule_fails(check(scene, [[0, 0, on_layer_eg], [100, 0, on_layer_eg]]), "HEIGHT_LAYER")
 
 
 def test_terrain_field_overrides_constant_and_nodata_cannot_hide_under_other_cells():
     scene = base_scene()
-    scene["coordinates"] = {**COORD, "terrain_msl_m": 0}
-    scene["datasets"] = [dataset("terrain", {"elevation_msl_m": 120})]
+    scene["coordinates"] = {**COORD, "terrain_ellipsoid_m": 0}
+    scene["datasets"] = [dataset("terrain", {"elevation_ellipsoid_m": 120})]
     assert any(e["code"] == "TERRAIN" for e in check(scene))
-    scene["datasets"][0]["cells"][0]["values"] = {"elevation_msl_m": 0}
+    scene["datasets"][0]["cells"][0]["values"] = {"elevation_ellipsoid_m": 0}
     scene["datasets"].append(dataset("terrain", {"nodata": True}, {"x_min": 49, "x_max": 51, "y_min": -5, "y_max": 5, "z_min": -100, "z_max": 500}, id="gap"))
     assert any(e["code"] == "TERRAIN_NODATA" for e in check(scene))
 
 
-def test_width_is_half_width_and_buffer_is_extra_clearance():
+def test_width_is_full_width_with_external_buffer():
     scene = base_scene("WIDTH", {"width": 20, "bufferWidth": 5}, ["a"])
     scene["airways"] = [airway()]
-    assert not rule_fails(check(scene, [[0, 14.99, 100], [100, 14.99, 100]]), "WIDTH")
-    assert rule_fails(check(scene, [[0, 15.01, 100], [100, 15.01, 100]]), "WIDTH")
+    assert not rule_fails(check(scene, [[0, 9.99, 100], [100, 9.99, 100]]), "WIDTH")
+    assert rule_fails(check(scene, [[0, 10.01, 100], [100, 10.01, 100]]), "WIDTH")
 
 
-def test_direction_east_zero_counterclockwise():
-    scene = base_scene("DIRECTION", {"directions": [0]})
+def test_direction_north_zero_clockwise():
+    scene = base_scene("DIRECTION", {"directions": [90]})
     assert not rule_fails(check(scene), "DIRECTION")
     assert rule_fails(check(scene, [[100, 0, 100], [0, 0, 100]]), "DIRECTION")
 
@@ -181,7 +182,7 @@ def test_no_fly_midsegment_and_temporary_period_required():
 
 def test_building_buffer_distance():
     scene = base_scene("BUILDING", {"avoidMode": "BUFFER", "safeDistance": 5, "bufferRadius": 10}, ["b"])
-    scene["obstacles"] = [{"id": "b", "geometry_wkt": geo(box(40, 9, 41, 10)), "min_altitude": 90, "max_altitude": 110, "alt_reference": "MSL"}]
+    scene["obstacles"] = [{"id": "b", "geometry_wkt": geo(box(40, 9, 41, 10)), "min_altitude": 90, "max_altitude": 110, "alt_reference": "EG"}]
     assert rule_fails(check(scene), "BUILDING")
     assert not rule_fails(check(scene, [[0, -2, 100], [100, -2, 100]]), "BUILDING")
 
@@ -257,7 +258,7 @@ def test_waypoint_count_and_interval_use_business_waypoints():
     assert rule_fails(check(scene, waypoints=[{"wkt": geo(Point(49, 0, 100))}]), "WAYPOINT")
 
 
-def test_rtl_low_battery_requires_upstream_state_and_msl_altitude():
+def test_rtl_low_battery_requires_upstream_state_and_eg_altitude():
     scene = base_scene("RTL", {"rtlAltitude": 100, "rtlOnLowBattery": True, "lowBatteryPercent": 20})
     compiled = CompiledScene(scene)
     with pytest.raises(PlanningError, match="upstream"):
@@ -301,7 +302,7 @@ def test_connector_authorizes_split_entry_prefix_and_not_intermediate_shortcuts(
     item["centerLine"] = geo(LineString([(0, 0, 100), (200, 0, 100)]))
     scene["airways"] = [item]
     scene["connectors"] = [{"id": "entry", "geometry_wkt": geo(box(-110, -15, 10, 15)), "min_altitude": 0,
-                            "max_altitude": 200, "alt_reference": "MSL", "airway_ids": ["a"]}]
+                            "max_altitude": 200, "alt_reference": "EG", "airway_ids": ["a"]}]
     compiled = CompiledScene(scene)
     t = task(route_mode="strict", start_wkt=geo(Point(-100, 0, 100)), start_connector_id="entry")
     assert not compiled.check_path([[-100, 0, 100], [-80, 0, 100], [-30, 0, 100], [0, 0, 100], [100, 0, 100]], [0, 10, 20, 30, 40], t, PROFILE)
@@ -313,7 +314,7 @@ def test_connector_authorizes_split_entry_prefix_and_not_intermediate_shortcuts(
 def test_single_point_path_and_grid_raster_include_thin_obstacle():
     scene = base_scene()
     scene["resolution"] = [10, 10, 10]
-    scene["obstacles"] = [{"id": "thin", "geometry_wkt": geo(box(49.9, -1, 50.1, 1)), "min_altitude": 95, "max_altitude": 105, "alt_reference": "MSL"}]
+    scene["obstacles"] = [{"id": "thin", "geometry_wkt": geo(box(49.9, -1, 50.1, 1)), "min_altitude": 95, "max_altitude": 105, "alt_reference": "EG"}]
     compiled = CompiledScene(scene)
     assert not compiled.check_path([[0, 0, 100]], [0], task(), PROFILE)
     blocked = compiled.blocked_indices(task(), PROFILE, 0)

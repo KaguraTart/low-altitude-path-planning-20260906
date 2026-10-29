@@ -6,9 +6,21 @@
 
 接口字段、测试 JSON 参数和修改步骤见 [接口字段与修改说明](API_FIELDS.md)。
 
-按业务需求选择接口，见[需求与 API 对照表](REQUIREMENTS_API_MAPPING.md)。表中包含 16 项需求、完整接口地址、参数用法和调用示例。
+按业务需求选择接口，见[需求与 API 对照表](REQUIREMENTS_API_MAPPING.md)。表中包含源清单 ENG-06/ENG-07 全部 41 项需求、平台责任、真实接口、输入输出、测试证据和未交付项。
 
-完整公网实测记录见 [测试报告](reports/20261017T135804Z_public/REPORT.md)。
+历史公网实测记录见 [测试报告](reports/20261017T135804Z_public/REPORT.md)。该报告保留原始输入输出，不证明 2026-10-29 契约已部署或通过。
+
+## 本次契约
+
+核对运行服务 `/api/v2/capabilities` 的 `contract_version="2026-10-29"`、`canonical_alt_reference="EG"` 与 `engine_rules`。本次仍使用 14 个 v2 端点。
+
+- `strict/prefer` 对应 ENG-06，`free` 对应 ENG-07；显式 `task.engine_id` 必须匹配。仅支持 `scene_type=LOW_ALTITUDE`。
+- 平台负责规则/条件/绑定/机型准入 CRUD；引擎接收规则、选定 ID、航路机型白名单并执行约束。strict/prefer 中不准入航路体禁入；free 不使用航路准入。
+- 内部高度统一 EG，字段使用 `origin_alt_ellipsoid`、`terrain_ellipsoid_m`；MSL 需差值和来源。结果带明确高度基准与坐标上下文。
+- WIDTH 是全宽；bufferWidth 是外侧保护带，障碍侵入已用段保护带时拒绝。航向北 0°顺时针，星期 0 周日、1–6 周一至周六。
+- RuleBO 兼容 type/constraints 别名及适用规则的 scope；SEPARATION 仅提供全局检查，带 scope 的输入会被拒绝；未绑定有效 CLIMB/TURN 时默认 5/3 m/s、90°/10 m。
+
+新增专用联调输入位于完整仓库 `input/engine_contract_20261029/`。本目录当前输入使用新契约；历史报告保持原样。保存本次运行的完整请求、响应和报告，分别验收成功路线、无解结果与非法输入。完整 41 项缺口见对照表，不能仅凭接口调用成功判定全部业务需求完成。
 
 ## 运行测试
 
@@ -77,9 +89,9 @@ python run_tests.py --timeout 120 --poll-timeout 300
 
 | 文件 | 用途 |
 |---|---|
-| `data/examples/single_strict_request.json` | 严格航路单机规划 |
+| `data/examples/single_strict_request.json` | 严格航路单机规划；ENG-06 十类规则契约样例 |
 | `data/examples/single_prefer_request.json` | 优先航路单机规划 |
-| `data/examples/single_free_request.json` | 自由空域单机规划 |
+| `data/examples/single_free_request.json` | 自由空域单机规划；ENG-07 十四类规则及 scope 样例 |
 | `data/examples/batch_request.json` | 同步批量规划和异步作业 |
 | `data/examples/coordinates_to_local_request.json` | WGS84 与米制坐标转换 |
 | `data/examples/validate_request.json` | 轨迹独立验证 |
@@ -88,21 +100,21 @@ python run_tests.py --timeout 120 --poll-timeout 300
 
 脚本先登记场景，再将返回的 `scene_id` 与任务数组组合成批量请求。实际发送的组合请求保存在 `http/*_input.json` 中。
 
-WKT 坐标顺序为经度、纬度、高度。数据使用 WGS84 经纬度和 MSL 高度，高度单位为米。混合任务包含低电量返航。脚本按 `state.home_wkt` 检查返航终点。
+WKT 坐标顺序为经度、纬度、高度。当前输入使用 WGS84 经纬度和 EG 椭球高，高度单位为米。混合任务包含低电量返航。脚本按 `state.home_wkt` 检查返航终点。
 
 ## 文件
 
 | 路径 | 内容 |
 |---|---|
 | `API_FIELDS.md` | 全部接口的输入输出字段、单位、默认值和修改方法 |
-| `REQUIREMENTS_API_MAPPING.md` | 16 项业务需求与 API 的对应关系、参数和调用方法 |
+| `REQUIREMENTS_API_MAPPING.md` | ENG-06/07 的 41 项需求、接口、参数、验收证据与缺口 |
 | `run_tests.py` | 命令行测试入口 |
 | `client.py` | HTTPS 调用和完整 HTTP 记录 |
 | `reporting.py` | Markdown 报告生成器 |
 | `data/examples/` | 六组完整接口请求 |
 | `data/benchmarks/` | 三套场景和三套各 1000 个任务 |
 | `data/manifest.json` | 数据文件清单与 SHA-256 |
-| `reports/` | 本次交付的公网测试报告和完整 HTTP 记录 |
+| `reports/` | 历史公网测试报告和完整 HTTP 记录；以报告日期识别版本 |
 | `results/` | 使用者运行脚本后生成的结果 |
 
 每次测试的输出目录包含以下文件：

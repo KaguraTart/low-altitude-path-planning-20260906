@@ -20,15 +20,15 @@ AT = datetime(2026, 10, 16, 4, tzinfo=timezone.utc)
 
 
 def spec(**updates):
-    return CoordinateSpec(origin_lon=104.78, origin_lat=29.34, origin_alt_msl=300, **updates)
+    return CoordinateSpec(origin_lon=104.78, origin_lat=29.34, origin_alt_ellipsoid=300, **updates)
 
 
 def test_always_xy_east_north_and_reference_origin():
     frame = CoordinateFrame(spec())
-    local = frame.to_local("POINT Z (104.78 29.34 320)", "MSL")
+    local = frame.to_local("POINT Z (104.78 29.34 320)", "EG")
     assert local.coords[0] == pytest.approx((0, 0, 20), abs=1e-8)
-    east = frame.to_local("POINT Z (104.781 29.34 320)", "MSL")
-    north = frame.to_local("POINT Z (104.78 29.341 320)", "MSL")
+    east = frame.to_local("POINT Z (104.781 29.34 320)", "EG")
+    north = frame.to_local("POINT Z (104.78 29.341 320)", "EG")
     assert east.x > 90 and abs(east.y) < 0.01
     assert north.y > 100 and abs(north.x) < 0.01
 
@@ -42,23 +42,23 @@ def test_always_xy_east_north_and_reference_origin():
 def test_round_trip_preserves_vertices_and_dimensionality(wkt):
     frame = CoordinateFrame(spec())
     expected = from_wkt(wkt)
-    actual = from_wkt(frame.to_wgs84(frame.to_local(wkt, "MSL")))
+    actual = from_wkt(frame.to_wgs84(frame.to_local(wkt, "EG")))
     assert actual.equals_exact(expected, tolerance=1e-10)
     assert actual.has_z == expected.has_z
 
 
 def test_vertical_flight_is_valid_3d_geometry():
     frame = CoordinateFrame(spec())
-    local = frame.to_local("LINESTRING Z (104.78 29.34 320, 104.78 29.34 380)", "MSL")
+    local = frame.to_local("LINESTRING Z (104.78 29.34 320, 104.78 29.34 380)", "EG")
     assert tuple(local.coords) == ((0, 0, 20), (0, 0, 80))
 
 
 def test_declared_agl_and_geoid_conversions_are_invertible():
-    frame = CoordinateFrame(spec(terrain_msl_m=310, geoid_separation_m=28))
+    frame = CoordinateFrame(spec(terrain_ellipsoid_m=310, geoid_separation_m=28, geoid_source="test-geoid"))
     assert frame.to_local("POINT Z (104.78 29.34 20)", "AGL").z == 30
-    assert frame.to_local("POINT Z (104.78 29.34 358)", "ELLIPSOID").z == 30
+    assert frame.to_local("POINT Z (104.78 29.34 302)", "MSL").z == 30
     assert from_wkt(frame.to_wgs84(Point(0, 0, 30), "AGL")).z == 20
-    assert from_wkt(frame.to_wgs84(Point(0, 0, 30), "ELLIPSOID")).z == 358
+    assert from_wkt(frame.to_wgs84(Point(0, 0, 30), "MSL")).z == 302
 
 
 def test_agl_uses_spatial_terrain_evidence_in_both_directions():
@@ -70,7 +70,7 @@ def test_agl_uses_spatial_terrain_evidence_in_both_directions():
         frame.to_local("POINT Z (104.782 29.34 20)", "AGL")
 
 
-@pytest.mark.parametrize("reference", ["AGL", "ELLIPSOID", "QNH", "QNE"])
+@pytest.mark.parametrize("reference", ["AGL", "MSL", "QNH", "QNE"])
 def test_missing_height_evidence_is_an_error(reference):
     with pytest.raises(CoordinateError) as caught:
         CoordinateFrame(spec()).to_local("POINT Z (104.78 29.34 20)", reference, AT)
@@ -106,18 +106,18 @@ def test_projection_radius_limit_both_directions():
     frame = CoordinateFrame(spec())
     lon, lat, _ = Geod(ellps="WGS84").fwd(104.78, 29.34, 90, 50001)
     with pytest.raises(CoordinateError) as caught:
-        frame.to_local(f"POINT Z ({lon} {lat} 320)", "MSL")
+        frame.to_local(f"POINT Z ({lon} {lat} 320)", "EG")
     assert caught.value.code == "COORDINATE_RANGE_EXCEEDED"
     with pytest.raises(CoordinateError):
         frame.to_wgs84(Point(50001, 0, 20))
     lon, lat, _ = Geod(ellps="WGS84").fwd(104.78, 29.34, 90, 49999)
-    assert frame.to_local(f"POINT Z ({lon} {lat} 320)", "MSL").x == pytest.approx(49999)
+    assert frame.to_local(f"POINT Z ({lon} {lat} 320)", "EG").x == pytest.approx(49999)
 
 
 def test_caller_can_declare_radius_above_fifty_kilometres():
     frame = CoordinateFrame(spec(max_radius_m=100000))
     wkt = frame.to_wgs84(Point(75000, 0, 20))
-    assert frame.to_local(wkt, "MSL").x == pytest.approx(75000)
+    assert frame.to_local(wkt, "EG").x == pytest.approx(75000)
     with pytest.raises(CoordinateError, match="declared"):
         frame.to_wgs84(Point(100001, 0, 20))
 
@@ -131,7 +131,7 @@ def test_coordinate_memory_failure_is_not_invalid_input(monkeypatch, target):
 
     monkeypatch.setattr(target, out_of_memory)
     with pytest.raises(MemoryError, match="test allocation"):
-        CoordinateFrame(spec()).to_local("POINT Z (104.78 29.34 320)", "MSL")
+        CoordinateFrame(spec()).to_local("POINT Z (104.78 29.34 320)", "EG")
 
 
 def test_task_and_scene_accept_more_waypoints_and_longer_declared_horizon():
@@ -144,7 +144,7 @@ def test_task_and_scene_accept_more_waypoints_and_longer_declared_horizon():
 
 
 def test_bidirectional_batch_conversion_preserves_z_and_context():
-    request = CoordinateRequest(coordinates=spec(), direction="wgs84_to_local", alt_reference="MSL",
+    request = CoordinateRequest(coordinates=spec(), direction="wgs84_to_local", alt_reference="EG",
                                 geometries_wkt=["POINT Z (104.78 29.34 320)", "POINT Z (104.781 29.34 330)"])
     result = convert_coordinates(request)
     assert result.coordinate_context["axis_order"] == "longitude,latitude,altitude"
@@ -155,7 +155,7 @@ def test_bidirectional_batch_conversion_preserves_z_and_context():
 @pytest.mark.parametrize("wkt", ["POINT EMPTY", "POINT Z (104 29 NaN)", "POINT (181 29)", "nonsense", "POINT M (104 29 7)", "LINESTRING Z (104 29 7, 104 29 7)"])
 def test_rejects_unusable_coordinate_wkt(wkt):
     with pytest.raises(CoordinateError):
-        CoordinateFrame(spec()).to_local(wkt, "MSL")
+        CoordinateFrame(spec()).to_local(wkt, "EG")
 
 
 def test_polygon_footprints_remain_2d_without_vertical_evidence():
@@ -163,7 +163,7 @@ def test_polygon_footprints_remain_2d_without_vertical_evidence():
     assert not CoordinateFrame(spec()).to_local(value, "AGL").has_z
 
 
-@pytest.mark.parametrize("updates", [{"origin_lon": "104"}, {"origin_lat": True}, {"origin_alt_msl": float("inf")}, {"origin_alt_msl": 10**1000}, {"max_radius_m": 0}, {"unknown": 1}])
+@pytest.mark.parametrize("updates", [{"origin_lon": "104"}, {"origin_lat": True}, {"origin_alt_ellipsoid": float("inf")}, {"origin_alt_ellipsoid": 10**1000}, {"max_radius_m": 0}, {"unknown": 1}])
 def test_coordinate_model_is_strict_and_finite(updates):
     values = dict(origin_lon=104.78, origin_lat=29.34)
     values.update(updates)
@@ -173,7 +173,7 @@ def test_coordinate_model_is_strict_and_finite(updates):
 
 def task(**updates):
     values = dict(id="t1", start_wkt="POINT Z (104.78 29.34 320)", goal_wkt="POINT Z (104.781 29.34 320)",
-                  departure_time="2026-10-16T04:00:00Z", alt_reference="MSL")
+                  departure_time="2026-10-16T04:00:00Z", alt_reference="EG")
     values.update(updates)
     return Task(**values)
 
@@ -194,7 +194,7 @@ def test_task_altitude_reference_is_required():
 def airway(**updates):
     grid = dict(minLon=104.78, maxLon=104.781, minLat=29.34, maxLat=29.341, minAlt=310, maxAlt=350)
     fields = dict(id="a", centerLine="LINESTRING Z (104.78 29.34 320, 104.781 29.34 320)", widthMeters=40,
-                  minAltitude=310, maxAltitude=350, altReference="MSL", startGrid=grid, endGrid=grid)
+                  minAltitude=310, maxAltitude=350, altReference="EG", startGrid=grid, endGrid=grid)
     fields.update(updates)
     return Airway(**fields)
 
@@ -217,10 +217,10 @@ def test_scene_ids_bounds_and_dynamic_trajectory_validation():
         Scene(coordinates=spec(), bounds=bounds, time_origin=AT, airways=[airway(), airway()])
     with pytest.raises(ValidationError):
         TimedTrajectory(id="moving", trajectory_wkt="LINESTRING Z (104.78 29.34 320, 104.781 29.34 320)",
-                        vertex_times_s=[0], alt_reference="MSL")
+                        vertex_times_s=[0], alt_reference="EG")
     with pytest.raises(ValidationError):
         TimedTrajectory(id="moving", trajectory_wkt="LINESTRING Z (104.78 29.34 320, 104.781 29.34 320)",
-                        vertex_times_s=[1, 1], alt_reference="MSL")
+                        vertex_times_s=[1, 1], alt_reference="EG")
 
 
 def test_profile_defaults_are_explicit_and_independent():
@@ -232,3 +232,46 @@ def test_profile_defaults_are_explicit_and_independent():
     assert default_profile().engineering_values
     with pytest.raises(ValidationError):
         AircraftProfile(cruise_speed_mps=13)
+
+
+@pytest.mark.parametrize("reference", ["EG", "ELLIPSOID"])
+@pytest.mark.parametrize("geoid", [{}, {"geoid_separation_m": 28, "geoid_source": "test-geoid"}])
+def test_ellipsoid_is_direct_with_nonzero_origin_and_never_needs_geoid(reference, geoid):
+    frame = CoordinateFrame(spec(**geoid))
+    local = frame.to_local("POINT Z (104.78 29.34 358)", reference)
+    assert local.z == 58
+    assert from_wkt(frame.to_wgs84(local, reference)).z == 358
+    assert frame.context["canonical_alt_reference"] == "EG"
+    assert frame.context["origin_alt_ellipsoid"] == 300
+    assert frame.context["local_axis_order"] == "east_m,north_m,ellipsoid_minus_origin_m"
+    assert "origin_alt_msl" not in frame.context
+
+
+@pytest.mark.parametrize("geoid", [{}, {"geoid_separation_m": 28},
+    {"geoid_source": "test-geoid"}, {"geoid_separation_m": 28, "geoid_source": " "}])
+def test_msl_requires_both_geoid_value_and_source(geoid):
+    frame = CoordinateFrame(spec(**geoid))
+    with pytest.raises(CoordinateError, match="geoid_separation_m and geoid_source"):
+        frame.to_local("POINT Z (104.78 29.34 330)", "MSL")
+    with pytest.raises(CoordinateError, match="geoid_separation_m and geoid_source"):
+        frame.to_wgs84(Point(0, 0, 58), "MSL")
+
+
+@pytest.mark.parametrize("separation", [28, -28, 0])
+def test_msl_conversion_obeys_h_equals_H_plus_N(separation):
+    frame = CoordinateFrame(spec(geoid_separation_m=separation, geoid_source="test-geoid"))
+    local = frame.to_local("POINT Z (104.78 29.34 330)", "MSL")
+    assert local.z == 30 + separation
+    assert from_wkt(frame.to_wgs84(local, "EG")).z == 330 + separation
+    assert from_wkt(frame.to_wgs84(local, "MSL")).z == 330
+
+
+def test_pressure_offset_targets_eg_and_does_not_apply_geoid_twice():
+    frame = CoordinateFrame(spec(geoid_separation_m=28, geoid_source="test-geoid",
+                                 height_corrections=[correction()]))
+    local = frame.to_local("POINT Z (104.78 29.34 320)", "QNH", AT)
+    assert local.z == 32
+    assert from_wkt(frame.to_wgs84(local, "MSL", AT)).z == 304
+    assert correction().target_reference == "EG"
+    with pytest.raises(ValidationError):
+        correction(target_reference="MSL")
