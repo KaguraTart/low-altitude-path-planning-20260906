@@ -34,6 +34,8 @@ class SceneRegistry:
     def register(self, value: Scene | dict) -> dict:
         from .scene import CompiledScene
         model = _parse(Scene, value)
+        if isinstance(value, Scene):
+            model = model.model_copy(deep=True)
         canonical = model.model_dump_json(exclude_none=True)
         version = hashlib.sha256(canonical.encode()).hexdigest()
         key = "scene-" + version[:20]
@@ -870,7 +872,72 @@ def _result(compiled,model,task,profile,motion,wait=0):
     return RouteResult.model_validate(result).model_dump(mode="json")
 
 
-def _prepare_candidate(index, task, model, compiled, dynamic_tracks, deadline, search_state, *, objective_legs=None):
+def _network_candidate_errors(compiled,model,candidate,motion):
+    task,profile = candidate["task"],candidate["profile"]
+    points,times = _final_samples(compiled,model,motion)
+    certified = profile.model_copy(update={"safety_margin_m":profile.safety_margin_m+.1})
+    errors = compiled.check_path(points,times,task,certified,
+        speed_transient_segments=_transient_segments(motion,times),
+        slope_angles=_motion_slope_angles(motion,times))
+    errors.extend(compiled.network.validate(task,points,times,candidate["network_trace"],motion=motion))
+    return errors
+
+
+def _prepare_candidate(index,task,model,compiled,dynamic_tracks,deadline,search_state,*,objective_legs=None):
+    """Keep objective preparation unchanged; graph choices retry full certificates."""
+    if task.network is None or objective_legs is not None:
+        return _prepare_candidate_one(index,task,model,compiled,dynamic_tracks,deadline,search_state,objective_legs=objective_legs)
+    profile = _profile(model,task); departure = _seconds(task.departure_time,model)
+    if departure<0 or departure>model.horizon_s:
+        raise PlanningError(ErrorCode.INVALID_INPUT,"Departure is outside scene horizon",{"task_id":task.id})
+    if task.route_mode=="strict" and not compiled.airways:
+        raise PlanningError(ErrorCode.INVALID_INPUT,"strict requires at least one active airway",{"task_id":task.id})
+    _,rtl = _rtl_task(compiled,task,profile)
+    if rtl and rtl["required"]:
+        raise PlanningError(ErrorCode.INVALID_INPUT,"Network selection cannot be combined with an RTL diversion")
+    # Globally active mission waypoint limits are path-independent. Do not
+    # enumerate geometric alternatives for an impossible declared mission.
+    from .scene import _public_violation
+    fixed = {rule.id for rule in compiled.rules.selected(task) if rule.rule_type=="WAYPOINT" and not rule.resource_ids and rule.scope is None and compiled.rules.active(rule,departure)}
+    if fixed:
+        endpoints=np.asarray([_local(compiled,task.start_wkt,task),_local(compiled,task.goal_wkt,task)])
+        errors=[_public_violation(error) for error in compiled.rules.check_path(endpoints,np.array([departure,departure]),task,profile) if error["rule_id"] in fixed]
+        if errors:
+            return None,_failure(task,"CONSTRAINT_VIOLATION","Mission waypoint constraints cannot be satisfied",errors,_report(compiled,task,errors))
+    choices = compiled.network.candidates(task,profile,departure,deadline)
+    last_failure = None
+    def following():
+        nonlocal last_failure
+        try:
+            for choice in choices:
+                if time.perf_counter()>=deadline:
+                    raise TimeoutError("Network candidate deadline exhausted")
+                candidate,failure = _prepare_candidate_one(index,task,model,compiled,dynamic_tracks,deadline,search_state,network_choice=choice)
+                if failure is not None:
+                    last_failure=failure
+                    if failure["code"]=="TIME_BUDGET_EXCEEDED":
+                        return None,failure
+                    continue
+                windows = compiled.network.departure_windows(candidate["motion"],candidate["network_trace"],candidate["windows"])
+                valid_windows=[]; errors=[]
+                for low,high in windows:
+                    shifted=candidate["motion"].shifted(low-float(candidate["times"][0]))
+                    errors=_network_candidate_errors(compiled,model,candidate,shifted)
+                    if not errors:
+                        valid_windows.append((low,high))
+                if not valid_windows:
+                    errors=errors or [{"code":"NETWORK_ROUTE","message":"No departure window respects actual graph edge validity"}]
+                    last_failure=_failure(task,"CONSTRAINT_VIOLATION","Graph candidate failed independent validation",errors,_report(compiled,task,errors))
+                    continue
+                candidate.update(windows=valid_windows,lo=valid_windows[0][0],hi=valid_windows[0][1],network_next=following)
+                return candidate,None
+        except (TimeoutError,_DeadlineExceeded) as exc:
+            return None,_failure(task,"TIME_BUDGET_EXCEEDED",str(exc))
+        return None,last_failure or _failure(task,"NETWORK_DISCONNECTED","No active, kinematically admissible directed network path connects the requested nodes",[{"code":"NETWORK_ROUTE","message":"Selected graph has no locally flyable connected walk"}])
+    return following()
+
+
+def _prepare_candidate_one(index, task, model, compiled, dynamic_tracks, deadline, search_state, *, objective_legs=None, network_choice=None):
     """Prepare one independent route; reservation and final checks stay global."""
     from . import native
     if task.objectives is not None and objective_legs is None:
@@ -899,6 +966,8 @@ def _prepare_candidate(index, task, model, compiled, dynamic_tracks, deadline, s
         legs=[]; network_trace=None
         if objective_legs is not None:
             legs=objective_legs
+        elif network_choice is not None:
+            legs,network_trace=network_choice
         elif task.network:
             selected=compiled.network.select(task,profile,departure,deadline)
             if selected is None:
@@ -961,6 +1030,41 @@ def _prepare_candidate(index, task, model, compiled, dynamic_tracks, deadline, s
     return {"index":index,"task":task,"profile":profile,"motion":motion,
                        "network_trace":network_trace,"points":cp,"times":ct,"h":h,"v":v,"lo":alternatives[0][0],
                        "hi":alternatives[0][1],"windows":alternatives,"latest":latest}, None
+
+
+def _network_reservation_alternative(candidate,index,candidates,delays,dynamic_tracks,accepted,accepted_times,horizontal,vertical,deadline):
+    """Retry topology against every already committed or pending reservation."""
+    from . import native
+    following=candidate.get("network_next")
+    if following is None:
+        return None,None,None
+    last_failure=None
+    while time.perf_counter()<deadline:
+        alternative,failure=following()
+        if alternative is None:
+            if failure is not None and failure["code"]=="TIME_BUDGET_EXCEEDED":
+                return None,None,failure
+            return None,None,last_failure or failure
+        fixed_paths=[p for p,_ in dynamic_tracks]+list(accepted)
+        fixed_times=[t for _,t in dynamic_tracks]+list(accepted_times)
+        dynamic_count=len(dynamic_tracks)
+        for offset,other in enumerate(candidates[index+1:],index+1):
+            delay=delays[dynamic_count+offset]
+            if delay is not None:
+                fixed_paths.append(other["points"]);fixed_times.append(other["times"]+delay)
+        for interval in alternative["windows"]:
+            try:
+                answer=native.schedule_paths(fixed_paths+[alternative["points"]],fixed_times+[alternative["times"]],
+                    [[float(t[0])]*2 for t in fixed_times]+[interval],
+                    horizontal_separation=horizontal,vertical_separation=vertical,fixed_count=len(fixed_paths),
+                    deadline_ms=_native_deadline_ms(deadline))
+            except _DeadlineExceeded:
+                return None,None,_failure(alternative["task"],"TIME_BUDGET_EXCEEDED","Network alternative reservation deadline exhausted")
+            delay=answer["delays"][-1]
+            if delay is not None:
+                return alternative,delay,None
+        last_failure=_failure(alternative["task"],"SEARCH_NOT_FOUND","No safe reservation window for graph alternative",[{"code":"NETWORK_ROUTE","message":"Reservations cannot fit the graph edge-valid launch windows"}])
+    return None,None,_failure(candidate["task"],"TIME_BUDGET_EXCEEDED","Network alternative reservation deadline exhausted")
 
 
 def plan_batch_v2(*,tasks,scene_id=None,scene=None,request_id=None,time_budget_s: float | None=None,execution=None):
@@ -1049,36 +1153,51 @@ def plan_batch_v2(*,tasks,scene_id=None,scene=None,request_id=None,time_budget_s
     scheduled_at=time.perf_counter()
     accepted=[];accepted_times=[];accepted_profiles=[];accepted_tasks=[]
     for k,c in enumerate(candidates):
-        task,profile,motion,index=c["task"],c["profile"],c["motion"],c["index"]
         delay=scheduled["delays"][dynamic_count+k]
-        if delay is None:
-            statuses=scheduled.get("statuses",[])
-            timed_out=(time.perf_counter()>=deadline or scheduled.get("status")=="deadline_exceeded"
-                       or (dynamic_count+k<len(statuses) and statuses[dynamic_count+k]=="deadline_exceeded"))
-            results[index]=_failure(task,"TIME_BUDGET_EXCEEDED" if timed_out else "SEARCH_NOT_FOUND","No safe departure interval within arrival window");continue
-        if delay:
-            motion=motion.shifted(delay)
-        cp,ct=c["points"],c["times"]+delay
-        final_points,final_times=_final_samples(compiled,model,motion)
-        transients=_transient_segments(motion,final_times)
-        rtl=compiled.rules.rtl_requirements(task,profile)
-        certified_profile=profile.model_copy(update={"safety_margin_m":profile.safety_margin_m+.1})
-        violations=compiled.check_path(final_points,final_times,task,certified_profile,
-            phase="rtl" if rtl and rtl["required"] else "route",speed_transient_segments=transients,
-            slope_angles=_motion_slope_angles(motion,final_times))
-        if task.network:
-            violations.extend(compiled.network.validate(task,final_points,final_times,c["network_trace"],motion=motion))
-        if ct[-1]>c["latest"]+1e-7:
-            violations.append({"code":"TIME","message":"Latest arrival exceeded"})
-        if task.earliest_arrival and ct[-1]<_seconds(task.earliest_arrival,model)-1e-7:
-            violations.append({"code":"TIME","message":"Earliest arrival not satisfied"})
-        if violations:
-            results[index]=_failure(task,"CONSTRAINT_VIOLATION","Final independent validation failed",violations,_report(compiled,task,violations));continue
-        results[index]=_result(compiled,model,task,profile,motion,delay)
-        results[index]["network_route"]=c["network_trace"]
-        c["accepted_motion"]=motion
-        c["accepted_delay"]=delay
-        accepted.append(cp);accepted_times.append(ct);accepted_profiles.append(profile);accepted_tasks.append(task)
+        last_failure=None
+        while True:
+            task,profile,motion,index=c["task"],c["profile"],c["motion"],c["index"]
+            violations=[]
+            if delay is not None:
+                if delay:
+                    motion=motion.shifted(delay)
+                cp,ct=c["points"],c["times"]+delay
+                final_points,final_times=_final_samples(compiled,model,motion)
+                transients=_transient_segments(motion,final_times)
+                rtl=compiled.rules.rtl_requirements(task,profile)
+                certified_profile=profile.model_copy(update={"safety_margin_m":profile.safety_margin_m+.1})
+                violations=compiled.check_path(final_points,final_times,task,certified_profile,
+                    phase="rtl" if rtl and rtl["required"] else "route",speed_transient_segments=transients,
+                    slope_angles=_motion_slope_angles(motion,final_times))
+                if task.network:
+                    violations.extend(compiled.network.validate(task,final_points,final_times,c["network_trace"],motion=motion))
+                if ct[-1]>c["latest"]+1e-7:
+                    violations.append({"code":"TIME","message":"Latest arrival exceeded"})
+                if task.earliest_arrival and ct[-1]<_seconds(task.earliest_arrival,model)-1e-7:
+                    violations.append({"code":"TIME","message":"Earliest arrival not satisfied"})
+                if not violations:
+                    results[index]=_result(compiled,model,task,profile,motion,delay)
+                    results[index]["network_route"]=c["network_trace"]
+                    c["accepted_motion"]=motion;c["accepted_delay"]=delay
+                    accepted.append(cp);accepted_times.append(ct);accepted_profiles.append(profile);accepted_tasks.append(task)
+                    break
+                last_failure=_failure(task,"CONSTRAINT_VIOLATION","Final independent validation failed",violations,_report(compiled,task,violations))
+            if task.network:
+                alternative,new_delay,failure=_network_reservation_alternative(c,k,candidates,scheduled["delays"],dynamic_tracks,accepted,accepted_times,h,v,deadline)
+                if alternative is not None:
+                    c=alternative;candidates[k]=c;delay=new_delay
+                    scheduled["delays"][dynamic_count+k]=delay
+                    paths[dynamic_count+k]=c["points"];timings[dynamic_count+k]=c["times"]
+                    continue
+                last_failure=failure or last_failure
+            if last_failure is not None:
+                results[index]=last_failure
+            elif delay is None:
+                statuses=scheduled.get("statuses",[])
+                timed_out=(time.perf_counter()>=deadline or scheduled.get("status")=="deadline_exceeded"
+                    or (dynamic_count+k<len(statuses) and statuses[dynamic_count+k]=="deadline_exceeded"))
+                results[index]=_failure(task,"TIME_BUDGET_EXCEEDED" if timed_out else "SEARCH_NOT_FOUND","No safe departure interval within arrival window")
+            break
     # Re-run independent pair validation, not only trust scheduling success.
     conflicts=[]
     if accepted:

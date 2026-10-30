@@ -95,64 +95,58 @@ class Network:
         multiplier = weighted/length if length>1e-12 else self.compiled.cost_multiplier(points[0],at,task,profile)
         return raw*multiplier
 
-    def select(self, task, profile, departure, deadline):
-        from .engine import _geometry_ok
-        selection = task.network
-        for edge in self.graph.edges:
-            if time.perf_counter() >= deadline:
-                raise TimeoutError("Network preparation deadline exhausted")
-            if selection.weight_field not in edge.weights:
-                invalid(f"Missing weight field {selection.weight_field} on edge {edge.id}")
-        adjacency = {n: [] for n in self.nodes}
-        for a, b, edge, points in self.arcs(departure):
-            if time.perf_counter() >= deadline:
-                raise TimeoutError("Network preparation deadline exhausted")
-            if self.airways[edge.airway_id].allowed_profile_ids and profile.id not in self.airways[edge.airway_id].allowed_profile_ids:
-                continue
-            if not self.edge_geometry_allowed(edge,points,profile,departure,deadline):
-                continue
-            admissible = True
-            for p,q in zip(points,points[1:]):
-                if time.perf_counter() >= deadline:
-                    raise TimeoutError("Network admissibility deadline exhausted")
-                if not _geometry_ok(self.compiled,p,q,departure,task,profile):
-                    admissible = False; break
-            if admissible:
-                effective = self.weighted_cost(edge,points,task,profile,departure,deadline)
-                if math.isfinite(effective):
-                    adjacency[a].append((b, edge, points, effective))
-        nodes = [selection.start_node_id]; edges = []; legs = []; cost = 0.
-        for goal in [*selection.via_node_ids, selection.goal_node_id]:
-            start = nodes[-1]
-            queue = [(0., start)]; distances = {start: 0.}; previous = {}
-            while queue:
-                if time.perf_counter() >= deadline:
-                    raise TimeoutError("Network search deadline exhausted")
-                d, node = heapq.heappop(queue)
-                if d != distances[node]:
+    def edge_intervals(self,points,times,node_ids,motion):
+        starts = [float(times[0])]; progress = 0.
+        for node in node_ids[1:-1]:
+            distances,positions,fractions = _projections(self.nodes[node],points)
+            distances = np.where(positions>=progress-1e-6,distances,math.inf)
+            i = int(np.argmin(distances)); progress = float(positions[i])
+            passed = float(times[0]) if len(points)==1 else float(times[i]+fractions[i]*(times[i+1]-times[i]))
+            starts.append(passed)
+        starts.append(float(times[-1]))
+        edge_starts,edge_ends = starts[:-1],starts[1:]
+        if len(node_ids)==1:
+            return [],[]
+        for index,node in enumerate(node_ids[1:-1]):
+            position = self.nodes[node]
+            for primitive,begin in zip(motion.primitives,motion.starts):
+                if primitive.kind!='arc' or not begin-1e-7<=starts[index+1]<=begin+primitive.duration+1e-7:
                     continue
-                if node == goal:
-                    break
-                for other, edge, points, effective in adjacency[node]:
-                    nd = d + effective
-                    if not math.isfinite(nd):
-                        invalid("Network cumulative cost exceeds finite numeric range")
-                    if nd < distances.get(other, math.inf):
-                        distances[other] = nd
-                        previous[other] = (node, edge, points)
-                        heapq.heappush(queue, (nd, other))
-            if goal not in distances:
-                return None
-            chain = []; current = goal
-            while current != start:
-                parent, edge, points = previous[current]
-                chain.append((current, edge, points)); current = parent
-            for node, edge, points in reversed(chain):
-                nodes.append(node); edges.append(edge.id); legs.append(points)
-            cost += distances[goal]
-        if not legs:
-            legs = [np.asarray([self.nodes[nodes[0]]])]
-        return legs, {"network_version": self.graph.version, "node_ids": nodes, "edge_ids": edges, "weight_field": selection.weight_field, "total_cost": sum(self.edges[e].weights[selection.weight_field] for e in edges), "effective_cost": cost}
+                incoming = primitive.start[:2]-primitive.center[:2]
+                outgoing = primitive.end[:2]-primitive.center[:2]
+                incoming = np.array([-incoming[1],incoming[0]])*np.sign(primitive.sweep)
+                outgoing = np.array([-outgoing[1],outgoing[0]])*np.sign(primitive.sweep)
+                parameters = np.linalg.lstsq(np.column_stack([incoming,outgoing]),primitive.end[:2]-primitive.start[:2],rcond=None)[0]
+                corner = primitive.start[:2]+parameters[0]*incoming
+                if np.linalg.norm(corner-position[:2])<=.1:
+                    edge_ends[index] = max(edge_ends[index],begin+primitive.duration)
+                    edge_starts[index+1] = min(edge_starts[index+1],begin)
+        return edge_starts,edge_ends
+
+    def departure_windows(self,motion,trace,windows):
+        """Clip reservation launch windows by every edge's real occupancy."""
+        starts,ends = self.edge_intervals(motion.points,motion.times,trace['node_ids'],motion)
+        launch = float(motion.times[0]); minimum = -math.inf; maximum = math.inf
+        for edge_id,start,end in zip(trace['edge_ids'],starts,ends):
+            edge = self.edges[edge_id]
+            for resource in (edge,self.airways[edge.airway_id]):
+                if resource.valid_from:
+                    minimum = max(minimum,launch+(resource.valid_from-self.compiled.time_origin).total_seconds()-start)
+                if resource.valid_to:
+                    maximum = min(maximum,launch+(resource.valid_to-self.compiled.time_origin).total_seconds()-end)
+        return [(max(a,minimum),min(b,maximum)) for a,b in windows if max(a,minimum)<=min(b,maximum)+1e-7]
+
+    def candidates(self,task,profile,departure,deadline):
+        """Yield weighted, locally flyable expanded-state paths lazily.
+
+        Local geometry is finite-state. Whole-route resource/timing constraints
+        remain independent certificates and can request the next weighted path.
+        """
+        choices = _GraphChoices(self,task,profile,departure,deadline)
+        yield from choices.candidates()
+
+    def select(self,task,profile,departure,deadline):
+        return next(self.candidates(task,profile,departure,deadline),None)
 
     def validate(self, task, points, times, trace=None, motion=None):
         """Independently reconstruct the selected walk's flyable geometry.
@@ -247,34 +241,7 @@ class Network:
                 if not len(candidates):
                     return False
                 progress = float(min(candidates))
-            junction_times = [float(times[0])]; after = 0.
-            for node in candidate["node_ids"][1:-1]:
-                distances, positions, fractions = projections(self.nodes[node], points)
-                distances = np.where(positions >= after-1e-6, distances, math.inf)
-                i = int(np.argmin(distances))
-                if not math.isfinite(float(distances[i])):
-                    return False
-                after = float(positions[i])
-                junction_times.append(float(times[i]+fractions[i]*(times[i+1]-times[i])))
-            junction_times.append(float(times[-1]))
-            edge_starts = junction_times[:-1].copy()
-            edge_ends = junction_times[1:].copy()
-            turn_motion = motion if motion is not None else expected
-            for index,node in enumerate(candidate["node_ids"][1:-1]):
-                position = self.nodes[node]
-                for primitive,start_time in zip(turn_motion.primitives,turn_motion.starts):
-                    if primitive.kind != "arc" or not start_time-1e-7 <= junction_times[index+1] <= start_time+primitive.duration+1e-7:
-                        continue
-                    incoming = primitive.start[:2]-primitive.center[:2]
-                    outgoing = primitive.end[:2]-primitive.center[:2]
-                    incoming = np.array([-incoming[1],incoming[0]]) * np.sign(primitive.sweep)
-                    outgoing = np.array([-outgoing[1],outgoing[0]]) * np.sign(primitive.sweep)
-                    parameters = np.linalg.lstsq(np.column_stack([incoming,outgoing]),primitive.end[:2]-primitive.start[:2],rcond=None)[0]
-                    corner = primitive.start[:2]+parameters[0]*incoming
-                    if np.linalg.norm(corner-position[:2]) > .1:
-                        continue
-                    edge_ends[index] = max(edge_ends[index],start_time+primitive.duration)
-                    edge_starts[index+1] = min(edge_starts[index+1],start_time)
+            edge_starts,edge_ends = self.edge_intervals(points,times,candidate["node_ids"],motion if motion is not None else expected)
             if not all(self.active(self.edges[e],a,b) for e,a,b in zip(candidate["edge_ids"],edge_starts,edge_ends)):
                 return False
             for edge_id,line,start in zip(candidate["edge_ids"],legs,edge_starts):
@@ -611,3 +578,351 @@ def analyze_network_v2(*, scene_id=None, scene=None, at=None):
     except ValidationError as exc:
         invalid("Network analysis at must be a timezone-aware timestamp: " + str(exc.errors()[0]["msg"]))
     return compiled.network.analyze((instant-model.time_origin).total_seconds())
+
+
+class _GraphChoices:
+    """Task-local finite geometric states and lazy loopless weighted deviations."""
+    envelope_keys = ('min_turn_radius_m','max_turn_angle_deg','climb_speed_mps','descent_speed_mps')
+
+    def __init__(self,network,task,profile,departure,deadline):
+        from .engine import _geometry_ok,_limits,_airway_motion_limits
+        self.network,self.compiled,self.task,self.profile = network,network.compiled,task,profile
+        self.departure,self.deadline = departure,deadline
+        self.base = _limits(self.compiled,task,profile)
+        self.base.setdefault('max_turn_angle_deg',180.)
+        self.base_env = self.env(self.base)
+        self.arcs = []; self.adjacency = {n:[] for n in network.nodes}
+        self.cert_profile = profile.model_copy(update={'safety_margin_m':profile.safety_margin_m+.1})
+        for edge in network.graph.edges:
+            self.check_deadline()
+            if task.network.weight_field not in edge.weights:
+                invalid(f'Missing weight field {task.network.weight_field} on edge {edge.id}')
+        for start,end,edge,line in network.arcs(departure):
+            self.check_deadline()
+            if network.airways[edge.airway_id].allowed_profile_ids and profile.id not in network.airways[edge.airway_id].allowed_profile_ids:
+                continue
+            if not network.edge_geometry_allowed(edge,line,profile,departure,deadline):
+                continue
+            allowed = True
+            for a,b in zip(line,line[1:]):
+                self.check_deadline()
+                if not _geometry_ok(self.compiled,a,b,departure,task,profile):
+                    allowed = False; break
+            if not allowed:
+                continue
+            cost = network.weighted_cost(edge,line,task,profile,departure,deadline)
+            if not math.isfinite(cost):
+                continue
+            envelope = self.env(_airway_motion_limits(self.compiled,task,self.base,line))
+            index = len(self.arcs)
+            self.arcs.append((start,end,edge,line,cost,envelope))
+            self.adjacency[start].append(index)
+        self.cache = {}
+
+    def check_deadline(self):
+        if time.perf_counter() >= self.deadline:
+            raise TimeoutError('Network feasible-alternative deadline exhausted')
+
+    def env(self,limits):
+        return tuple(float(limits.get(key,180. if key=='max_turn_angle_deg' else self.base[key])) for key in self.envelope_keys)
+
+    @staticmethod
+    def combine(first,second):
+        return (max(first[0],second[0]),*(min(a,b) for a,b in zip(first[1:],second[1:])))
+
+    def limits(self,envelope):
+        return {**self.base,**dict(zip(self.envelope_keys,envelope))}
+
+    def advance_via(self,node,via):
+        wanted = self.task.network.via_node_ids
+        while via<len(wanted) and wanted[via]==node:
+            via += 1
+        return via
+
+    @staticmethod
+    def clean_tagged(values):
+        result = []
+        for point,tag in values:
+            if result and np.linalg.norm(point-result[-1][0]) <= 1e-8:
+                if tag is not None:
+                    result[-1] = point,tag
+                continue
+            while len(result)>=2:
+                a,b = result[-2][0],result[-1][0]
+                u,v = b-a,point-b
+                if np.linalg.norm(np.cross(u,v)) <= 1e-7*np.linalg.norm(u)*np.linalg.norm(v) and np.dot(u,v)>0:
+                    result.pop()
+                else:
+                    break
+            result.append((point,tag))
+        return result
+
+    @staticmethod
+    def radius(limits):
+        radius = limits['min_turn_radius_m']
+        minimum = limits.get('min_speed_mps',0)
+        if minimum>0:
+            radius = max(radius,minimum*minimum/min(limits['acceleration_mps2'],limits['deceleration_mps2']),minimum/math.radians(limits['max_yaw_rate_deg_s']))
+        return radius
+
+    def padded(self,values,limits,pad_start=False,pad_end=True):
+        """Leave the unfinished outgoing ray open until its next actual turn.
+
+        Padding is used only for local proof. Returned mission geometry always
+        uses the original vertices and the final stop is checked without padding.
+        """
+        points = np.asarray([p for p,_ in values]).copy()
+        if len(points)<2:
+            return points
+        radius = self.radius(limits)
+        minimum = limits.get('min_speed_mps',0)
+        acceleration_distance = minimum*minimum/min(limits['acceleration_mps2'],limits['deceleration_mps2'])
+        if pad_start:
+            delta = points[0]-points[1]; horizontal = float(np.linalg.norm(delta[:2]))
+            if horizontal>1e-8:
+                extension = radius+acceleration_distance
+                if len(points)>2:
+                    a,b = points[1]-points[0],points[2]-points[1]
+                    if min(np.linalg.norm(a[:2]),np.linalg.norm(b[:2]))>1e-8:
+                        angle = math.atan2(a[0]*b[1]-a[1]*b[0],a[:2]@b[:2])
+                        extension += radius*abs(math.tan(angle/2))
+                points[0] += delta/horizontal*(extension+horizontal)
+        delta = points[-1]-points[-2]; horizontal = float(np.linalg.norm(delta[:2]))
+        if pad_end and horizontal>1e-8:
+            extension = radius+acceleration_distance
+            if len(points)>2:
+                a,b = points[-2]-points[-3],delta
+                if np.linalg.norm(a[:2])>1e-8:
+                    angle = math.atan2(a[0]*b[1]-a[1]*b[0],a[:2]@b[:2])
+                    extension += radius*abs(math.tan(angle/2))
+            points[-1] += delta/horizontal*(extension+horizontal)
+        return points
+
+    def cover_arc(self,primitive,airway_ids):
+        from .scene import _covers
+        from .engine import _geometry_ok
+        radius = primitive.radius
+        step = 2*math.acos(max(-1.,min(1.,1-.025/max(radius,.025))))
+        count = max(1,math.ceil(abs(primitive.sweep)/max(step,1e-12)))
+        previous = primitive.start
+        margin,vertical = self.compiled.clearance(self.cert_profile)
+        for i in range(1,count+1):
+            self.check_deadline()
+            point = primitive.position(primitive.length*i/count)
+            if not _geometry_ok(self.compiled,previous,point,self.departure,self.task,self.cert_profile):
+                return False
+            covered = []
+            for airway_id in airway_ids:
+                airway = self.network.prepared_airways[airway_id]
+                if airway.direction!='BOTH':
+                    a,b = airway.centerline.project(Point(previous[:2])),airway.centerline.project(Point(point[:2]))
+                    if (airway.direction=='FORWARD' and b<a-1e-7) or (airway.direction=='REVERSE' and b>a+1e-7):
+                        continue
+                covered.extend(self.compiled.volume_intervals(airway,previous,point,self.departure,self.departure,horizontal=margin,vertical=vertical,inside=True))
+            if not _covers(covered):
+                return False
+            previous = point
+        return True
+
+    def local(self,state,arc_id,envelope):
+        from .motion import MotionError,build_motion
+        from . import native
+        key = state[1],state[2],state[5],arc_id,envelope
+        if key in self.cache:
+            return self.cache[key]
+        self.check_deadline()
+        _,previous,tail,_,_,anchored = state
+        _,_,edge,line,_,_ = self.arcs[arc_id]
+        values = [(np.asarray(p),None) for p in tail]
+        if values:
+            values[-1] = values[-1][0],('junction',previous,arc_id)
+        values.extend((p,('internal',arc_id)) for p in line[1:-1])
+        if len(line)>1:
+            values.append((line[-1],None))
+        values = self.clean_tagged(values)
+        limits = self.limits(envelope)
+        try:
+            padded = self.padded(values,limits,pad_start=not anchored)
+            candidate = build_motion(padded,limits,self.departure)
+            if not native.validate_motion(candidate.primitives,limits,starts=candidate.starts)['valid']:
+                raise MotionError('Local analytic motion is infeasible')
+            turns = []
+            for i in range(1,len(values)-1):
+                a,b = padded[i]-padded[i-1],padded[i+1]-padded[i]
+                if min(np.linalg.norm(a[:2]),np.linalg.norm(b[:2]))<=1e-8:
+                    continue
+                angle = math.atan2(a[0]*b[1]-a[1]*b[0],a[:2]@b[:2])
+                if abs(angle)>1e-8:
+                    turns.append(values[i][1])
+            laws = [p for p in candidate.primitives if p.kind in {'arc','yaw'}]
+            if len(turns)!=len(laws):
+                raise MotionError('Local turn correspondence is incomplete')
+            for tag,primitive in zip(turns,laws):
+                if tag is None:
+                    continue
+                if primitive.kind=='yaw':
+                    if not self.profile.can_hover:
+                        raise MotionError('Aircraft cannot hover through a yaw transition')
+                    continue
+                if tag[0]=='junction':
+                    incoming,outgoing = tag[1:]
+                    ids = {self.arcs[outgoing][2].airway_id}
+                    if incoming is not None:
+                        ids.add(self.arcs[incoming][2].airway_id)
+                else:
+                    ids = {edge.airway_id}
+                if not self.cover_arc(primitive,ids):
+                    raise MotionError('Selected incident corridors do not cover the actual turn')
+            result = (tuple(tuple(float(v) for v in p) for p,_ in values[-4:]),anchored and len(values)<=4)
+        except (ValueError,MotionError):
+            result = None
+        self.cache[key] = result
+        return result
+
+    def candidates(self):
+        import itertools
+        # A full path's airway envelope is the componentwise fold of its edge
+        # envelopes. Solve each finite envelope so future constraints cannot
+        # invalidate a settled earlier corner unnoticed by state dominance.
+        choices = [sorted({self.base_env[i],*(a[5][i] for a in self.arcs)}) for i in range(len(self.envelope_keys))]
+        heap = []; serial = itertools.count()
+        for envelope in itertools.product(*choices):
+            self.check_deadline()
+            solver = _ExpandedPaths(self,tuple(envelope))
+            generator = solver.paths()
+            first = next(generator,None)
+            if first is not None:
+                heapq.heappush(heap,(first[0],next(serial),first,generator))
+        while heap:
+            self.check_deadline()
+            _,_,path,generator = heapq.heappop(heap)
+            _,states,arc_ids = path
+            chosen = [a for a in arc_ids if a is not None]
+            node_ids = [self.task.network.start_node_id]+[self.arcs[a][1] for a in chosen]
+            edge_ids = [self.arcs[a][2].id for a in chosen]
+            legs = [self.arcs[a][3] for a in chosen]
+            if not legs:
+                legs = [np.asarray([self.network.nodes[node_ids[0]]])]
+            yield legs,{'network_version':self.network.graph.version,'node_ids':node_ids,'edge_ids':edge_ids,
+                        'weight_field':self.task.network.weight_field,
+                        'total_cost':sum(self.arcs[a][2].weights[self.task.network.weight_field] for a in chosen),
+                        'effective_cost':path[0]}
+            following = next(generator,None)
+            if following is not None:
+                heapq.heappush(heap,(following[0],next(serial),following,generator))
+
+
+class _ExpandedPaths:
+    """Dijkstra over finite kinematic states; Yen deviations are lazy and uncapped."""
+    goal = ('__network_goal__',)
+
+    def __init__(self,context,envelope):
+        self.context,self.envelope = context,envelope
+        node = context.task.network.start_node_id
+        self.start = (node,None,(tuple(context.network.nodes[node]),),context.advance_via(node,0),context.base_env,True)
+        self.neighbor_cache = {}; self.terminal_cache = {}
+
+    def terminal(self,state):
+        from .motion import build_motion,MotionError
+        from . import native
+        if state in self.terminal_cache:
+            return self.terminal_cache[state]
+        c = self.context
+        answer = False
+        if state[0]==c.task.network.goal_node_id and state[3]==len(c.task.network.via_node_ids) and state[4]==self.envelope:
+            try:
+                values=[(np.asarray(p),None) for p in state[2]]
+                points=c.padded(values,c.limits(self.envelope),pad_start=not state[5],pad_end=False)
+                candidate = build_motion(points,c.limits(self.envelope),c.departure)
+                answer = bool(native.validate_motion(candidate.primitives,c.limits(self.envelope),starts=candidate.starts)['valid'])
+            except (ValueError,MotionError):
+                pass
+        self.terminal_cache[state] = answer
+        return answer
+
+    def neighbors(self,state):
+        if state==self.goal:
+            return []
+        if state in self.neighbor_cache:
+            return self.neighbor_cache[state]
+        c = self.context; c.check_deadline()
+        result = [(self.goal,None,0.)] if self.terminal(state) else []
+        for arc_id in c.adjacency[state[0]]:
+            c.check_deadline()
+            _,node,_,_,cost,requirement = c.arcs[arc_id]
+            actual = c.combine(state[4],requirement)
+            if c.combine(actual,self.envelope)!=self.envelope:
+                continue
+            local = c.local(state,arc_id,self.envelope)
+            if local is None:
+                continue
+            tail,anchored = local
+            following = node,arc_id,tail,c.advance_via(node,state[3]),actual,anchored
+            result.append((following,arc_id,cost))
+        self.neighbor_cache[state] = result
+        return result
+
+    def shortest(self,start,banned_states=frozenset(),banned_arcs=frozenset()):
+        import itertools
+        c = self.context; serial = itertools.count()
+        queue = [(0.,next(serial),start)]; distance = {start:0.}; previous = {}
+        while queue:
+            c.check_deadline()
+            cost,_,state = heapq.heappop(queue)
+            if cost!=distance[state]:
+                continue
+            if state==self.goal:
+                states = [state]; arcs = []
+                while state!=start:
+                    parent,arc_id = previous[state]
+                    states.append(parent); arcs.append(arc_id); state = parent
+                return cost,list(reversed(states)),list(reversed(arcs))
+            for other,arc_id,weight in self.neighbors(state):
+                if other in banned_states or (state,other) in banned_arcs:
+                    continue
+                candidate = cost+weight
+                if not math.isfinite(candidate):
+                    invalid('Network cumulative cost exceeds finite numeric range')
+                if candidate < distance.get(other,math.inf):
+                    distance[other] = candidate; previous[other] = state,arc_id
+                    heapq.heappush(queue,(candidate,next(serial),other))
+        return None
+
+    def paths(self):
+        import itertools
+        first = self.shortest(self.start)
+        if first is None:
+            return
+        accepted = []; pending = []; seen = {tuple(first[1])}; serial = itertools.count()
+        current = first
+        while current is not None:
+            self.context.check_deadline()
+            yield current
+            accepted.append(current)
+            cost,states,arcs = current
+            root_cost = 0.
+            for i in range(len(states)-1):
+                self.context.check_deadline()
+                root = states[:i+1]
+                banned = {(p[1][i],p[1][i+1]) for p in accepted if len(p[1])>i+1 and p[1][:i+1]==root}
+                spur = self.shortest(root[-1],frozenset(root[:-1]),frozenset(banned))
+                if spur is not None:
+                    combined_states = root[:-1]+spur[1]
+                    signature = tuple(combined_states)
+                    if signature not in seen:
+                        seen.add(signature)
+                        combined = root_cost+spur[0],combined_states,arcs[:i]+spur[2]
+                        heapq.heappush(pending,(combined[0],next(serial),combined))
+                if arcs[i] is not None:
+                    root_cost += self.context.arcs[arcs[i]][4]
+            current = heapq.heappop(pending)[2] if pending else None
+
+
+def _projections(point,line):
+    if len(line)==1:
+        return np.array([np.linalg.norm(point-line[0])]),np.array([0.]),np.array([0.])
+    delta = np.diff(line,axis=0); lengths = np.linalg.norm(delta,axis=1)
+    fraction = np.clip(np.sum((point-line[:-1])*delta,axis=1)/np.maximum(np.sum(delta*delta,axis=1),1e-30),0,1)
+    distances = np.linalg.norm(point-(line[:-1]+fraction[:,None]*delta),axis=1)
+    offsets = np.r_[0.,np.cumsum(lengths)]
+    return distances,offsets[:-1]+fraction*lengths,fraction

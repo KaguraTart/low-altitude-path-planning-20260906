@@ -368,6 +368,13 @@ def test_memoized_fallback_preserves_broad_valid_prefix_after_narrow_turn_failur
     assert explicit['valid'], explicit
     inferred = validate_route_v2(**request,**args)
     assert inferred['valid'], inferred
+    planned = plan_single_v2(**request)
+    assert planned['status'] == 'planned', planned
+    assert planned['network_route']['edge_ids'] == ['good','bc','cd']
+    request['task']['network']['via_node_ids'] = ['b','b']
+    via = plan_single_v2(**request)
+    assert via['status'] == 'planned', via
+    assert via['network_route']['edge_ids'] == ['good','bc','cd']
 
 
 def test_memoized_fallback_rejects_infeasible_internal_edge_corners_before_merge():
@@ -387,6 +394,10 @@ def test_memoized_fallback_rejects_infeasible_internal_edge_corners_before_merge
     assert validate_route_v2(**request,**args,network_route=trace)['valid']
     inferred = validate_route_v2(**request,**args)
     assert inferred['valid'], inferred
+    planned = plan_single_v2(**request)
+    assert planned['status'] == 'planned', planned
+    assert planned['network_route']['edge_ids'] == ['good','bc','cd']
+    assert planned['network_route']['total_cost'] == 5
 
 
 def test_nonincident_selected_airway_cannot_authorize_an_earlier_junction():
@@ -416,3 +427,98 @@ def test_nonincident_selected_airway_cannot_authorize_an_earlier_junction():
         checked = validate_route_v2(**request,**args,**extra)
         assert not checked['valid'], checked
         assert any(v['code'] == 'NETWORK_ROUTE' for v in checked['violations'])
+
+
+def test_graph_search_avoids_adjacent_turn_arcs_that_overlap_on_short_edge():
+    request = graph_request(); frame = CoordinateFrame(request['scene']['coordinates'])
+    request['scene']['airways'][0]['widthMeters'] = 1000
+    positions = {'a':(100,100,80),'b':(500,100,80),'c':(500,180,80),'d':(900,180,80),'g':(100,350,80),'h':(900,350,80)}
+    request['scene']['airway_graph'] = {'version':'overlapping-cuts','nodes':[{'id':node,'point_wkt':frame.to_wgs84(Point(point))} for node,point in positions.items()], 'edges':[
+        {'id':start+end,'from_node':start,'to_node':end,'airway_id':'demo-airway','direction':'FORWARD','weights':{'distance':cost}}
+        for start,end,cost in [('a','b',1),('b','c',1),('c','d',1),('a','g',2),('g','h',2),('h','d',2)]]}
+    request['task']['aircraft'] = {'min_turn_radius_m':60}
+    request['scene']['rules'] = [{'id':'turn-overlap','rule_type':'TURN','content':{'maxTurnAngle':180,'minTurnRadius':60}}]
+    route = plan_single_v2(**request)
+    assert route['status'] == 'planned', route
+    assert route['network_route']['edge_ids'] == ['ag','gh','hd']
+    assert route['network_route']['total_cost'] == 6
+    assert validate_route_v2(**request,trajectory_wkt=route['trajectory_wkt'],vertex_times_s=route['vertex_times_s'],motion_segments=route['motion_segments'])['valid']
+
+
+def test_graph_tries_weighted_alternative_when_cheapest_edges_expire_during_flight():
+    request = graph_request()
+    for edge in request['scene']['airway_graph']['edges'][:2]:
+        edge['valid_to'] = '2026-10-16T09:00:01+08:00'
+    route = plan_single_v2(**request)
+    assert route['status'] == 'planned', route
+    assert route['network_route']['edge_ids'] == ['ac','cd']
+    assert route['network_route']['total_cost'] == 6
+
+
+def test_graph_tries_alternative_after_global_reservation_cannot_fit_cheap_edge_expiry():
+    request = graph_request(); request['task']['aircraft'] = {'min_turn_radius_m':20}
+    first = plan_single_v2(**request)
+    expiry = datetime.fromisoformat(request['scene']['time_origin'])+timedelta(seconds=first['vertex_times_s'][-1]+1)
+    for edge in request['scene']['airway_graph']['edges'][:2]:
+        edge['valid_to'] = expiry.isoformat()
+    result = plan_batch_v2(scene=request['scene'],tasks=[dict(request['task'],id='a'),dict(request['task'],id='b')])
+    assert result['success_count'] == 2, result
+    assert not result['conflicts']
+    assert result['routes'][0]['network_route']['edge_ids'] == ['ab','bd']
+    assert result['routes'][1]['network_route']['edge_ids'] == ['ac','cd']
+    assert result['routes'][1]['metrics']['wait_time_s'] > 0
+    for task,route in zip([dict(request['task'],id='a'),dict(request['task'],id='b')],result['routes']):
+        assert validate_route_v2(scene=request['scene'],task=task,trajectory_wkt=route['trajectory_wkt'],vertex_times_s=route['vertex_times_s'],motion_segments=route['motion_segments'],network_route=route['network_route'])['valid']
+
+
+def test_graph_lazy_alternative_survives_whole_route_endurance_failure():
+    request = graph_request(); request['task']['aircraft'] = {'min_turn_radius_m':20}
+    expensive = deepcopy(request); expensive['task']['network']['weight_field'] = 'risk'
+    cheap_route = plan_single_v2(**request); short_route = plan_single_v2(**expensive)
+    assert short_route['metrics']['flight_time_s'] < cheap_route['metrics']['flight_time_s']
+    request['task']['aircraft']['endurance_s'] = (cheap_route['metrics']['flight_time_s']+short_route['metrics']['flight_time_s'])/2
+    route = plan_single_v2(**request)
+    assert route['status'] == 'planned', route
+    assert route['network_route']['edge_ids'] == ['ac','cd']
+
+
+def test_typed_scene_registration_snapshots_caller_owned_mutable_models():
+    from uav_planner.v2.models import Scene
+    request = graph_request()
+    request['scene']['airway_graph']['version'] = 'immutable-typed-snapshot'
+    request['scene']['network_version'] = 'immutable-typed-snapshot'
+    original = Scene.model_validate(request['scene'])
+    info = register_scene(original)
+    before = plan_single_v2(scene_id=info['scene_id'],task=request['task'])
+    assert before['status'] == 'planned', before
+    original.airways[0].widthMeters = 1
+    original.airway_graph.nodes[0].point_wkt = original.airway_graph.nodes[1].point_wkt
+    original.bounds.x_max = 100
+    registered,compiled,version,_ = registry.get(info['scene_id'])
+    assert registered is not original
+    assert registered.airways[0].widthMeters == 500
+    assert compiled.model is registered
+    assert version == info['scene_version']
+    after = plan_single_v2(scene_id=info['scene_id'],task=request['task'])
+    assert after == before
+
+
+def test_graph_prunes_infeasible_mission_entry_turn_before_full_route_enumeration(monkeypatch):
+    from uav_planner.v2 import engine
+    request = graph_request(); frame = CoordinateFrame(request['scene']['coordinates'])
+    request['scene']['airways'][0]['widthMeters'] = 1000
+    positions = {'a':(100,100,80),'b':(120,100,80),'c':(120,400,80),'d':(500,400,80),'g':(500,100,80)}
+    request['scene']['airway_graph'] = {'version':'mission-entry-cut','nodes':[{'id':node,'point_wkt':frame.to_wgs84(Point(point))} for node,point in positions.items()], 'edges':[
+        {'id':start+end,'from_node':start,'to_node':end,'airway_id':'demo-airway','direction':'FORWARD','weights':{'distance':cost}}
+        for start,end,cost in [('a','b',1),('b','c',1),('c','d',1),('a','g',2),('g','d',2)]]}
+    request['task']['aircraft'] = {'min_turn_radius_m':60}
+    calls = 0; original = engine._prepare_candidate_one
+    def counted(*args,**kwargs):
+        nonlocal calls
+        calls += 1
+        return original(*args,**kwargs)
+    monkeypatch.setattr(engine,'_prepare_candidate_one',counted)
+    route = plan_single_v2(**request)
+    assert route['status'] == 'planned', route
+    assert route['network_route']['edge_ids'] == ['ag','gd']
+    assert calls == 1
