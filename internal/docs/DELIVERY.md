@@ -66,4 +66,4 @@ python tools/smoke_v2.py --base-url http://127.0.0.1:18000
 
 ## 2026-10-30 计算能力补齐
 
-显式航路图、方向边权、连通分量及可行备选；指定网格搜索和完整途经网格；爬降角与能见度；候选并行和统一预约；多目标与能耗/风险/业务代价积分；事件触发增量重规划和初始速度独立验证均已接入 v2。参数与 41 项归属见 docs/REQUIREMENTS_API_MAPPING.md，实际验证见 test_api/reports/README.md。
+显式航路图、方向边权、连通分量及可行备选；指定网格搜索和完整途经网格；爬降角与能见度；候选并行和统一预约；多目标与能耗/风险/业务代价积分；事件触发增量重规划和初始速度独立验证均已接入 v2。业务功能与接口见 docs/REQUIREMENTS_API_MAPPING.md；内部参数及 41 项归属见 internal/docs/ENGINE_REQUIREMENTS_API_MAPPING.md，实际验证见 test_api/reports/README.md。

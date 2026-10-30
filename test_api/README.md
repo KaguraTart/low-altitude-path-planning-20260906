@@ -8,7 +8,7 @@
 
 接口字段、测试 JSON 参数和修改步骤见 [接口字段与修改说明](API_FIELDS.md)。
 
-按业务需求选择接口，见[需求与 API 对照表](REQUIREMENTS_API_MAPPING.md)。表中包含源清单 ENG-06/ENG-07 全部 41 项需求、平台责任、真实接口、输入输出、测试证据和未交付项。
+按业务需求选择接口，见[需求与 API 对照表](REQUIREMENTS_API_MAPPING.md)。表中按交付清单 901–916 的 16 项业务功能列出接口、输入输出、调用步骤、示例和平台责任。
 
 最新容器与公网验证见 [测试记录索引](reports/README.md)。每份报告记录日期、运行版本、全部 HTTP 记录及输入输出校验和。历史目录保留原始内容。
 
@@ -114,7 +114,7 @@ WKT 坐标顺序为经度、纬度、高度。当前输入使用 WGS84 经纬度
 | 路径 | 内容 |
 |---|---|
 | `API_FIELDS.md` | 全部接口的输入输出字段、单位、默认值和修改方法 |
-| `REQUIREMENTS_API_MAPPING.md` | ENG-06/07 的 41 项需求、接口、参数、验收证据与缺口 |
+| `REQUIREMENTS_API_MAPPING.md` | 901–916 的 16 项业务功能、接口、调用方法和平台分工 |
 | `run_tests.py` | 命令行测试入口 |
 | `client.py` | HTTPS 调用和完整 HTTP 记录 |
 | `reporting.py` | Markdown 报告生成器 |
@@ -138,4 +138,4 @@ WKT 坐标顺序为经度、纬度、高度。当前输入使用 WGS84 经纬度
 
 ## 交付文件
 
-直接发送本目录或其压缩包。README 说明运行步骤，API.md 为接口总说明，API_FIELDS.md 解释每个字段及 JSON 修改方法，REQUIREMENTS_API_MAPPING.md 对应 41 项需求，openapi.json 提供机器可读规范。data 保存完整输入，reports 保存实测完整输出和带日期报告。
+直接发送本目录或其压缩包。README 说明运行步骤，API.md 为接口总说明，API_FIELDS.md 解释每个字段及 JSON 修改方法，REQUIREMENTS_API_MAPPING.md 对应 16 项业务功能，openapi.json 提供机器可读规范。data 保存完整输入，reports 保存实测完整输出和带日期报告。
