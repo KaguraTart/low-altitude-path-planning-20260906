@@ -2,7 +2,7 @@
 
 文档日期：2026-10-30。
 
-本项目提供航路规划、管制区避让和多机协同规划服务。本次交付聚焦 ENG-06 航路航线网络规划与 ENG-07 低空三维路径规划。
+本项目提供航路规划、管制区避让和多机协同规划服务。对外交付按航路连通规划、三维无航路规划、多场景、验证与评估等业务功能核对。
 
 当前接口为 `/api/v2`。软件版本为 2.0.0。请求和响应使用 JSON，外部几何使用 WGS84 经纬度 WKT。内部计算使用米和秒，垂直基准统一为 EG 椭球高。契约版本为 `2026-10-30`，接口路径仍为 `/api/v2`。
 
@@ -26,7 +26,7 @@
 
 平台负责规则 CRUD、绑定管理和设备类型准入管理；引擎消费 `scene.rules`、`task.rule_ids` 和 `airways[].allowed_profile_ids` 并执行约束。`strict/prefer` 自动归属 ENG-06，`free` 自动归属 ENG-07；也可显式填写一致的 `task.engine_id`。场景仅支持 `scene_type=LOW_ALTITUDE`。strict/prefer 将不准入航路体作为禁入区；free 不使用航路准入。
 
-[需求对照表](docs/REQUIREMENTS_API_MAPPING.md)覆盖源清单全部 41 项 ENG-06/07 需求，列出具体接口、参数、输出和验证入口。引擎提供显式航路图、三维网格搜索、多目标候选比较、增量重规划及配置参数。平台负责 32 项管理功能、设备下发、持久历史与展示；地面和水上交通由对应引擎负责。
+[需求对照表](docs/REQUIREMENTS_API_MAPPING.md)按交付清单 901–916 的 16 项业务功能，列出接口、参数、输出及调用示例。平台负责持久存储、业务日志、历史查询和展示。内部引擎分配、规则字段及 41 项原始编号见 [内部追踪表](internal/docs/ENGINE_REQUIREMENTS_API_MAPPING.md)。
 
 新契约使用 `origin_alt_ellipsoid`、`terrain_ellipsoid_m`。MSL 转换需提供大地水准面差及来源；EG/ELLIPSOID 可直接使用。每条规划结果返回 `engine_id`、`alt_reference` 和 `coordinate_context`。WIDTH 为全宽及外侧保护带硬检查；航向北 0°顺时针；星期 0 周日、1–6 周一至周六。详见 [API](docs/API.md)。
 
