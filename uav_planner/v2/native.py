@@ -86,9 +86,10 @@ def graph_search(
 def grid_search(
     start: Any, goal: Any, bounds: Any, resolution: Any, blocked: Any = (), *,
     allowed: Any | None = None, max_iterations: int | None = 0,
-    deadline_ms: float | None = 0,
+    deadline_ms: float | None = 0, algorithm: str = "ASTAR", neighbors: int = 26,
+    max_climb_angle: float = 90, max_descent_angle: float = 90,
 ) -> dict[str, Any]:
-    """26-neighbor A* with all diagonal subcells checked for corner cutting.
+    """Configurable 3D A* with all diagonal subcells checked for corner cutting.
 
     Grid coordinate (i,j,k) is at bounds[0] + resolution * (i,j,k).
     Exact requested endpoints are preserved in the returned polyline.
@@ -102,6 +103,7 @@ def grid_search(
         _matrix(blocked, 3, np.int64),
         None if allowed is None else _matrix(allowed, 3, np.int64),
         0 if max_iterations is None else max_iterations, 0 if deadline_ms is None else deadline_ms,
+        algorithm, neighbors, max_climb_angle, max_descent_angle,
     )
 
 

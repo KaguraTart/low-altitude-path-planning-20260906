@@ -494,6 +494,7 @@ class GridCell(StrictModel):
 
 
 class GridSpec(StrictModel):
+    level: Annotated[StrictInt, Field(ge=0)] | None = None
     crs: StrictStr = "LOCAL_AEQD"
     origin: tuple[Number, Number, Number]
     resolution: tuple[Positive, Positive, Positive]
@@ -605,7 +606,22 @@ class AircraftState(StrictModel):
         return validated_wkt(value, kind="Point", require_z=True) if value is not None else None
 
 
+class SearchOptions(StrictModel):
+    algorithm: Literal["ASTAR", "DIJKSTRA"] = "ASTAR"
+    neighbors: Literal[6, 18, 26] = 26
+    grid_level: Annotated[StrictInt, Field(ge=0)] | None = None
+    max_expanded_nodes: Annotated[StrictInt, Field(gt=0)] | None = None
+
+    @field_validator("neighbors", mode="before")
+    @classmethod
+    def integer_neighbors(cls, value):
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise ValueError("neighbors must be an integer")
+        return value
+
+
 class Task(StrictModel):
+    search: SearchOptions | None = None
     engine_id: Literal["ENG-06", "ENG-07"] | None = None
     id: StrictStr = Field(min_length=1)
     start_wkt: GeographicWKT
@@ -728,7 +744,25 @@ class RuleReport(StrictModel):
     dataset_versions: dict[StrictStr, StrictStr] = Field(default_factory=dict)
 
 
+class SearchReport(StrictModel):
+    algorithm: Literal["ASTAR", "DIJKSTRA"]
+    neighbors: Literal[6, 18, 26]
+    grid_level: StrictInt | None = None
+    expanded_nodes: Annotated[StrictInt, Field(ge=0)]
+    max_expanded_nodes: Annotated[StrictInt, Field(gt=0)] | None = None
+
+
+class TraversedGrid(StrictModel):
+    grid_indices: GridIndex
+    grid_code: StrictStr | None = None
+    entry_time_s: NonNegative
+    exit_time_s: NonNegative
+
+
 class RouteResult(StrictModel):
+    search_report: SearchReport | None = None
+    traversed_grids: list[TraversedGrid] = Field(default_factory=list)
+    grid_context: dict[StrictStr, JsonValue] = Field(default_factory=dict)
     engine_id: Literal["ENG-06", "ENG-07"]
     task_id: StrictStr
     alt_reference: AltitudeReference

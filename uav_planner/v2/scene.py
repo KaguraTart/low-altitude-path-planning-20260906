@@ -262,7 +262,7 @@ class CompiledScene:
                     invalid("Field values must be an object", dataset_id=dataset.id)
                 allowed_keys = {
                     "terrain": {"elevation_ellipsoid_m", "terrain_ellipsoid_m", "nodata"},
-                    "weather": {"wind_speed_mps", "windSpeed", "precipitation", "precipitation_mm_h", "icing", "nodata"},
+                    "weather": {"visibility_m", "wind_speed_mps", "windSpeed", "precipitation", "precipitation_mm_h", "icing", "nodata"},
                     "signal": {"bands", "signal_strength_dbm", "nodata"},
                     "noise": {"noise_db", "nodata"}, "risk": {"risk", "nodata"},
                     "area": {"adminCode", "gridCode", "code", "nodata"},
@@ -274,6 +274,9 @@ class CompiledScene:
                     invalid("Unknown field dataset values", dataset_id=dataset.id, fields=sorted(unknown))
                 if "nodata" in item.values and not isinstance(item.values["nodata"], bool):
                     invalid("Dataset nodata flag must be boolean", dataset_id=dataset.id)
+                if dataset.kind == "weather" and "visibility_m" in item.values and not item.values.get("nodata", False):
+                    if not _finite(item.values["visibility_m"]) or item.values["visibility_m"] < 0:
+                        invalid("Weather visibility_m must be finite nonnegative metres", dataset_id=dataset.id)
                 if dataset.kind == "terrain" and not item.values.get("nodata", False) and not _finite(item.values.get("elevation_ellipsoid_m", item.values.get("terrain_ellipsoid_m"))):
                     invalid("Terrain cell requires a finite elevation_ellipsoid_m", dataset_id=dataset.id)
                 cells.append(PreparedCell(geom, lo, hi, item.values,
@@ -840,6 +843,9 @@ class CompiledScene:
             if values.get("nodata", False):
                 return False
             if kind == "WEATHER":
+                visibility = values.get("visibility_m")
+                if "minVisibility" in c and (not _finite(visibility) or visibility < c["minVisibility"] - EPS):
+                    return False
                 wind = values.get("wind_speed_mps", values.get("windSpeed"))
                 precipitation = values.get("precipitation", values.get("precipitation_mm_h"))
                 icing = values.get("icing")
@@ -1054,7 +1060,7 @@ class CompiledScene:
     def check_geometry(self, p0: Any, p1: Any, t0: float = 0, t1: float = 0, task: Any = None, profile: Any = None) -> list[dict]:
         return [_public_violation(v) for v in self._check_geometry(p0, p1, t0, t1, task, profile)]
 
-    def check_path(self, points: Any, times: Any, task: Any, profile: Any, phase: str = "route", *, speed_transient_segments: Any = None) -> list[dict]:
+    def check_path(self, points: Any, times: Any, task: Any, profile: Any, phase: str = "route", *, speed_transient_segments: Any = None, slope_angles: Any = None) -> list[dict]:
         p, t = np.asarray(points, float), np.asarray(times, float)
         if p.ndim != 2 or p.shape[1] != 3 or t.ndim != 1 or len(p) != len(t) or len(p) < 1 or not np.isfinite(p).all() or not np.isfinite(t).all() or np.any(np.diff(t) < 0):
             invalid("Path requires finite XYZ vertices and nondecreasing matching times")
@@ -1071,7 +1077,7 @@ class CompiledScene:
             errors.extend(self._check_geometry(p[0], p[0], t[0], t[0], task, profile))
         for i in range(len(p) - 1):
             errors.extend({**v, "segment": i} for v in self._check_geometry(p[i], p[i + 1], t[i], t[i + 1], task, profile, connector_contexts[i], include_rules=False))
-            errors.extend(self.rules.check_segment(p[i], p[i + 1], t[i], t[i + 1], task, profile, i, enforce_min_speed=i not in transient_indices))
+            errors.extend(self.rules.check_segment(p[i], p[i + 1], t[i], t[i + 1], task, profile, i, enforce_min_speed=i not in transient_indices, slope_angle=None if slope_angles is None else slope_angles[i]))
             if speed[i] > get(profile, "max_speed_mps", float("inf")) + EPS:
                 errors.append({"rule_type": "AIRCRAFT_SPEED", "reason": "segment exceeds aircraft maximum speed", "segment": i})
             climb = (p[i + 1, 2] - p[i, 2]) / durations[i] if durations[i] > EPS else 0

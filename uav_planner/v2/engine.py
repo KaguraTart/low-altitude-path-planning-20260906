@@ -76,6 +76,10 @@ class SceneRegistry:
 registry = SceneRegistry()
 
 
+class _SearchBudgetExceeded(MotionError):
+    pass
+
+
 class _DeadlineExceeded(TimeoutError):
     """A caller-supplied planning budget has expired."""
 
@@ -189,7 +193,48 @@ def _seconds(value, model):
 def _geometry_ok(compiled, a,b,t,task,profile):
     # Geometric edges are screened before timing; full rules run on real timing.
     duration=max(1e-6,float(np.linalg.norm(b-a))/profile.cruise_speed_mps)
+    if not _angle_ok(compiled, a, b, t, t+duration, task):
+        return False
     return not compiled.check_geometry(a,b,t,t+duration,task,profile)
+
+
+def _angle_limits(compiled, task, t0, t1, *, cover_interval=False, edge=None):
+    climb, descent = 90.0, 90.0
+    for rule in compiled.rules.selected(task):
+        if rule.rule_type != "CLIMB":
+            continue
+        active = compiled.rules.interval(rule, t0, t1)
+        if active is None:
+            continue
+        # A spatial search has no arrival times for its edges. A native global
+        # slope bound is valid only for a scene-wide rule covering the entire
+        # possible leg window. Resource/time scopes use actual edges and timed
+        # primitives, since the native spatial search has no scope predicate.
+        if cover_interval and (active[0] > t0 or active[1] < t1 or rule.resource_ids or rule.scope is not None):
+            continue
+        if edge is not None and not compiled.rule_parts(rule, np.asarray(edge[0]), np.asarray(edge[1]), t0, t1):
+            continue
+        climb = min(climb, rule.content.get("maxClimbAngle", 90))
+        descent = min(descent, rule.content.get("maxDescentAngle", 90))
+    return climb, descent
+
+
+def _motion_slope_angles(motion, times):
+    angles=[]
+    for a,b in zip(times,times[1:]):
+        middle=(a+b)/2
+        i=max(0,min(len(motion.primitives)-1,int(np.searchsorted(motion.starts,middle,side="right")-1)))
+        p=motion.primitives[i]
+        horizontal=abs(p.sweep)*p.radius if p.kind=="arc" else np.linalg.norm(p.end[:2]-p.start[:2])
+        angles.append(math.degrees(math.atan2(abs(p.end[2]-p.start[2]),horizontal)))
+    return angles
+
+
+def _angle_ok(compiled, a, b, t0, t1, task):
+    delta = np.asarray(b)-a
+    angle = math.degrees(math.atan2(abs(delta[2]), np.linalg.norm(delta[:2])))
+    limits = _angle_limits(compiled, task, t0, t1, edge=(a,b))
+    return angle <= limits[0 if delta[2]>=0 else 1]+1e-7
 
 
 def _cost_floor(compiled,task,t):
@@ -301,7 +346,7 @@ def _roadmap(compiled, start,goal,task,profile,t,deadline,reference_altitude=Non
     return nodes[result["path"]] if result["status"]=="ok" else None
 
 
-def _grid_path(compiled,start,goal,task,profile,t,deadline):
+def _grid_path(compiled,start,goal,task,profile,t,deadline,search_state=None):
     """Local 3D expansion, with exact final path verification."""
     from . import native
     model=compiled.scene if hasattr(compiled,"scene") else compiled.model
@@ -315,14 +360,31 @@ def _grid_path(compiled,start,goal,task,profile,t,deadline):
         blocked=compiled.blocked_indices(task,profile,t)
     elif model.grid:
         blocked=model.grid.occupied
-    result=native.grid_search(start,goal,np.array([low,high]),resolution,blocked,
-        deadline_ms=_native_deadline_ms(deadline))
+    options = task.search
+    climb, descent = _angle_limits(compiled, task, t, compiled.model.horizon_s, cover_interval=True) if hasattr(compiled,"rules") else (90.0,90.0)
+    budget = search_state["remaining"] if search_state is not None else options.max_expanded_nodes if options else None
+    if budget is not None and budget <= 0:
+        raise _SearchBudgetExceeded("Caller search expansion budget exhausted")
+    search_kwargs={"deadline_ms":_native_deadline_ms(deadline)}
+    if options is not None:
+        search_kwargs.update(algorithm=options.algorithm,neighbors=options.neighbors,max_iterations=budget)
+    if climb<90 or descent<90:
+        search_kwargs.update(max_climb_angle=climb,max_descent_angle=descent)
+    result=native.grid_search(start,goal,np.array([low,high]),resolution,blocked,**search_kwargs)
+    if search_state is not None:
+        search_state["expanded"] += result["expanded"]
+    if search_state is not None and search_state["remaining"] is not None:
+        search_state["remaining"] -= result["expanded"]
+    if result["status"] == "iteration_limit":
+        raise _SearchBudgetExceeded("Caller search expansion budget exhausted")
     if result["status"]=="deadline_exceeded":
         raise _DeadlineExceeded("Planning deadline exhausted during grid search")
     return np.asarray(result["path"]) if result["status"]=="ok" else None
 
 
-def _path_for_leg(compiled,start,goal,task,profile,t,deadline):
+def _path_for_leg(compiled,start,goal,task,profile,t,deadline,search_state=None):
+    if task.search is not None:
+        return _grid_path(compiled,start,goal,task,profile,t,deadline,search_state)
     direct=_geometry_ok(compiled,start,goal,t,task,profile)
     direct_cost=_edge_cost(compiled,start,goal,t,task,profile) if direct else float("inf")
     if direct and direct_cost<=np.linalg.norm(goal-start)*_cost_floor(compiled,task,t)*(1+1e-6):
@@ -358,7 +420,7 @@ def _path_for_leg(compiled,start,goal,task,profile,t,deadline):
             if path is not None:
                 return path
     if task.route_mode!="strict" and time.perf_counter()<deadline:
-        return _grid_path(compiled,start,goal,task,profile,t,deadline)
+        return _grid_path(compiled,start,goal,task,profile,t,deadline,search_state)
     return None
 
 
@@ -765,33 +827,36 @@ def _result(compiled,model,task,profile,motion,wait=0):
         else:
             merged.append([passed,point,set(types),waypoint_index])
     keypoints=[]
-    grid_origin=np.asarray([model.bounds.x_min,model.bounds.y_min,model.bounds.z_min])
-    grid_resolution=np.asarray(model.resolution)
-    def grid_index(point,origin,resolution):
-        coordinate=(point-origin)/resolution
-        nearest=np.rint(coordinate)
-        coordinate=np.where(np.abs(coordinate-nearest)<=1e-7,nearest,coordinate)
-        return np.floor(coordinate).astype(int)
+    from .grid_traversal import traversed_grids
+    traversal, grid_context = traversed_grids(model, motion)
     for passed,point,types,waypoint_index in merged:
-        index=grid_index(point,grid_origin,grid_resolution)
         code=None
         if model.grid:
-            original_index=grid_index(point,np.asarray(model.grid.origin),np.asarray(model.grid.resolution))
-            code=model.grid.codes.get(",".join(map(str,original_index)))
-        if model.grid and code is None:
-            for cell in model.grid.cells:
-                b=cell.bounds
-                if (cell.code is not None and b.x_min<=point[0]<=b.x_max
-                        and b.y_min<=point[1]<=b.y_max and b.z_min<=point[2]<=b.z_max):
-                    code=cell.code
-                    break
+            q=(point-np.asarray(model.grid.origin))/np.asarray(model.grid.resolution)
+            nearest=np.rint(q)
+            external_index=np.floor(np.where(np.abs(q-nearest)<=1e-7,nearest,q)).astype(int)
+            code=model.grid.codes.get(",".join(map(str,external_index)))
+            if code is None:
+                for cell in model.grid.cells:
+                    b=cell.bounds
+                    if (cell.code is not None and b.x_min<=point[0]<=b.x_max
+                            and b.y_min<=point[1]<=b.y_max and b.z_min<=point[2]<=b.z_max):
+                        code=cell.code
+                        break
+        # Existing keypoint indices name the planner grid; traversal explicitly
+        # identifies its external frame separately in grid_context.
+        origin=np.asarray([model.bounds.x_min,model.bounds.y_min,model.bounds.z_min])
+        q=(point-origin)/np.asarray(model.resolution)
+        nearest=np.rint(q)
+        index=np.floor(np.where(np.abs(q-nearest)<=1e-7,nearest,q)).astype(int).tolist()
         keypoints.append({"types":sorted(types),"wkt":_timed_geographic(compiled,[point],[passed],task.alt_reference,model),
-                          "time_s":passed,"grid_indices":index.tolist(),"grid_code":code,"waypoint_index":waypoint_index})
+                          "time_s":passed,"grid_indices":index,"grid_code":code,"waypoint_index":waypoint_index})
     result={"task_id":task.id,"engine_id":task.engine_id,"status":"planned","route_mode":task.route_mode,
         "alt_reference":task.alt_reference,"coordinate_context":compiled.frame.context,
         "start_wkt":task.start_wkt,"goal_wkt":task.goal_wkt,"departure_time":task.departure_time,
         "time_origin":model.time_origin,"action":"return_to_home" if (compiled.rules.rtl_requirements(task,profile) or {}).get("required") else "mission",
         "trajectory_wkt":wkt,"vertex_times_s":motion.times.tolist(),"motion_segments":segments,"keypoints":keypoints,
+        "traversed_grids":traversal,"grid_context":grid_context,
         "metrics":{"distance_m":motion.distance,"flight_time_s":float(motion.times[-1]-motion.times[0]),"wait_time_s":wait},
         "validation":{"valid":True,"violations":[]},"rule_report":_report(compiled,task,[],motion.times,motion.points)}
     return RouteResult.model_validate(result).model_dump(mode="json")
@@ -808,12 +873,16 @@ def plan_batch_v2(*,tasks,scene_id=None,scene=None,request_id=None,time_budget_s
     model,compiled,version,_=registry.get(scene_id)
     dynamic_tracks=_dynamic_tracks(compiled,model)
     task_models=[_parse(Task,t) for t in tasks]
+    for task in task_models:
+        if task.search and task.search.grid_level is not None and (model.grid is None or model.grid.level != task.search.grid_level):
+            raise PlanningError(ErrorCode.INVALID_INPUT, "search.grid_level must match scene.grid.level", {"task_id": task.id})
     if not task_models or len({t.id for t in task_models})!=len(task_models):
         raise PlanningError(ErrorCode.INVALID_INPUT,"Tasks must be nonempty and have unique ids")
     ordered=sorted(enumerate(task_models),key=lambda it:(-it[1].priority,it[1].latest_arrival or datetime.max.replace(tzinfo=timezone.utc),it[1].id))
     parsed_at=time.perf_counter()
     results=[None]*len(task_models)
     candidates=[]
+    search_states={t.id:{"remaining":t.search.max_expanded_nodes,"expanded":0} for t in task_models if t.search}
     for index,task in ordered:
         if time.perf_counter()>=deadline:
             results[index]=_failure(task,"TIME_BUDGET_EXCEEDED","Planning deadline exhausted")
@@ -835,8 +904,9 @@ def plan_batch_v2(*,tasks,scene_id=None,scene=None,request_id=None,time_budget_s
             anchors=[anchors[0],a,b,anchors[-1]]
         try:
             legs=[]
+            search_state=search_states.get(task.id)
             for a,b in zip(anchors,anchors[1:]):
-                leg=_path_for_leg(compiled,a,b,task,profile,departure,deadline)
+                leg=_path_for_leg(compiled,a,b,task,profile,departure,deadline,search_state)
                 if leg is None:
                     raise MotionError("No route found at the current resolution and constraints")
                 legs.append(leg)
@@ -861,6 +931,8 @@ def plan_batch_v2(*,tasks,scene_id=None,scene=None,request_id=None,time_budget_s
                 raise MotionError("Independent motion validation rejected candidate: "+str(certificate["violations"]))
             # Reject impossible durations before allocating the certified cover.
             cp,ct=motion.collision_samples()
+        except _SearchBudgetExceeded as exc:
+            results[index]=_failure(task,"SEARCH_BUDGET_EXCEEDED",str(exc));continue
         except _DeadlineExceeded as exc:
             results[index]=_failure(task,"TIME_BUDGET_EXCEEDED",str(exc));continue
         except (MotionError,ValueError) as exc:
@@ -956,7 +1028,8 @@ def plan_batch_v2(*,tasks,scene_id=None,scene=None,request_id=None,time_budget_s
         rtl=compiled.rules.rtl_requirements(task,profile)
         certified_profile=profile.model_copy(update={"safety_margin_m":profile.safety_margin_m+.1})
         violations=compiled.check_path(final_points,final_times,task,certified_profile,
-            phase="rtl" if rtl and rtl["required"] else "route",speed_transient_segments=transients)
+            phase="rtl" if rtl and rtl["required"] else "route",speed_transient_segments=transients,
+            slope_angles=_motion_slope_angles(motion,final_times))
         if ct[-1]>c["latest"]+1e-7:
             violations.append({"code":"TIME","message":"Latest arrival exceeded"})
         if task.earliest_arrival and ct[-1]<_seconds(task.earliest_arrival,model)-1e-7:
@@ -989,8 +1062,12 @@ def plan_batch_v2(*,tasks,scene_id=None,scene=None,request_id=None,time_budget_s
             for i,t in enumerate(task_models):
                 if results[i]["status"]=="planned":
                     results[i]=_failure(t,code,"Continuous separation validation did not complete: "+check["status"])
-    for result in results:
+    for task,result in zip(task_models,results):
         result["coordinate_context"]=compiled.frame.context
+        if task.search:
+            result["search_report"]={"algorithm":task.search.algorithm,"neighbors":task.search.neighbors,
+                "grid_level":model.grid.level if model.grid else None,
+                "expanded_nodes":search_states[task.id]["expanded"],"max_expanded_nodes":task.search.max_expanded_nodes}
     count=sum(r["status"]=="planned" for r in results)
     validated_at=time.perf_counter()
     result=BatchResult.model_validate({"planned_at":datetime.now(timezone.utc),"request_id":request_id or uuid.uuid4().hex,
@@ -1137,7 +1214,8 @@ def validate_route_v2(*,task,trajectory_wkt,vertex_times_s,motion_segments=None,
     certified_profile=profile.model_copy(update={"safety_margin_m":profile.safety_margin_m+.1}) if certified else profile
     errors.extend(compiled.check_path(checked_points,checked_times,task,certified_profile,
         phase="rtl" if rtl and rtl["required"] else "route",
-        speed_transient_segments=_transient_segments(motion,checked_times) if certified else []))
+        speed_transient_segments=_transient_segments(motion,checked_times) if certified else [],
+        slope_angles=_motion_slope_angles(motion,checked_times) if certified else None))
     if times[0]<_seconds(task.departure_time,model)-1e-7:
         errors.append({"code":"TIME","message":"Trajectory departs before the task departure window"})
     if task.latest_arrival and times[-1]>_seconds(task.latest_arrival,model)+1e-7:
