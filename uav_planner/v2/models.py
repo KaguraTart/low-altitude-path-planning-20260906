@@ -460,7 +460,7 @@ class FieldCell(StrictModel):
 
 class Dataset(StrictModel):
     id: StrictStr = Field(min_length=1)
-    kind: Literal["terrain", "weather", "signal", "noise", "area", "grid", "risk", "corridor"]
+    kind: Literal["terrain", "weather", "signal", "noise", "area", "grid", "risk", "corridor", "cost"]
     version: StrictStr = Field(min_length=1)
     valid_from: Timestamp | None = None
     valid_to: Timestamp | None = None
@@ -688,7 +688,86 @@ class SearchOptions(StrictModel):
         return value
 
 
+class ObjectiveWeights(StrictModel):
+    distance: NonNegative = 1
+    time: NonNegative = 0
+    energy: NonNegative = 0
+    risk: NonNegative = 0
+
+
+class ObjectiveNormalization(StrictModel):
+    distance_m: Positive = 1
+    time_s: Positive = 1
+    energy_wh: Positive = 1
+    risk_s: Positive = 1
+
+
+class EnergyModel(StrictModel):
+    """Caller supplied engineering model; powers include baseline propulsion."""
+    mass_kg: Positive = Field(description="Total moving mass in kg, including payload, supplied by the caller.")
+    hover_power_w: NonNegative
+    cruise_power_w: NonNegative
+    climb_efficiency: Annotated[Positive, Field(le=1)]
+
+
+class ObjectiveCostLayer(StrictModel):
+    id: StrictStr = Field(min_length=1)
+    dataset_id: StrictStr = Field(min_length=1)
+    weight: NonNegative
+    normalization: Positive
+    basis: Literal["distance", "time"]
+    unit: StrictStr = Field(min_length=1, description="Unit of the integrated objective (values.cost times metres or seconds).")
+
+
+class ObjectiveConfig(StrictModel):
+    weights: ObjectiveWeights = Field(default_factory=ObjectiveWeights)
+    normalization: ObjectiveNormalization = Field(default_factory=ObjectiveNormalization)
+    energy_model: EnergyModel | None = None
+    cost_layers: list[ObjectiveCostLayer] = Field(default_factory=list)
+    max_solutions: Annotated[StrictInt, Field(gt=0)] | None = None
+    max_iterations: Annotated[StrictInt, Field(gt=0)] | None = None
+
+    @model_validator(mode="after")
+    def consistent(self):
+        if not any(self.weights.model_dump().values()) and not any(c.weight for c in self.cost_layers):
+            raise ValueError("objective weights must not all be zero")
+        if self.weights.energy and self.energy_model is None:
+            raise ValueError("positive energy weight requires caller supplied energy_model")
+        if len({c.id for c in self.cost_layers}) != len(self.cost_layers):
+            raise ValueError("cost layer ids must be unique")
+        if {c.id for c in self.cost_layers} & {"distance", "time", "energy", "risk"}:
+            raise ValueError("cost layer ids must not shadow base objectives")
+        return self
+
+
+class ObjectiveValue(StrictModel):
+    raw: NonNegative
+    normalized: NonNegative
+    normalization: Positive
+    unit: StrictStr
+    weight: NonNegative
+
+
+class RouteObjectives(StrictModel):
+    values: dict[StrictStr, ObjectiveValue]
+    weighted_score: NonNegative
+    dataset_versions: dict[StrictStr, StrictStr] = Field(default_factory=dict)
+    energy_formula: StrictStr | None = None
+
+
+class OptimizationReport(StrictModel):
+    scope: Literal["validated_candidates"] = "validated_candidates"
+    status: Literal["generator_exhausted", "iteration_limit", "solution_limit", "deadline_exceeded", "search_budget_exceeded"]
+    iterations: Annotated[StrictInt, Field(ge=0)] = 0
+    generated_candidates: Annotated[StrictInt, Field(ge=0)] = 0
+    validated_candidates: Annotated[StrictInt, Field(ge=0)] = 0
+    returned_solutions: Annotated[StrictInt, Field(ge=0)] = 0
+    primary_executed_only: Literal[True] = True
+    description: StrictStr = "Finite lattice multi-label candidate generator; dominance pruning is a heuristic under dynamic constraints and rebuilt kinematics. Exhaustion is not proof of a complete graph or continuous Pareto frontier."
+
+
 class Task(StrictModel):
+    objectives: ObjectiveConfig | None = None
     search: SearchOptions | None = None
     engine_id: Literal["ENG-06", "ENG-07"] | None = None
     id: StrictStr = Field(min_length=1)
@@ -727,6 +806,8 @@ class Task(StrictModel):
         for label in ("start", "goal"):
             if getattr(self, label + "_wkt") is None and getattr(self, label + "_grid") is None and self.network is None:
                 raise ValueError(f"{label} requires WKT, grid, or network node")
+        if self.objectives is not None and (self.route_mode != "free" or self.network is not None):
+            raise ValueError("task.objectives requires ENG-07/free without network")
         expected = "ENG-07" if self.route_mode == "free" else "ENG-06"
         if self.engine_id is None:
             self.engine_id = expected
@@ -839,6 +920,9 @@ class TraversedGrid(StrictModel):
 
 
 class RouteResult(StrictModel):
+    objectives: RouteObjectives | None = None
+    optimization: OptimizationReport | None = None
+    alternatives: list[RouteResult] = Field(default_factory=list)
     network_route: NetworkRoute | None = None
     search_report: SearchReport | None = None
     traversed_grids: list[TraversedGrid] = Field(default_factory=list)

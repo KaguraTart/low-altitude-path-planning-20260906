@@ -270,7 +270,7 @@ class CompiledScene:
                     "noise": {"noise_db", "nodata"}, "risk": {"risk", "nodata"},
                     "area": {"adminCode", "gridCode", "code", "nodata"},
                     "grid": {"adminCode", "gridCode", "code", "occupied", "nodata"},
-                    "corridor": {"nodata"},
+                    "corridor": {"nodata"}, "cost": {"cost", "nodata"},
                 }[dataset.kind]
                 unknown = set(item.values) - allowed_keys
                 if unknown:
@@ -282,6 +282,10 @@ class CompiledScene:
                         invalid("Weather visibility_m must be finite nonnegative metres", dataset_id=dataset.id)
                 if dataset.kind == "terrain" and not item.values.get("nodata", False) and not _finite(item.values.get("elevation_ellipsoid_m", item.values.get("terrain_ellipsoid_m"))):
                     invalid("Terrain cell requires a finite elevation_ellipsoid_m", dataset_id=dataset.id)
+                if dataset.kind in {"risk", "cost"} and not item.values.get("nodata", False):
+                    value = item.values.get(dataset.kind)
+                    if not _finite(value) or value < 0:
+                        invalid("Risk/cost cells require finite nonnegative values", dataset_id=dataset.id)
                 cells.append(PreparedCell(geom, lo, hi, item.values,
                                           self._seconds(get(item, "valid_from"), -float("inf")),
                                           self._seconds(get(item, "valid_to"), float("inf"))))

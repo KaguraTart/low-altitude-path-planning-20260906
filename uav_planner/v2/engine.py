@@ -870,9 +870,12 @@ def _result(compiled,model,task,profile,motion,wait=0):
     return RouteResult.model_validate(result).model_dump(mode="json")
 
 
-def _prepare_candidate(index, task, model, compiled, dynamic_tracks, deadline, search_state):
+def _prepare_candidate(index, task, model, compiled, dynamic_tracks, deadline, search_state, *, objective_legs=None):
     """Prepare one independent route; reservation and final checks stay global."""
     from . import native
+    if task.objectives is not None and objective_legs is None:
+        from .objectives import prepare
+        return prepare(index,task,model,compiled,dynamic_tracks,deadline,search_state)
     if time.perf_counter()>=deadline:
         return None, _failure(task,"TIME_BUDGET_EXCEEDED","Planning deadline exhausted")
     profile=_profile(model,task)
@@ -894,7 +897,9 @@ def _prepare_candidate(index, task, model, compiled, dynamic_tracks, deadline, s
         anchors=[anchors[0],a,b,anchors[-1]]
     try:
         legs=[]; network_trace=None
-        if task.network:
+        if objective_legs is not None:
+            legs=objective_legs
+        elif task.network:
             selected=compiled.network.select(task,profile,departure,deadline)
             if selected is None:
                 return None, _failure(task,"NETWORK_DISCONNECTED","No active, admissible directed network path connects the requested nodes")
@@ -1071,6 +1076,8 @@ def plan_batch_v2(*,tasks,scene_id=None,scene=None,request_id=None,time_budget_s
             results[index]=_failure(task,"CONSTRAINT_VIOLATION","Final independent validation failed",violations,_report(compiled,task,violations));continue
         results[index]=_result(compiled,model,task,profile,motion,delay)
         results[index]["network_route"]=c["network_trace"]
+        c["accepted_motion"]=motion
+        c["accepted_delay"]=delay
         accepted.append(cp);accepted_times.append(ct);accepted_profiles.append(profile);accepted_tasks.append(task)
     # Re-run independent pair validation, not only trust scheduling success.
     conflicts=[]
@@ -1096,12 +1103,16 @@ def plan_batch_v2(*,tasks,scene_id=None,scene=None,request_id=None,time_budget_s
             for i,t in enumerate(task_models):
                 if results[i]["status"]=="planned":
                     results[i]=_failure(t,code,"Continuous separation validation did not complete: "+check["status"])
+    from .objectives import attach_results
+    attach_results(compiled,model,candidates,results,dynamic_tracks,deadline,h,v)
     for task,result in zip(task_models,results):
         result["coordinate_context"]=compiled.frame.context
         if task.search:
             result["search_report"]={"algorithm":task.search.algorithm,"neighbors":task.search.neighbors,
                 "grid_level":model.grid.level if model.grid else None,
                 "expanded_nodes":search_states[task.id]["expanded"],"max_expanded_nodes":task.search.max_expanded_nodes}
+            for alternative in result.get("alternatives",[]):
+                alternative["search_report"]=dict(result["search_report"])
     count=sum(r["status"]=="planned" for r in results)
     validated_at=time.perf_counter()
     result=BatchResult.model_validate({"planned_at":datetime.now(timezone.utc),"request_id":request_id or uuid.uuid4().hex,

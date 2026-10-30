@@ -3,6 +3,8 @@
 from .coordinates import CoordinateError, CoordinateFrame, convert_coordinates
 from .models import (
     RULE_TYPES,
+    ObjectiveConfig, ObjectiveWeights, ObjectiveNormalization, EnergyModel,
+    ObjectiveCostLayer, ObjectiveValue, RouteObjectives, OptimizationReport,
     ExecutionReport,
     ExecutionOptions,
     TraversedGrid,
@@ -38,6 +40,8 @@ from .models import (
 from .profiles import DJI_MINI_4_PRO, default_profile, resolve_profile
 
 __all__ = [
+    "ObjectiveConfig", "ObjectiveWeights", "ObjectiveNormalization", "EnergyModel",
+    "ObjectiveCostLayer", "ObjectiveValue", "RouteObjectives", "OptimizationReport",
     "AirwayGraph",
     "NetworkNode",
     "NetworkEdge",

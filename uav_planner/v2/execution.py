@@ -48,7 +48,9 @@ def run_candidates(ordered, compiled, options: ExecutionOptions,
                              candidate_count=0)
     if workers == 1:
         # Preserve the original serial path and its warmed scene caches.
-        return [prepare(index, task, compiled) for index, task in ordered], report
+        objective_scene = clone_worker_scene(compiled) if any(task.objectives is not None for _,task in ordered) else None
+        return [prepare(index, task, objective_scene if task.objectives is not None else compiled)
+                for index, task in ordered], report
     state = local()
     used_threads = set()
     used_lock = Lock()
