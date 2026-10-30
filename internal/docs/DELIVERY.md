@@ -19,13 +19,13 @@
 | 固定基准 | `input/engine_contract_20261029/`、`tools/benchmark_v2.py` | 三套输入、参考调度和独立验证 |
 | 运维与架构 | `internal/docs/` | 部署、回滚、实现与验收记录 |
 
-`output/` 保存本次运行结果。需要交付的完整 v2 记录归档到 `tests/data/recordings/`。每套记录附采集版本和校验和。
+`output/` 保存本次运行结果。当前交付记录保存在 `test_api/reports/`；历史 v2 记录保留在 `tests/data/recordings/`。每套记录附采集版本和校验和。
 
 ## 2. 能力与输入
 
 服务提供版本化场景、WKT/WGS84、显式高度换算、三种路径模式、20 类规则、运动建模、多机调度与轨迹验证。默认 `strict` 模式使用有效航路和显式起终点接驳。
 
-平台提供航路、障碍、管制区、网格、地形、天气、信号、风险数据，以及飞机当前状态。算法根据提交状态生成任务或返航方案。平台负责状态监测、飞控执行和后续重规划。
+平台提供航路、障碍、管制区、网格、地形、天气、信号、风险数据，以及飞机当前状态。算法根据提交状态生成任务或返航方案。平台负责状态监测、变化事件和飞控执行；引擎通过 plan/replan 生成连续接续的新方案。
 
 场景、网格、任务、采样与输出不设固定资源上限。默认不设计算时限或搜索次数。调用方可用 `time_budget_s` 设置计算时限。飞行时域、场景覆盖范围、机型性能和选定规则照常执行。
 
@@ -40,7 +40,7 @@ python tools/benchmark_v2.py --validate-only
 python tools/smoke_v2.py --base-url http://127.0.0.1:18000
 ```
 
-记录当次测试数量与结果。SDK 检查 `register_scene/plan_single_v2/plan_batch_v2/validate_route_v2/convert_coordinates`。HTTP 检查 health、示例、场景、规划、异步完整结果、坐标转换和错误信封。
+记录当次测试数量与结果。SDK 检查 `register_scene/plan_single_v2/plan_batch_v2/replan_v2/analyze_network_v2/validate_route_v2/convert_coordinates`。HTTP 检查 health、示例、场景、规划、异步完整结果、坐标转换和错误信封。
 
 分类运行命令见 [`../../tests/README.md`](../../tests/README.md)。归档校验见 `tests/integration/test_recordings.py`。
 
@@ -63,3 +63,7 @@ python tools/smoke_v2.py --base-url http://127.0.0.1:18000
 场景和作业保存在单个进程内存中，重启后清空。默认不自动淘汰。正式端口为 `127.0.0.1:18000 → 8000`，资源为 2 CPU / 2 GiB。候选端口为 18001。
 
 合入 main 后，清理已整合分支和旧镜像。回滚时从已验收的提交重新构建，在候选端口验证后切换。具体命令见 [`DEPLOYMENT.md`](DEPLOYMENT.md)。
+
+## 2026-10-30 计算能力补齐
+
+显式航路图、方向边权、连通分量及可行备选；指定网格搜索和完整途经网格；爬降角与能见度；候选并行和统一预约；多目标与能耗/风险/业务代价积分；事件触发增量重规划和初始速度独立验证均已接入 v2。参数与 41 项归属见 docs/REQUIREMENTS_API_MAPPING.md，实际验证见 test_api/reports/README.md。

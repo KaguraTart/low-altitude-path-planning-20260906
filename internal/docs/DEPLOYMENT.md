@@ -2,11 +2,9 @@
 
 文档日期：2026-10-30。
 
-当前本地正式镜像：`low-altitude-path-planning:b118f86df64dec85071cbd301ab9a5042fbdf17a`。服务端口为 `18000`，资源为 2 CPU、2 GiB。新契约为 `2026-10-29`，内部高度基准为 EG。
+正式服务使用按提交 SHA 命名的不可变镜像，端口为 `18000`，资源为 2 CPU、2 GiB。契约版本为 `2026-10-30`，内部高度基准为 EG。运行提交读取 `/api/v2/version`；完整记录见 [`测试索引`](../../test_api/reports/README.md)。
 
-该次构建通过清华 PyPI 镜像下载相同锁定版本的依赖。发布检查已核对原生扩展、镜像提交、API 文档、运行 OpenAPI、坐标换算和异步结果。完整容器接口实测见 [`../../test_api/reports/20261029_docker/REPORT.md`](../../test_api/reports/20261029_docker/REPORT.md)。
-
-接口字段与示例见 [`../../docs/API.md`](../../docs/API.md)。服务仅提供 `/api/v2`。本文件说明构建、验证、发布和回滚步骤。
+Docker 发布检查在安装好的 wheel 中执行基础校验和 test_api 的全部 16 接口示例，核对原生扩展、镜像 revision、API 文档和运行 OpenAPI。
 
 ## 1. 运行配置
 

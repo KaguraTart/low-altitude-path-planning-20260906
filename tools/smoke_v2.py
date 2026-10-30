@@ -1,4 +1,4 @@
-"""Exercise all current v2 service endpoints through HTTP."""
+"""Exercise core v2 endpoints; test_api checks the complete operation set."""
 from __future__ import annotations
 
 import argparse
@@ -112,7 +112,8 @@ def _smoke(base_url: str, *, expected_git_sha: str | None,
     if openapi_snapshot is not None:
         expected=json.loads(Path(openapi_snapshot).read_text(encoding="utf-8"))
         assert spec==expected, f"Runtime OpenAPI differs from snapshot {openapi_snapshot}"
-    assert spec["paths"]["/api/v2/plan/single"]["post"]["responses"]["200"]["content"]["application/json"]["schema"]["$ref"].endswith("RouteResult")
+    response_ref=spec["paths"]["/api/v2/plan/single"]["post"]["responses"]["200"]["content"]["application/json"]["schema"]["$ref"]
+    assert response_ref.rsplit("/",1)[-1] in {"RouteResult","RouteResult-Output"}, "Single planning must return the RouteResult output model"
     swagger=call("/docs",as_text=True)
     assert "SwaggerUIBundle" in swagger and re.search(r'''["']?url["']?\s*:\s*["']/openapi\.json["']''',swagger), "Swagger UI must reference /openapi.json"
     sample=call("/api/v2/examples/single")

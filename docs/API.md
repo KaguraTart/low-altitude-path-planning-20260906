@@ -41,6 +41,8 @@ curl --fail-with-body -sS http://127.0.0.1:8000/api/v2/health
 | GET | `/api/v2/scenes/{scene_id}` | 已注册场景的编译摘要；不返回原始场景 JSON |
 | POST | `/api/v2/coordinates/convert` | 批量 WGS84 ↔ 局部 AEQD WKT 转换 |
 | POST | `/api/v2/plan/single` | 场景选择 + `task` → `RouteResult` |
+| POST | `/api/v2/plan/replan` | 前次方案 + 当前状态 + 剩余任务 + 场景/事件 → ReplanResponse |
+| POST | `/api/v2/networks/analyze` | 场景选择 + 可选 at → 航路图结构连通性 |
 | POST | `/api/v2/plan/batch` | 场景选择 + `tasks` → `BatchResult` |
 | POST | `/api/v2/validate` | 场景、任务与带时间航线 → 违规项和规则报告 |
 | POST | `/api/v2/jobs` | 与批量请求相同 → HTTP 202、`job_id`、`poll_url` |
@@ -96,8 +98,11 @@ curl --fail-with-body -sS http://127.0.0.1:8000/api/v2/health
 | `scene_id` / `scene` | string / `Scene`，二选一 | 引用已注册场景或内联注册 |
 | 规划 `time_budget_s` | number \| null，默认 null | 省略或 null 时持续计算；传正有限秒数时，在该时限内计算 |
 | 批量 `request_id` | string，可省略 | 省略则生成 UUID；原样写入批量结果 |
+| 批量 `execution` | ExecutionOptions/null，默认 null | 候选计算的 workers 和 batch_size；所有任务统一预约 |
 | 验证 `task`、`trajectory_wkt`、`vertex_times_s` | 必填；时间数组非空 | 任务、WGS84 `POINT Z/LINESTRING Z` 与相对场景零点的时间；顶点数与时间项数相同 |
 | 验证 `motion_segments` | `MotionSegment[] \| null`，模型允许省略 | 移动航线需提交此字段。复制规划结果的同名字段；缺少时返回 `valid:false`、`MOTION_MODEL_REQUIRED` |
+| 验证 `network_route` | NetworkRoute/null，默认 null | 图路线可复制原响应的节点/边序列；省略时由验证器从轨迹证明有效图走法 |
+| 验证 `initial_velocity_xyz_mps` | 三个数值，默认 `[0,0,0]` | 局部东/北/上初始速度，m/s；复制重规划路线的同名字段，与解析运动首速度核对 |
 
 ### 2.2 `Scene`
 
@@ -105,6 +110,7 @@ curl --fail-with-body -sS http://127.0.0.1:8000/api/v2/health
 |------|------|------|------|
 | `scene_type` | `LOW_ALTITUDE` | `LOW_ALTITUDE` | 当前仅提供低空场景；地面、水上拒绝输入 |
 | `network_version` | string/null | null | 平台路网版本，用于追溯；场景另有内容哈希版本 |
+| `airway_graph` | AirwayGraph/null | null | 显式节点/边/权重；与 network_version 一致，结构见航路图小节 |
 | `coordinates` | `CoordinateSpec` | 必填 | 投影原点与高度换算证据 |
 | `bounds` | `Bounds3D` | 必填 | 局部米制 `x_min/x_max/y_min/y_max/z_min/z_max`，每轴 max 必须大于 min |
 | `resolution` | `[number,number,number]` | `[25,25,10]` | 局部 x/y/z 搜索分辨率，均须 >0 |
@@ -182,18 +188,19 @@ curl --fail-with-body -sS http://127.0.0.1:8000/api/v2/health
 
 ### 2.5 空间场与地形
 
-`Dataset` 必填 `id/kind/version`；`kind` 为 `terrain/weather/signal/noise/area/grid/risk/corridor` 之一；可选 `valid_from/valid_to`、`geometry_wkt`、`cells`（默认 `[]`）。数据集和单元格的有效期共同约束适用范围。
+`Dataset` 必填 `id/kind/version`；`kind` 为 `terrain/weather/signal/noise/area/grid/risk/cost/corridor` 之一；可选 `valid_from/valid_to`、`geometry_wkt`、`cells`（默认 `[]`）。数据集和单元格的有效期共同约束适用范围。
 
 `FieldCell` 的 `geometry_wkt`（WGS84 足迹）与 `bounds`（局部 AEQD 六个边界）必须二选一；`values` 必填。WKT 格可用 `min_altitude/max_altitude` 限定 EG 椭球高；使用 `bounds` 时其局部 z 范围生效。可选 `valid_from/valid_to` 为带时区时间。未给高度界限的足迹格覆盖全高度。
 
 | 数据类型 | `values` 允许键 | 单位与解释 |
 |------|------|------|
 | `terrain` | `elevation_ellipsoid_m`、`terrain_ellipsoid_m`、`nodata` | EG 米；前者为规范键。可用地形必须有有限椭球高 |
-| `weather` | `wind_speed_mps`、`windSpeed`、`precipitation`、`precipitation_mm_h`、`icing`、`nodata` | 风 m/s；降水和结冰可为布尔或非负数，0/false 表示无 |
+| `weather` | `wind_speed_mps`、`windSpeed`、`precipitation`、`precipitation_mm_h`、`icing`、`visibility_m`、`nodata` | 风 m/s；能见度 `visibility_m` 为非负米值；降水和结冰可为布尔或非负数，0/false 表示无 |
 | `signal` | `bands`、`signal_strength_dbm`、`nodata` | `bands` 为频段到 dBm 的对象，如 `{"2.4GHz":-60,"5.8GHz":-70}`；亦可给统一强度 |
 | `noise` / `risk` | `noise_db` / `risk`、`nodata` | 噪声 dB；风险数值，供代价计算 |
 | `area` | `adminCode/gridCode/code/nodata` | 行政区、网格或通用编码 |
 | `grid` | `adminCode/gridCode/code/occupied/nodata` | 区域编码与占用属性 |
+| `cost` | `cost`、`nodata` | 非负自定义代价值，单位由任务 cost_layers 声明 |
 | `corridor` | `nodata` | 明确允许穿行的几何区域 |
 
 未知 `values` 键报 `INVALID_INPUT`。规则引用天气、信号或风险场时，缺少匹配数据集、版本、单元格或必要数值会拒绝编译。规划经过未覆盖、过期或 `nodata=true` 的相关空间场时视为不可通行。terrain 一旦配置，也必须在飞行位置与时间全程有效；不能把缺地形当平地。重叠有效地形格取较高椭球高，避免低估地面。
@@ -207,6 +214,7 @@ curl --fail-with-body -sS http://127.0.0.1:8000/api/v2/health
 | 字段 | 类型 / 默认 | 含义 |
 |------|------|------|
 | `crs` | string，`LOCAL_AEQD` | 必须显式保持本地 AEQD 语义 |
+| `level` | 非负整数 / null | 上游网格层级标识；与任务指定层级一致 |
 | `origin` | `[x,y,z]`，必填 | 第 `(0,0,0)` 格的最小角，局部米 |
 | `resolution` | `[dx,dy,dz]`，必填 | 每轴格边长，均 >0 |
 | `shape` | `[nx,ny,nz]`，必填 | 每轴格数，均为正整数 |
@@ -222,10 +230,14 @@ curl --fail-with-body -sS http://127.0.0.1:8000/api/v2/health
 | `Task` 字段 | 类型 / 默认 | 含义 |
 |------|------|------|
 | `id` | 非空 string，必填 | 任务 ID |
-| `start_wkt` / `goal_wkt` | `POINT Z`，必填 | WGS84 起终点 |
+| `start_wkt` / `goal_wkt` | `POINT Z` / null | WGS84 起终点；使用图节点或网格端点时可省略，由服务换算 |
+| `network` | NetworkSelection / null | ENG-06 的图节点、途经节点和边权选择 |
+| `start_grid` / `goal_grid` | `[i,j,k]` / null | 外部 scene.grid 的端点格，省略 WKT 时使用格中心；同时提供时检查坐标属于该格 |
 | `departure_time` | timestamp，必填 | 最早起飞时间，必须在场景时域内 |
 | `alt_reference` | 高度枚举，必填 | 本任务起终点、航点与输出 WKT 的高度基准 |
 | `route_mode` | `strict/prefer/free`，`strict` | 路径模式 |
+| `search` | `SearchOptions` / null | null 使用原有组合搜索；显式对象使用指定网格搜索 |
+| `objectives` | ObjectiveConfig / null | ENG-07/free 的多目标计算；null 使用普通规划 |
 | `engine_id` | `ENG-06/ENG-07`，可省略 | strict/prefer 自动归属 ENG-06；free 自动归属 ENG-07。显式值须与模式一致 |
 | `waypoints` | `Waypoint[]`，`[]` | 按顺序经过的中间业务航点，不重复放起终点；执行 WAYPOINT 规则 |
 | `earliest_arrival/latest_arrival` | timestamp/null | 终点到达窗口；最晚到达不能早于 departure |
@@ -242,6 +254,54 @@ curl --fail-with-body -sS http://127.0.0.1:8000/api/v2/health
 `AircraftState` 字段均可省略：`at`（timestamp）、`battery_percent`（0–100）、`remaining_flight_time_s`、`remaining_range_m`（均 >=0）、`home_wkt`（`POINT Z`）、`alt_reference`。RTL 启用低电触发时，必须提供电量、剩余飞行时间、剩余航程与 home，不能只给一个低电标志。`state.alt_reference` 显式指定时独立解释 home 的高度，可与任务基准不同；省略或为 null 时沿用 `Task.alt_reference`，服务将 home 换算到任务输出基准。
 
 RTL 是**根据提交时当前状态生成的返航方案**：触发后将目标改为 `home_wkt`，生成满足 `rtlAltitude` 的返航路径，并检查当前剩余航程与续航；服务不持续监听电池，也不向无人机下发返航指令。持续储备监测、实际执行与后续重规划由平台负责。
+
+### 显式航路图与连通性
+
+`Scene.airway_graph` 提供 `version`、`nodes` 和 `edges`。`version` 是非空路网版本；同时提供 Scene.network_version 时必须一致。图节点为 `{ "id":"A", "point_wkt":"POINT Z (...)" }`，高度固定为 EG 椭球高。
+
+每条边包含 `id`、`from_node`、`to_node`、`airway_id` 和 `weights`。`weights` 是非负有限数值的对象，如 `{"distance_m":500,"cost":2}`。可选字段：
+
+| 字段 | 默认 | 含义 |
+|---|---|---|
+| `geometry_wkt` | null | EG 的 LINESTRING Z；省略时连接两端节点；几何端点与节点偏差不超过 0.1 m |
+| `direction` | BOTH | FORWARD 从 from_node 到 to_node；REVERSE 反向；BOTH 双向 |
+| `status` | ACTIVE | CLOSED 边不参与规划 |
+| `valid_from/valid_to` | null | 带时区的边有效时间，实际飞行与预约延迟后继续检查 |
+
+任务选择示例：
+
+```json
+{"start_node_id":"A","goal_node_id":"D","weight_field":"cost","expected_version":"handoff-20261030","via_node_ids":[]}
+```
+
+把该对象放在 `task.network`。`weight_field` 必须存在于各边，`expected_version` 可省略；提供时与图版本一致。`via_node_ids` 是按顺序经过的显式业务节点，执行航点数量及间距规则。自动经过的中间图节点不计入业务航点数量。图节点引用与外部网格端点使用各自的输入方式；显式坐标须与所选端点一致。
+
+服务按方向、边权、准入和规则搜索，再生成满足飞机约束的实际运动。节点表示拓扑连接，允许在有效航路内生成圆弧转弯。没有共同节点的几何交叉不形成图连接。结果 `network_route` 返回路网版本、实际节点/边序列、所选边权字段、原始权重之和 `total_cost`，以及应用优先规则后的 `effective_cost`。优先规则调整非负代价，禁飞、净空、准入等硬约束继续执行。断连返回 `NETWORK_DISCONNECTED`。
+
+`POST /api/v2/networks/analyze` 接受 `scene` 或 `scene_id`，可选 `at`；默认使用 scene.time_origin。返回节点 ID、活动边 ID、弱连通分量、强连通分量和失效边 ID。它描述图的结构连通性；飞行器净空和运动约束由规划及验证接口执行。
+
+完整输入见 [`network_request.json`](../test_api/data/features/network_request.json) 和 [`network_analyze_request.json`](../test_api/data/features/network_analyze_request.json)。网格端点与搜索配置见 [`search_request.json`](../test_api/data/features/search_request.json)。
+
+### 搜索配置与完整途经网格
+
+`Task.search` 示例：
+
+```json
+{"algorithm":"ASTAR","neighbors":26,"grid_level":12,"max_expanded_nodes":null}
+```
+
+| 字段 | 取值 / 默认 | 修改方法 |
+|---|---|---|
+| `algorithm` | `ASTAR` / `DIJKSTRA`；默认 ASTAR | 选择启发式搜索或 Dijkstra 搜索 |
+| `neighbors` | 整数 6、18、26；默认 26 | 6 仅连接面相邻节点；18 增加棱方向；26 再增加角方向。对角移动继续检查穿角碰撞 |
+| `grid_level` | 非负整数 / null | 指定时须等于 `scene.grid.level` |
+| `max_expanded_nodes` | 正整数 / null | 可选任务级扩展预算，多个途经航段共用。null 不设上限；耗尽返回 `SEARCH_BUDGET_EXCEEDED` |
+
+搜索邻域定义搜索节点的连接。实际飞行曲线仍执行转弯半径、角度、爬降和净空要求。`search_report` 返回所选算法、邻域、层级、实际扩展数及调用方预算。
+
+`traversed_grids` 按实际运动顺序返回全部经过的格子，每项包含 `grid_indices`、`grid_code`、`entry_time_s`、`exit_time_s`。时间以场景零点为基准。直线和圆弧按解析几何与网格面求交；等待保留占用时段。同一格连续运动会合并时段，离开后再次进入保留新记录。
+
+`grid_context` 说明遍历采用的原点、分辨率、shape、层级及来源。有 `scene.grid` 时使用外部网格，否则使用场景规划网格。遍历使用格子上界不包含的约定，同时穿过面、棱或角时不增加无停留时间的相邻格。原有 `keypoints.grid_indices` 继续使用内部规划网格；关键点编码先查规则网格映射，再查显式单元格。
 
 ### 2.8 默认 DJI 工程规划配置
 
@@ -264,6 +324,88 @@ RTL 是**根据提交时当前状态生成的返航方案**：触发后将目标
 | `low_battery_percent` | 20 | 0–100；配置记录值。返航阈值使用 `RTL.content.lowBatteryPercent` |
 | `engineering_values` | 速度、爬降率、偏航率、加减速、转弯半径、尺寸、安全裕度、返航高度与低电阈值字段名列表 | 完整列表以 version 响应为准 |
 
+### 多目标配置 `Task.objectives`
+
+用于 ENG-07、`route_mode=free`。配置省略时使用普通规划。服务生成候选路线，完成运动定时和独立验证后，计算目标值并选择归一化加权总分最小的主方案。
+
+| 字段 | 默认 / 单位 | 修改方法 |
+|---|---|---|
+| `weights.distance/time/energy/risk` | 1 / 0 / 0 / 0 | 非负权重；与自定义图层权重合计至少一项大于 0 |
+| `normalization.distance_m` | 1 m | 距离归一化尺度，大于 0 |
+| `normalization.time_s` | 1 s | 航时归一化尺度，大于 0 |
+| `normalization.energy_wh` | 1 Wh | 能耗归一化尺度，大于 0 |
+| `normalization.risk_s` | 1 risk·s | 风险暴露归一化尺度，大于 0 |
+| `energy_model` | null | 能耗权重大于 0 时提供机体质量和功率模型 |
+| `cost_layers` | [] | 追加自定义代价图层 |
+| `max_solutions` / `max_iterations` | null | 调用方可指定正整数计算预算；max_solutions 限制生成的完整候选路径数，max_iterations 限制标签扩展次数；默认不设置 |
+
+`energy_model` 包含 `mass_kg`、`hover_power_w`、`cruise_power_w` 和 `climb_efficiency`。质量、功率使用调用方给定值；效率大于 0 且不超过 1。能耗按实际运动时间、悬停和正爬升势能计算，结果单位 Wh，公式随响应返回。
+
+风险目标使用 `kind=risk`、`values.risk` 的带版本数据集，按真实运动的时间积分得到风险暴露。自定义图层使用 `kind=cost`、`values.cost`；每项填写 `id/dataset_id/weight/normalization/basis/unit`。`basis=distance` 积分代价×米，`basis=time` 积分代价×秒；`unit` 声明积分后的业务单位，归一化尺度与该单位一致。
+
+每个目标先用原始值除以归一化尺度，再乘权重。`objectives.weighted_score` 是各项之和。目标场应覆盖整条候选运动的时间、高度和位置。缺失或 nodata 的代价数据不按零值处理。
+
+响应主方案及 `alternatives` 组成已验证候选中的非支配集合：一个方案各项目标均不优于另一个方案，且至少一项更差时，被剔除。`optimization.scope=validated_candidates` 表明比较范围。`status` 区分候选生成结束、迭代预算、方案预算、时间预算和搜索扩展预算。所有返回方案保留完整 WKT、时间、运动段、网格和验证结果；批量中只执行主方案，备选也检查与其他主方案的冲突。
+
+### 增量重规划 `POST /api/v2/plan/replan`
+
+用于 ENG-07/free。平台保留前次完整请求和响应，再提交当前状态、最新完整场景、剩余任务及变化事件。事件说明变化来源；实际约束取自最新场景。平台负责采集事件和执行新方案。
+
+| 请求字段 | 必填 / 默认 | 填写方法 |
+|---|---|---|
+| `previous_scene` | 必填 Scene | 前次规划使用的原始场景 |
+| `previous_task` | 必填 Task | 前次规划的原始任务 |
+| `previous_route` | 必填 RouteResult | 前次完整规划响应，保留 WKT、时间、运动段及坐标上下文；静止任务可为 POINT |
+| `scene` / `scene_id` | 二选一 | 最新场景，或其已登记 ID |
+| `remaining_task` | 必填 Task | 当前起点、目标及尚未完成的业务航点；departure_time 等于 current_state.at |
+| `current_state` | 必填 CurrentState | position_wkt、velocity_xyz_mps、at |
+| `event` | 必填 ReplanEvent | 变化事件与变化量或资源引用 |
+| `trigger` | 默认 {} | 数值阈值、频率和事件历史 |
+| `time_budget_s` | 默认 null | 本次证明、复用、搜索和最终验证共用的计算时限 |
+
+`current_state.position_wkt` 使用 remaining_task.alt_reference。`velocity_xyz_mps=[vx,vy,vz]` 是当前场景局部东、北、上速度，单位 m/s。`at` 是带时区时刻，位于最新场景时域内；remaining_task 起点与当前位置一致。前后场景使用相同投影、高度转换上下文和 time_origin，前次路线按其原始场景独立证明。
+
+| event 字段 | 填写方法 |
+|---|---|
+| `id` | 非空业务事件 ID |
+| `type` | obstacle、dynamic_obstacle、rule、dataset、aircraft_state、mission、scene、weather、control_zone、airspace |
+| `at` | 事件发生时刻，不晚于 current_state.at |
+| `old_value/new_value` | 同时提供的有限数值，用于变化阈值 |
+| `changed_resource_ids` | 已变化对象 ID；在前次或最新场景中存在，可表示新增、删除或更新 |
+
+事件提供数值 old/new 或变化资源 ID 至少一组。天气使用 weather/dataset，管制区使用 control_zone/airspace，数据和几何的实际更新放入最新 Scene。
+
+`trigger.threshold` 为非负绝对变化阈值，与事件数值同单位；启用后提供 old/new。`min_interval_s` 为非负秒数，`max_frequency_hz` 为正频率；同时提供时执行较长间隔。`last_event_time/last_replan_time` 由平台保存并回传，均不晚于当前状态时刻。事件不晚于 last_event_time 时为 stale_event；变化量小于阈值时为 below_threshold；未到下次允许时刻时为 frequency_limited。忽略事件的响应不返回执行路线。
+
+| 响应字段 | 含义 |
+|---|---|
+| `decision` | reused：复用已验后续路线；replanned：已重算；ignored：未触发；failed：本次未生成可执行路线 |
+| `reason` | 本次复用、重算、忽略或失败原因 |
+| `route` | 完整 RouteResult 或 null；包含实际初始速度和独立验证结果 |
+| `current_state` | 本次输入的当前位置、速度和时刻 |
+| `reused_primitives/reused_distance_m/reused_time_s` | 实际复用的原语数、米数和秒数 |
+| `new_search_calls` | 本次实际搜索调用数；未受影响后续路线可为 0 |
+| `recomputed_from_s` | 重算接续时刻，相对场景 time_origin |
+| `next_eligible_time` | 频率限制后的下次允许时刻，其他情况为 null |
+| `violations` | 本次失败的约束及原因 |
+
+服务复核原路线并裁剪已完成部分。后续路线有效时直接复用；受影响时，复用安全前段，按当前速度减速至可接续状态，再搜索后续路线。减速、原地偏航和等待均计入运动时间、预算和占用。最终检查完整剩余任务的航点、时间窗、续航、返航及动态冲突。多目标任务比较接续后的完整候选，并返回主方案与非支配备选。
+
+完整输入见 [`replan_request.json`](../test_api/data/features/replan_request.json)。把响应 route 的 trajectory_wkt、vertex_times_s、motion_segments 和 initial_velocity_xyz_mps，连同最新 scene 和 remaining_task（作为 task）提交到 `/api/v2/validate`，即可独立复核。
+
+### 批量执行配置 `execution`
+
+同步批量请求和异步作业请求可填写 `execution`。单机请求不使用此字段。
+
+| 字段 | 类型 / 默认 | 用法 |
+|---|---|---|
+| `workers` | 正整数，`1` | 候选计算的最大并行工作线程数；布尔值和字符串不接受 |
+| `batch_size` | 正整数/null，`null` | 每组提交的候选任务数；null 将所有任务作为一组 |
+
+所有候选组使用同一截止时刻。候选计算完成后，全部任务统一预约并执行连续冲突检查。`batch_size` 不拆分安全协调范围。省略 `execution` 时顺序计算。
+
+`BatchResult.execution_report` 返回 `requested_workers`、实际参与候选计算的线程数 `actual_workers`、`batch_size`、提交组数 `batches` 和成功候选数 `candidate_count`。候选成功后仍需通过预约和最终验证，最终成功数读取 `success_count`。
+
 ## 3. 全部规则
 
 每条 `Rule` 必填 `id`、`rule_type`、非空 `content`；兼容样例名 `type`、`constraints`，分别对应前两项业务字段。可选 `scope`、`resource_ids`（默认 `[]`）、`effective_start/effective_end`。规则有效期可输入无时区时间（按 Asia/Shanghai 解释）；空字符串转 null。其他对象时间仍必须带时区。`content` 采用下表精确键名，未知类型、未知键、错误类型、反向区间和缺少必要字段都会报 `INVALID_INPUT`。时间与空间适用范围在整段上求交，不能只检查端点。无 `resource_ids` 时按规则类别选择场景中对应资源；给出引用时每个 ID 都必须存在。
@@ -282,13 +424,13 @@ ENG-06 消费 HEIGHT_LAYER、WIDTH、DIRECTION、PRIORITY、SPEED、TIME、AREA�
 | `SPEED` | `minSpeed,maxSpeed,cruiseSpeed` | m/s；max/cruise >0，min >=0，min<=max。巡航和物理起停加减速阶段区分处理 |
 | `TIME` | `dailyStart,dailyEnd,weekdays,earliestDeparture,latestArrival` | 搜索将日历开放期转为起飞窗口，冲突时可重试后续窗口；日内时间 `HH:mm`，Asia/Shanghai；dailyStart/dailyEnd 必须成对，支持跨午夜；weekdays 为 0–6 整数，0 周日、1 周一至 6 周六；earliestDeparture/latestArrival 也是日内 `HH:mm` |
 | `AREA` | `scope,minLon,minLat,maxLon,maxLat,areaWkt,adminCodes,gridCodes,zoneIds` | scope=BBOX 时填四个经纬度边界，WKT 时填 areaWkt；两者均为允许区域。兼容 INCLUDE/EXCLUDE 与资源/编码引用；所有模式检查完整包络 |
-| `CLIMB` | `maxClimbRate,maxDescentRate` | m/s；与机型能力取更严格限制，逐段检查 |
+| `CLIMB` | `maxClimbRate,maxDescentRate,maxClimbAngle,maxDescentAngle` | 速率 m/s；角度为相对水平面的度数，0<角度≤90；与机型能力共同检查，按实际区域和有效时间执行 |
 | `TURN` | `maxTurnAngle,minTurnRadius` | 角度 `0<=值<=180`，半径米 >=0；约束完整转弯累计角及几何半径 |
 | `SEPARATION` | `verticalSeparation,horizontalSeparation` | 米，>=0；全局连续时空间隔，与飞机尺寸和安全裕度取保守值；不接受 scope |
 | `NO_FLY` | `noFlyMode,heightCeiling,includeBuffer` | noFlyMode 必填=`STANDARD/PERMANENT/TEMPORARY`；临时规则须显式起止有效期；需要匹配管制几何；heightCeiling 为 EG 米；includeBuffer 是保留开关，当前管制区附加缓冲为 0，飞机净空单独参与检查 |
 | `BUILDING` | `avoidMode,safeDistance,bufferRadius` | avoidMode 必填=`STRICT/BUFFER/CORRIDOR`；距离米 >=0；需障碍几何，CORRIDOR 还需明确 corridor 数据集，不能把建筑整体当穿行区 |
 | `ZONE` | `zoneLevels,coverageThreshold` | 至少给一项；zoneLevels 为非空字符串数组；coverageThreshold 为 0–1，记录覆盖阈值；碰撞结果由真实管制体决定 |
-| `WEATHER` | `maxWindSpeed,noPrecipitation,noIcing` | 至少给一项；风 m/s，后两项 boolean；需 versioned weather 格场，相应风/降水/结冰数值必须存在，全程有效且覆盖 |
+| `WEATHER` | `maxWindSpeed,minVisibility,noPrecipitation,noIcing` | 至少给一项；风 m/s、能见度 m、后两项 boolean；天气格场提供相应数值，按位置和时间覆盖路线 |
 | `SIGNAL` | `minSignalStrength,bands,band_policy` | 强度 dBm 必填；bands 为非空字符串数组；band_policy=`any`（默认）或 `all`；需 signal 格场，并匹配飞机支持频段 |
 | `PRIORITY` | `priorityScene,costBonus` | 两者必填；场景=`PLANNING/LOW_RISK/FAST/QUIET`，bonus 为 0–1；LOW_RISK 需 risk 格场，QUIET 需 noise 格场，覆盖缺口不放行；影响候选路线代价 |
 | `HOVER` | `maxHoverTime,defaultHoverTime` | 秒 >=0，default <= max；只允许明确标记的业务航点悬停，实际持续时间不能超限 |
@@ -320,9 +462,11 @@ ENG-06 消费 HEIGHT_LAYER、WIDTH、DIRECTION、PRIORITY、SPEED、TIME、AREA�
 | 坐标转换 | `geometries_wkt`（与输入顺序相同）、`direction`、`alt_reference`、`coordinate_context` |
 | health | `status="ok"/"degraded"`、`api_version`、`native_available`、`jobs`；缺原生扩展时 degraded，不能据此承诺可规划 |
 | version | `api_version`、`engine`（available/engine/version/error/git_sha）、`default_profile`；`engine.git_sha` 为运行镜像的构建 revision，本地未设置时为 `unknown` |
-| capabilities | `api_version/contract_version/route_modes/default_route_mode/rule_types/engine_rules/canonical_alt_reference/altitude_references/geometric_tolerance_m/grid_formats/scene_lifecycle`；`scene_limits`、`max_registered_scenes`、`max_registered_scene_bytes`、`max_scene_radius_m` 为 null，表示未设置固定资源上限 |
+| capabilities | `api_version/contract_version/route_modes/default_route_mode/rule_types/engine_rules/canonical_alt_reference/altitude_references/geometric_tolerance_m/grid_formats/scene_lifecycle`；`scene_limits` 中各项以及 `max_registered_scenes`、`max_registered_scene_bytes`、`max_scene_radius_m` 为 null，表示未设置固定资源上限 |
 
-`capabilities.contract_version="2026-10-29"` 标记本次契约；`engine_rules` 给出两引擎规则分配，`canonical_alt_reference="EG"` 声明内部高度基准。
+`capabilities` 同时返回 search_algorithms、grid_neighbors、航路图/完整网格/并行/多目标/增量支持状态，以及 objective_dimensions、cost_layer_bases 和 replanning_engine_ids。
+
+`capabilities.contract_version="2026-10-30"` 标记本次契约；`engine_rules` 给出两引擎规则分配，`canonical_alt_reference="EG"` 声明内部高度基准。
 
 `coordinate_context` 包含 EPSG:4326、轴序、局部 AEQD CRS、原点、半径、高度数据来源与气压修正版本。几何容差为 0.1 m，用于数值和离散近似处理。安全距离使用场景与机型配置值。
 
@@ -331,6 +475,13 @@ ENG-06 消费 HEIGHT_LAYER、WIDTH、DIRECTION、PRIORITY、SPEED、TIME、AREA�
 | 字段 | 类型 | 含义 |
 |------|------|------|
 | `task_id` | string | 对应任务 ID |
+| `search_report` | SearchReport / null | 显式搜索配置与实际扩展数 |
+| `network_route` | NetworkRoute / null | 图规划的版本、节点、边权及实际边序列 |
+| `objectives` | RouteObjectives / null | 各目标的原始值、归一化值、单位、权重、总分和数据版本 |
+| `optimization` | OptimizationReport / null | 候选搜索状态、迭代及方案数量 |
+| `alternatives` | RouteResult[] | 非支配的其他完整方案；主方案参与批量执行，备选方案仅供选择 |
+| `traversed_grids` | TraversedGrid[] | 全部途经网格及进入、离开时刻 |
+| `grid_context` | object | 完整途经网格的坐标和层级说明 |
 | `status` | `planned/failed/timeout` | 逐任务结果；HTTP 200 不代表每个任务成功 |
 | `code` / `message` | string/null / string | 失败代码和解释；成功时 code 通常 null |
 | `route_mode` | 路径枚举 | 实际任务模式 |
@@ -344,6 +495,7 @@ ENG-06 消费 HEIGHT_LAYER、WIDTH、DIRECTION、PRIORITY、SPEED、TIME、AREA�
 | `trajectory_wkt` | WKT/null | 任务高度基准下的 WGS84 `LINESTRING Z`，静止点可为 `POINT Z`；失败无轨迹 |
 | `vertex_times_s` | number[] | 每个 WKT 顶点的相对场景零点时间 |
 | `motion_segments` | `MotionSegment[]` | 精确运动原语和时间律，局部 AEQD 米制位置 |
+| `initial_velocity_xyz_mps` | `[vx,vy,vz]` | 局部东/北/上起始速度，m/s；普通规划为零，重规划保留当前实际速度 |
 | `keypoints` | `Keypoint[]` | 业务与运动事件关键点 |
 | `metrics` | object | `distance_m/flight_time_s/wait_time_s`；wait 是调度的起飞延迟 |
 | `validation` | object | `valid` 与 `violations` |
@@ -479,6 +631,400 @@ curl --fail-with-body -sS http://127.0.0.1:18000/api/v2/examples/single -o singl
 
 ```json
 {
+  "initial_velocity_xyz_mps": [
+    0.0,
+    0.0,
+    0.0
+  ],
+  "objectives": null,
+  "optimization": null,
+  "alternatives": [],
+  "network_route": null,
+  "search_report": null,
+  "traversed_grids": [
+    {
+      "grid_indices": [
+        23,
+        24,
+        8
+      ],
+      "grid_code": null,
+      "entry_time_s": 0.0,
+      "exit_time_s": 1.6950340041274239
+    },
+    {
+      "grid_indices": [
+        24,
+        24,
+        8
+      ],
+      "grid_code": null,
+      "entry_time_s": 1.6950340041274239,
+      "exit_time_s": 6.824628060567422
+    },
+    {
+      "grid_indices": [
+        25,
+        24,
+        8
+      ],
+      "grid_code": null,
+      "entry_time_s": 6.824628060567422,
+      "exit_time_s": 11.824628066087712
+    },
+    {
+      "grid_indices": [
+        26,
+        24,
+        8
+      ],
+      "grid_code": null,
+      "entry_time_s": 11.824628066087712,
+      "exit_time_s": 16.824628071608004
+    },
+    {
+      "grid_indices": [
+        27,
+        24,
+        8
+      ],
+      "grid_code": null,
+      "entry_time_s": 16.824628071608004,
+      "exit_time_s": 21.82462807714578
+    },
+    {
+      "grid_indices": [
+        28,
+        24,
+        8
+      ],
+      "grid_code": null,
+      "entry_time_s": 21.82462807714578,
+      "exit_time_s": 26.824628082666063
+    },
+    {
+      "grid_indices": [
+        29,
+        24,
+        8
+      ],
+      "grid_code": null,
+      "entry_time_s": 26.824628082666063,
+      "exit_time_s": 31.824628088203838
+    },
+    {
+      "grid_indices": [
+        30,
+        24,
+        8
+      ],
+      "grid_code": null,
+      "entry_time_s": 31.824628088203838,
+      "exit_time_s": 36.82462809372413
+    },
+    {
+      "grid_indices": [
+        31,
+        24,
+        8
+      ],
+      "grid_code": null,
+      "entry_time_s": 36.82462809372413,
+      "exit_time_s": 41.8246280992619
+    },
+    {
+      "grid_indices": [
+        32,
+        24,
+        8
+      ],
+      "grid_code": null,
+      "entry_time_s": 41.8246280992619,
+      "exit_time_s": 46.82462810478219
+    },
+    {
+      "grid_indices": [
+        33,
+        24,
+        8
+      ],
+      "grid_code": null,
+      "entry_time_s": 46.82462810478219,
+      "exit_time_s": 51.824628110302484
+    },
+    {
+      "grid_indices": [
+        34,
+        24,
+        8
+      ],
+      "grid_code": null,
+      "entry_time_s": 51.824628110302484,
+      "exit_time_s": 56.824628115840255
+    },
+    {
+      "grid_indices": [
+        35,
+        24,
+        8
+      ],
+      "grid_code": null,
+      "entry_time_s": 56.824628115840255,
+      "exit_time_s": 61.82462812136055
+    },
+    {
+      "grid_indices": [
+        36,
+        24,
+        8
+      ],
+      "grid_code": null,
+      "entry_time_s": 61.82462812136055,
+      "exit_time_s": 66.82462812689832
+    },
+    {
+      "grid_indices": [
+        37,
+        24,
+        8
+      ],
+      "grid_code": null,
+      "entry_time_s": 66.82462812689832,
+      "exit_time_s": 71.82462813241861
+    },
+    {
+      "grid_indices": [
+        38,
+        24,
+        8
+      ],
+      "grid_code": null,
+      "entry_time_s": 71.82462813241861,
+      "exit_time_s": 76.8246281379389
+    },
+    {
+      "grid_indices": [
+        39,
+        24,
+        8
+      ],
+      "grid_code": null,
+      "entry_time_s": 76.8246281379389,
+      "exit_time_s": 81.82462814347667
+    },
+    {
+      "grid_indices": [
+        40,
+        24,
+        8
+      ],
+      "grid_code": null,
+      "entry_time_s": 81.82462814347667,
+      "exit_time_s": 86.82462814899696
+    },
+    {
+      "grid_indices": [
+        41,
+        24,
+        8
+      ],
+      "grid_code": null,
+      "entry_time_s": 86.82462814899696,
+      "exit_time_s": 91.82462815453474
+    },
+    {
+      "grid_indices": [
+        42,
+        24,
+        8
+      ],
+      "grid_code": null,
+      "entry_time_s": 91.82462815453474,
+      "exit_time_s": 96.82462816005503
+    },
+    {
+      "grid_indices": [
+        43,
+        24,
+        8
+      ],
+      "grid_code": null,
+      "entry_time_s": 96.82462816005503,
+      "exit_time_s": 101.8246281655928
+    },
+    {
+      "grid_indices": [
+        44,
+        24,
+        8
+      ],
+      "grid_code": null,
+      "entry_time_s": 101.8246281655928,
+      "exit_time_s": 106.82462817111309
+    },
+    {
+      "grid_indices": [
+        45,
+        24,
+        8
+      ],
+      "grid_code": null,
+      "entry_time_s": 106.82462817111309,
+      "exit_time_s": 111.82462817663338
+    },
+    {
+      "grid_indices": [
+        46,
+        24,
+        8
+      ],
+      "grid_code": null,
+      "entry_time_s": 111.82462817663338,
+      "exit_time_s": 116.82462818217115
+    },
+    {
+      "grid_indices": [
+        47,
+        24,
+        8
+      ],
+      "grid_code": null,
+      "entry_time_s": 116.82462818217115,
+      "exit_time_s": 121.82462818769145
+    },
+    {
+      "grid_indices": [
+        48,
+        24,
+        8
+      ],
+      "grid_code": null,
+      "entry_time_s": 121.82462818769145,
+      "exit_time_s": 126.8246281932292
+    },
+    {
+      "grid_indices": [
+        49,
+        24,
+        8
+      ],
+      "grid_code": null,
+      "entry_time_s": 126.8246281932292,
+      "exit_time_s": 131.8246281987495
+    },
+    {
+      "grid_indices": [
+        50,
+        24,
+        8
+      ],
+      "grid_code": null,
+      "entry_time_s": 131.8246281987495,
+      "exit_time_s": 136.82462820428728
+    },
+    {
+      "grid_indices": [
+        51,
+        24,
+        8
+      ],
+      "grid_code": null,
+      "entry_time_s": 136.82462820428728,
+      "exit_time_s": 141.82462820980757
+    },
+    {
+      "grid_indices": [
+        52,
+        24,
+        8
+      ],
+      "grid_code": null,
+      "entry_time_s": 141.82462820980757,
+      "exit_time_s": 146.82462821532786
+    },
+    {
+      "grid_indices": [
+        53,
+        24,
+        8
+      ],
+      "grid_code": null,
+      "entry_time_s": 146.82462821532786,
+      "exit_time_s": 151.82462822086563
+    },
+    {
+      "grid_indices": [
+        54,
+        24,
+        8
+      ],
+      "grid_code": null,
+      "entry_time_s": 151.82462822086563,
+      "exit_time_s": 156.82462822638593
+    },
+    {
+      "grid_indices": [
+        55,
+        24,
+        8
+      ],
+      "grid_code": null,
+      "entry_time_s": 156.82462822638593,
+      "exit_time_s": 161.82462823192367
+    },
+    {
+      "grid_indices": [
+        56,
+        24,
+        8
+      ],
+      "grid_code": null,
+      "entry_time_s": 161.82462823192367,
+      "exit_time_s": 166.82462823744396
+    },
+    {
+      "grid_indices": [
+        57,
+        24,
+        8
+      ],
+      "grid_code": null,
+      "entry_time_s": 166.82462823744396,
+      "exit_time_s": 171.82462824296425
+    },
+    {
+      "grid_indices": [
+        58,
+        24,
+        8
+      ],
+      "grid_code": null,
+      "entry_time_s": 171.82462824296425,
+      "exit_time_s": 177.32834746683343
+    }
+  ],
+  "grid_context": {
+    "crs": "LOCAL_AEQD",
+    "origin": [
+      -500.0,
+      -500.0,
+      0.0
+    ],
+    "resolution": [
+      25.0,
+      25.0,
+      10.0
+    ],
+    "shape": [
+      100,
+      60,
+      30
+    ],
+    "level": null,
+    "source": "scene.bounds",
+    "keypoint_indices_source": "scene.bounds/resolution",
+    "boundary_convention": "half-open; simultaneous face/corner crossings have no dwell"
+  },
   "engine_id": "ENG-06",
   "task_id": "demo-v2-001",
   "alt_reference": "EG",
@@ -773,7 +1319,7 @@ print(json.dumps(job["result"], ensure_ascii=False))
 
 ## 6. 数据归档与性能记录
 
-对接方使用 [`../test_api/`](../test_api/README.md) 执行公网接口测试。逐项字段说明与修改步骤见 [`接口字段与修改说明`](../test_api/API_FIELDS.md)。复制整个目录后运行 `python run_tests.py`。默认地址为 `https://api.kaguratart.com`。测试覆盖全部 14 个接口和三套各 1000 个任务，保存完整请求、响应与报告。
+对接方使用 [`../test_api/`](../test_api/README.md) 执行公网接口测试。逐项字段说明与修改步骤见 [`接口字段与修改说明`](../test_api/API_FIELDS.md)。复制整个目录后运行 `python run_tests.py`。默认地址为 `https://api.kaguratart.com`。测试覆盖全部 16 个接口和三套各 1000 个任务，保存完整请求、响应与报告。
 
 测试目录与分类运行命令见 [`../tests/README.md`](../tests/README.md)。完整测试请求与响应见 [`../tests/data/README.md`](../tests/data/README.md)。归档只包含 v2，保存接口示例、冻结场景和三套各 1000 条航线结果。每组记录输入、输出、运行环境和 SHA-256。重跑时先注册场景，再替换请求中的 `scene_id`。
 

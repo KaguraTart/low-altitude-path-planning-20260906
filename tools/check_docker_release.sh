@@ -18,6 +18,7 @@ cleanup() {
   if docker container inspect "$uav_container" >/dev/null 2>&1; then
     docker logs "$uav_container" > "$uav_output/server.log" 2>&1 || true
     docker cp "$uav_container:/tmp/uav-release-http" "$uav_output/http-smoke" >/dev/null 2>&1 || true
+    docker cp "$uav_container:/tmp/uav-release-test-api" "$uav_output/test-api" >/dev/null 2>&1 || true
     if [[ $status -ne 0 ]]; then
       tail -n 80 "$uav_output/server.log" >&2
     fi
@@ -68,3 +69,15 @@ docker exec -i "$uav_container" python - \
   --base-url http://127.0.0.1:8000 --expected-git-sha "$uav_revision" \
   --openapi-snapshot /app/docs/openapi.json --archive-dir /tmp/uav-release-http < tools/smoke_v2.py > "$uav_output/smoke.json"
 cat "$uav_output/smoke.json"
+
+# Run the independent delivery kit against the installed wheel, including every
+# current endpoint and the feature fixtures. No repository package is mounted.
+docker exec "$uav_container" mkdir -p /tmp/uav-release-kit
+for uav_file in run_tests.py client.py reporting.py; do
+  docker cp "test_api/$uav_file" "$uav_container:/tmp/uav-release-kit/$uav_file" >/dev/null
+done
+docker cp test_api/data "$uav_container:/tmp/uav-release-kit/data" >/dev/null
+docker exec "$uav_container" python -S /tmp/uav-release-kit/run_tests.py \
+  --base-url http://127.0.0.1:8000 --examples-only --output /tmp/uav-release-test-api \
+  > "$uav_output/test-api.log"
+cat "$uav_output/test-api.log"

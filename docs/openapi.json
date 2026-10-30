@@ -632,7 +632,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/RouteResult"
+                  "$ref": "#/components/schemas/RouteResult-Output"
                 }
               }
             }
@@ -1226,6 +1226,188 @@
           }
         }
       }
+    },
+    "/api/v2/networks/analyze": {
+      "post": {
+        "tags": [
+          "v2 WKT / WGS84"
+        ],
+        "summary": "Analyze Network",
+        "operationId": "analyze_network_api_v2_networks_analyze_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NetworkAnalyzeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NetworkAnalysis"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Invalid input or unavailable resource",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Input or referenced constraints are invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown scene or job",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Service is shutting down",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected service error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Planning engine or memory unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v2/plan/replan": {
+      "post": {
+        "tags": [
+          "v2 WKT / WGS84"
+        ],
+        "summary": "Replan",
+        "operationId": "replan_api_v2_plan_replan_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReplanRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReplanResponse"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Invalid input or unavailable resource",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Input or referenced constraints are invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown scene or job",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Service is shutting down",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected service error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Planning engine or memory unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -1576,6 +1758,37 @@
         ],
         "title": "Airway"
       },
+      "AirwayGraph": {
+        "properties": {
+          "version": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Version"
+          },
+          "nodes": {
+            "items": {
+              "$ref": "#/components/schemas/NetworkNode"
+            },
+            "type": "array",
+            "title": "Nodes"
+          },
+          "edges": {
+            "items": {
+              "$ref": "#/components/schemas/NetworkEdge"
+            },
+            "type": "array",
+            "title": "Edges"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "version",
+          "nodes",
+          "edges"
+        ],
+        "title": "AirwayGraph"
+      },
       "BatchRequest": {
         "properties": {
           "scene_id": {
@@ -1598,6 +1811,9 @@
                 "type": "null"
               }
             ]
+          },
+          "execution": {
+            "$ref": "#/components/schemas/ExecutionOptions"
           },
           "tasks": {
             "items": {
@@ -1659,7 +1875,7 @@
           },
           "routes": {
             "items": {
-              "$ref": "#/components/schemas/RouteResult"
+              "$ref": "#/components/schemas/RouteResult-Output"
             },
             "type": "array",
             "title": "Routes"
@@ -1704,6 +1920,16 @@
             },
             "type": "object",
             "title": "Stage Timings Ms"
+          },
+          "execution_report": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ExecutionReport"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "additionalProperties": false,
@@ -1762,6 +1988,89 @@
       },
       "Capabilities": {
         "properties": {
+          "incremental_replanning_supported": {
+            "type": "boolean",
+            "title": "Incremental Replanning Supported"
+          },
+          "initial_velocity_validation_supported": {
+            "type": "boolean",
+            "title": "Initial Velocity Validation Supported"
+          },
+          "replanning_engine_ids": {
+            "items": {
+              "type": "string",
+              "const": "ENG-07"
+            },
+            "type": "array",
+            "title": "Replanning Engine Ids"
+          },
+          "objective_optimization_supported": {
+            "type": "boolean",
+            "title": "Objective Optimization Supported"
+          },
+          "objective_dimensions": {
+            "items": {
+              "type": "string",
+              "enum": [
+                "distance",
+                "time",
+                "energy",
+                "risk"
+              ]
+            },
+            "type": "array",
+            "title": "Objective Dimensions"
+          },
+          "cost_layer_bases": {
+            "items": {
+              "type": "string",
+              "enum": [
+                "distance",
+                "time"
+              ]
+            },
+            "type": "array",
+            "title": "Cost Layer Bases"
+          },
+          "search_algorithms": {
+            "items": {
+              "type": "string",
+              "enum": [
+                "ASTAR",
+                "DIJKSTRA"
+              ]
+            },
+            "type": "array",
+            "title": "Search Algorithms"
+          },
+          "grid_neighbors": {
+            "items": {
+              "type": "integer",
+              "enum": [
+                6,
+                18,
+                26
+              ]
+            },
+            "type": "array",
+            "title": "Grid Neighbors"
+          },
+          "airway_graph_supported": {
+            "type": "boolean",
+            "title": "Airway Graph Supported"
+          },
+          "network_analysis_supported": {
+            "type": "boolean",
+            "title": "Network Analysis Supported"
+          },
+          "traversed_grids_supported": {
+            "type": "boolean",
+            "title": "Traversed Grids Supported"
+          },
+          "batch_execution_supported": {
+            "type": "boolean",
+            "title": "Batch Execution Supported"
+          },
           "contract_version": {
             "type": "string",
             "title": "Contract Version"
@@ -1876,6 +2185,18 @@
         "additionalProperties": false,
         "type": "object",
         "required": [
+          "incremental_replanning_supported",
+          "initial_velocity_validation_supported",
+          "replanning_engine_ids",
+          "objective_optimization_supported",
+          "objective_dimensions",
+          "cost_layer_bases",
+          "search_algorithms",
+          "grid_neighbors",
+          "airway_graph_supported",
+          "network_analysis_supported",
+          "traversed_grids_supported",
+          "batch_execution_supported",
           "contract_version",
           "engine_rules",
           "canonical_alt_reference",
@@ -2373,6 +2694,44 @@
         ],
         "title": "CoordinateSpec"
       },
+      "CurrentState": {
+        "properties": {
+          "position_wkt": {
+            "type": "string",
+            "title": "Position Wkt"
+          },
+          "velocity_xyz_mps": {
+            "prefixItems": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "number"
+              }
+            ],
+            "type": "array",
+            "maxItems": 3,
+            "minItems": 3,
+            "title": "Velocity Xyz Mps"
+          },
+          "at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "At"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "position_wkt",
+          "velocity_xyz_mps",
+          "at"
+        ],
+        "title": "CurrentState"
+      },
       "Dataset": {
         "properties": {
           "id": {
@@ -2390,7 +2749,8 @@
               "area",
               "grid",
               "risk",
-              "corridor"
+              "corridor",
+              "cost"
             ],
             "title": "Kind"
           },
@@ -2451,6 +2811,42 @@
         ],
         "title": "Dataset"
       },
+      "EnergyModel": {
+        "properties": {
+          "mass_kg": {
+            "type": "number",
+            "title": "Mass Kg",
+            "description": "Total moving mass in kg, including payload, supplied by the caller.",
+            "gt": 0
+          },
+          "hover_power_w": {
+            "type": "number",
+            "title": "Hover Power W",
+            "ge": 0
+          },
+          "cruise_power_w": {
+            "type": "number",
+            "title": "Cruise Power W",
+            "ge": 0
+          },
+          "climb_efficiency": {
+            "type": "number",
+            "title": "Climb Efficiency",
+            "gt": 0,
+            "le": 1
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "mass_kg",
+          "hover_power_w",
+          "cruise_power_w",
+          "climb_efficiency"
+        ],
+        "title": "EnergyModel",
+        "description": "Caller supplied engineering model; powers include baseline propulsion."
+      },
       "ErrorBody": {
         "properties": {
           "code": {
@@ -2489,6 +2885,76 @@
           "error"
         ],
         "title": "ErrorEnvelope"
+      },
+      "ExecutionOptions": {
+        "properties": {
+          "workers": {
+            "type": "integer",
+            "exclusiveMinimum": 0.0,
+            "title": "Workers",
+            "default": 1
+          },
+          "batch_size": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "exclusiveMinimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Batch Size"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "ExecutionOptions"
+      },
+      "ExecutionReport": {
+        "properties": {
+          "requested_workers": {
+            "type": "integer",
+            "exclusiveMinimum": 0.0,
+            "title": "Requested Workers"
+          },
+          "actual_workers": {
+            "type": "integer",
+            "exclusiveMinimum": 0.0,
+            "title": "Actual Workers"
+          },
+          "batch_size": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "exclusiveMinimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Batch Size"
+          },
+          "batches": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Batches"
+          },
+          "candidate_count": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Candidate Count"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "requested_workers",
+          "actual_workers",
+          "batches",
+          "candidate_count"
+        ],
+        "title": "ExecutionReport"
       },
       "FieldCell": {
         "properties": {
@@ -2697,6 +3163,18 @@
       },
       "GridSpec": {
         "properties": {
+          "level": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Level"
+          },
           "crs": {
             "type": "string",
             "title": "Crs",
@@ -3399,6 +3877,875 @@
         ],
         "title": "MotionSegment"
       },
+      "NetworkAnalysis": {
+        "properties": {
+          "version": {
+            "type": "string",
+            "title": "Version"
+          },
+          "nodes": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Nodes"
+          },
+          "active_edges": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Active Edges"
+          },
+          "weak_components": {
+            "items": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "type": "array",
+            "title": "Weak Components"
+          },
+          "strong_components": {
+            "items": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "type": "array",
+            "title": "Strong Components"
+          },
+          "inactive_edge_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Inactive Edge Ids"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "version",
+          "nodes",
+          "active_edges",
+          "weak_components",
+          "strong_components",
+          "inactive_edge_ids"
+        ],
+        "title": "NetworkAnalysis"
+      },
+      "NetworkAnalyzeRequest": {
+        "properties": {
+          "scene_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Scene Id"
+          },
+          "scene": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Scene"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "At"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "NetworkAnalyzeRequest"
+      },
+      "NetworkEdge": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Id"
+          },
+          "from_node": {
+            "type": "string",
+            "title": "From Node"
+          },
+          "to_node": {
+            "type": "string",
+            "title": "To Node"
+          },
+          "airway_id": {
+            "type": "string",
+            "title": "Airway Id"
+          },
+          "geometry_wkt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Geometry Wkt"
+          },
+          "direction": {
+            "type": "string",
+            "enum": [
+              "FORWARD",
+              "REVERSE",
+              "BOTH"
+            ],
+            "title": "Direction",
+            "default": "BOTH"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "ACTIVE",
+              "CLOSED"
+            ],
+            "title": "Status",
+            "default": "ACTIVE"
+          },
+          "weights": {
+            "additionalProperties": {
+              "type": "number",
+              "ge": 0
+            },
+            "type": "object",
+            "title": "Weights"
+          },
+          "valid_from": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Valid From"
+          },
+          "valid_to": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Valid To"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "id",
+          "from_node",
+          "to_node",
+          "airway_id",
+          "weights"
+        ],
+        "title": "NetworkEdge"
+      },
+      "NetworkNode": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Id"
+          },
+          "point_wkt": {
+            "type": "string",
+            "title": "Point Wkt"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "id",
+          "point_wkt"
+        ],
+        "title": "NetworkNode"
+      },
+      "NetworkRoute": {
+        "properties": {
+          "network_version": {
+            "type": "string",
+            "title": "Network Version"
+          },
+          "node_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Node Ids"
+          },
+          "edge_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Edge Ids"
+          },
+          "weight_field": {
+            "type": "string",
+            "title": "Weight Field"
+          },
+          "total_cost": {
+            "type": "number",
+            "title": "Total Cost",
+            "ge": 0
+          },
+          "effective_cost": {
+            "anyOf": [
+              {
+                "type": "number",
+                "ge": 0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Effective Cost"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "network_version",
+          "node_ids",
+          "edge_ids",
+          "weight_field",
+          "total_cost"
+        ],
+        "title": "NetworkRoute"
+      },
+      "NetworkSelection": {
+        "properties": {
+          "start_node_id": {
+            "type": "string",
+            "title": "Start Node Id"
+          },
+          "goal_node_id": {
+            "type": "string",
+            "title": "Goal Node Id"
+          },
+          "weight_field": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Weight Field"
+          },
+          "expected_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Version"
+          },
+          "via_node_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Via Node Ids"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "start_node_id",
+          "goal_node_id",
+          "weight_field"
+        ],
+        "title": "NetworkSelection"
+      },
+      "ObjectiveConfig": {
+        "properties": {
+          "weights": {
+            "$ref": "#/components/schemas/ObjectiveWeights"
+          },
+          "normalization": {
+            "$ref": "#/components/schemas/ObjectiveNormalization"
+          },
+          "energy_model": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EnergyModel"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "cost_layers": {
+            "items": {
+              "$ref": "#/components/schemas/ObjectiveCostLayer"
+            },
+            "type": "array",
+            "title": "Cost Layers"
+          },
+          "max_solutions": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "exclusiveMinimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Solutions"
+          },
+          "max_iterations": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "exclusiveMinimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Iterations"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "ObjectiveConfig"
+      },
+      "ObjectiveCostLayer": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Id"
+          },
+          "dataset_id": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Dataset Id"
+          },
+          "weight": {
+            "type": "number",
+            "title": "Weight",
+            "ge": 0
+          },
+          "normalization": {
+            "type": "number",
+            "title": "Normalization",
+            "gt": 0
+          },
+          "basis": {
+            "type": "string",
+            "enum": [
+              "distance",
+              "time"
+            ],
+            "title": "Basis"
+          },
+          "unit": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Unit",
+            "description": "Unit of the integrated objective (values.cost times metres or seconds)."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "id",
+          "dataset_id",
+          "weight",
+          "normalization",
+          "basis",
+          "unit"
+        ],
+        "title": "ObjectiveCostLayer"
+      },
+      "ObjectiveNormalization": {
+        "properties": {
+          "distance_m": {
+            "type": "number",
+            "title": "Distance M",
+            "default": 1,
+            "gt": 0
+          },
+          "time_s": {
+            "type": "number",
+            "title": "Time S",
+            "default": 1,
+            "gt": 0
+          },
+          "energy_wh": {
+            "type": "number",
+            "title": "Energy Wh",
+            "default": 1,
+            "gt": 0
+          },
+          "risk_s": {
+            "type": "number",
+            "title": "Risk S",
+            "default": 1,
+            "gt": 0
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "ObjectiveNormalization"
+      },
+      "ObjectiveValue": {
+        "properties": {
+          "raw": {
+            "type": "number",
+            "title": "Raw",
+            "ge": 0
+          },
+          "normalized": {
+            "type": "number",
+            "title": "Normalized",
+            "ge": 0
+          },
+          "normalization": {
+            "type": "number",
+            "title": "Normalization",
+            "gt": 0
+          },
+          "unit": {
+            "type": "string",
+            "title": "Unit"
+          },
+          "weight": {
+            "type": "number",
+            "title": "Weight",
+            "ge": 0
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "raw",
+          "normalized",
+          "normalization",
+          "unit",
+          "weight"
+        ],
+        "title": "ObjectiveValue"
+      },
+      "ObjectiveWeights": {
+        "properties": {
+          "distance": {
+            "type": "number",
+            "title": "Distance",
+            "default": 1,
+            "ge": 0
+          },
+          "time": {
+            "type": "number",
+            "title": "Time",
+            "default": 0,
+            "ge": 0
+          },
+          "energy": {
+            "type": "number",
+            "title": "Energy",
+            "default": 0,
+            "ge": 0
+          },
+          "risk": {
+            "type": "number",
+            "title": "Risk",
+            "default": 0,
+            "ge": 0
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "ObjectiveWeights"
+      },
+      "OptimizationReport": {
+        "properties": {
+          "scope": {
+            "type": "string",
+            "const": "validated_candidates",
+            "title": "Scope",
+            "default": "validated_candidates"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "generator_exhausted",
+              "iteration_limit",
+              "solution_limit",
+              "deadline_exceeded",
+              "search_budget_exceeded"
+            ],
+            "title": "Status"
+          },
+          "iterations": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Iterations",
+            "default": 0
+          },
+          "generated_candidates": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Generated Candidates",
+            "default": 0
+          },
+          "validated_candidates": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Validated Candidates",
+            "default": 0
+          },
+          "returned_solutions": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Returned Solutions",
+            "default": 0
+          },
+          "primary_executed_only": {
+            "type": "boolean",
+            "const": true,
+            "title": "Primary Executed Only",
+            "default": true
+          },
+          "description": {
+            "type": "string",
+            "title": "Description",
+            "default": "Pareto comparison covers independently validated candidates generated by a finite lattice search. Labels use incoming direction and rebuilt motion costs for candidate pruning."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "status"
+        ],
+        "title": "OptimizationReport"
+      },
+      "ReplanEvent": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Id"
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "obstacle",
+              "dynamic_obstacle",
+              "rule",
+              "dataset",
+              "aircraft_state",
+              "mission",
+              "scene",
+              "weather",
+              "control_zone",
+              "airspace"
+            ],
+            "title": "Type"
+          },
+          "at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "At"
+          },
+          "old_value": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Old Value"
+          },
+          "new_value": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "New Value"
+          },
+          "changed_resource_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Changed Resource Ids"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "id",
+          "type",
+          "at"
+        ],
+        "title": "ReplanEvent"
+      },
+      "ReplanRequest": {
+        "properties": {
+          "current_state": {
+            "$ref": "#/components/schemas/CurrentState"
+          },
+          "previous_route": {
+            "$ref": "#/components/schemas/RouteResult-Input"
+          },
+          "previous_task": {
+            "$ref": "#/components/schemas/Task"
+          },
+          "previous_scene": {
+            "$ref": "#/components/schemas/Scene"
+          },
+          "remaining_task": {
+            "$ref": "#/components/schemas/Task"
+          },
+          "scene": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Scene"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "scene_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Scene Id"
+          },
+          "event": {
+            "$ref": "#/components/schemas/ReplanEvent"
+          },
+          "trigger": {
+            "$ref": "#/components/schemas/ReplanTrigger"
+          },
+          "time_budget_s": {
+            "anyOf": [
+              {
+                "type": "number",
+                "gt": 0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Time Budget S"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "current_state",
+          "previous_route",
+          "previous_task",
+          "previous_scene",
+          "remaining_task",
+          "event"
+        ],
+        "title": "ReplanRequest"
+      },
+      "ReplanResponse": {
+        "properties": {
+          "decision": {
+            "type": "string",
+            "enum": [
+              "reused",
+              "replanned",
+              "ignored",
+              "failed"
+            ],
+            "title": "Decision"
+          },
+          "reason": {
+            "type": "string",
+            "title": "Reason"
+          },
+          "next_eligible_time": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Eligible Time"
+          },
+          "current_state": {
+            "$ref": "#/components/schemas/CurrentState"
+          },
+          "route": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RouteResult-Output"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "reused_primitives": {
+            "type": "integer",
+            "title": "Reused Primitives",
+            "default": 0
+          },
+          "reused_distance_m": {
+            "type": "number",
+            "title": "Reused Distance M",
+            "default": 0,
+            "ge": 0
+          },
+          "reused_time_s": {
+            "type": "number",
+            "title": "Reused Time S",
+            "default": 0,
+            "ge": 0
+          },
+          "new_search_calls": {
+            "type": "integer",
+            "title": "New Search Calls",
+            "default": 0
+          },
+          "recomputed_from_s": {
+            "anyOf": [
+              {
+                "type": "number",
+                "ge": 0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recomputed From S"
+          },
+          "violations": {
+            "items": {
+              "$ref": "#/components/schemas/Violation"
+            },
+            "type": "array",
+            "title": "Violations"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "decision",
+          "reason",
+          "current_state"
+        ],
+        "title": "ReplanResponse"
+      },
+      "ReplanTrigger": {
+        "properties": {
+          "threshold": {
+            "anyOf": [
+              {
+                "type": "number",
+                "ge": 0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Threshold"
+          },
+          "min_interval_s": {
+            "anyOf": [
+              {
+                "type": "number",
+                "ge": 0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Min Interval S"
+          },
+          "max_frequency_hz": {
+            "anyOf": [
+              {
+                "type": "number",
+                "gt": 0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Frequency Hz"
+          },
+          "last_event_time": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Event Time"
+          },
+          "last_replan_time": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Replan Time"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "ReplanTrigger"
+      },
       "RouteMetrics": {
         "properties": {
           "distance_m": {
@@ -3424,8 +4771,378 @@
         "type": "object",
         "title": "RouteMetrics"
       },
-      "RouteResult": {
+      "RouteObjectives": {
         "properties": {
+          "values": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/ObjectiveValue"
+            },
+            "type": "object",
+            "title": "Values"
+          },
+          "weighted_score": {
+            "type": "number",
+            "title": "Weighted Score",
+            "ge": 0
+          },
+          "dataset_versions": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object",
+            "title": "Dataset Versions"
+          },
+          "energy_formula": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Energy Formula"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "values",
+          "weighted_score"
+        ],
+        "title": "RouteObjectives"
+      },
+      "RouteResult-Input": {
+        "properties": {
+          "initial_velocity_xyz_mps": {
+            "prefixItems": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "number"
+              }
+            ],
+            "type": "array",
+            "maxItems": 3,
+            "minItems": 3,
+            "title": "Initial Velocity Xyz Mps",
+            "default": [
+              0,
+              0,
+              0
+            ]
+          },
+          "objectives": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RouteObjectives"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "optimization": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/OptimizationReport"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "alternatives": {
+            "items": {
+              "$ref": "#/components/schemas/RouteResult-Input"
+            },
+            "type": "array",
+            "title": "Alternatives"
+          },
+          "network_route": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/NetworkRoute"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "search_report": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SearchReport"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "traversed_grids": {
+            "items": {
+              "$ref": "#/components/schemas/TraversedGrid"
+            },
+            "type": "array",
+            "title": "Traversed Grids"
+          },
+          "grid_context": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/JsonValue"
+            },
+            "type": "object",
+            "title": "Grid Context"
+          },
+          "engine_id": {
+            "type": "string",
+            "enum": [
+              "ENG-06",
+              "ENG-07"
+            ],
+            "title": "Engine Id"
+          },
+          "task_id": {
+            "type": "string",
+            "title": "Task Id"
+          },
+          "alt_reference": {
+            "type": "string",
+            "enum": [
+              "EG",
+              "MSL",
+              "AGL",
+              "ELLIPSOID",
+              "QNE",
+              "QNH"
+            ],
+            "title": "Alt Reference"
+          },
+          "coordinate_context": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/JsonValue"
+            },
+            "type": "object",
+            "title": "Coordinate Context"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "planned",
+              "failed",
+              "timeout"
+            ],
+            "title": "Status"
+          },
+          "code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Code"
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": ""
+          },
+          "route_mode": {
+            "type": "string",
+            "enum": [
+              "strict",
+              "prefer",
+              "free"
+            ],
+            "title": "Route Mode"
+          },
+          "trajectory_wkt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Trajectory Wkt"
+          },
+          "start_wkt": {
+            "type": "string",
+            "title": "Start Wkt"
+          },
+          "goal_wkt": {
+            "type": "string",
+            "title": "Goal Wkt"
+          },
+          "departure_time": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Departure Time"
+          },
+          "time_origin": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Time Origin"
+          },
+          "action": {
+            "type": "string",
+            "enum": [
+              "mission",
+              "return_to_home"
+            ],
+            "title": "Action",
+            "default": "mission"
+          },
+          "vertex_times_s": {
+            "items": {
+              "type": "number",
+              "ge": 0
+            },
+            "type": "array",
+            "title": "Vertex Times S"
+          },
+          "motion_segments": {
+            "items": {
+              "$ref": "#/components/schemas/MotionSegment"
+            },
+            "type": "array",
+            "title": "Motion Segments"
+          },
+          "keypoints": {
+            "items": {
+              "$ref": "#/components/schemas/Keypoint"
+            },
+            "type": "array",
+            "title": "Keypoints"
+          },
+          "metrics": {
+            "$ref": "#/components/schemas/RouteMetrics"
+          },
+          "validation": {
+            "$ref": "#/components/schemas/RouteValidation"
+          },
+          "rule_report": {
+            "items": {
+              "$ref": "#/components/schemas/RuleReport"
+            },
+            "type": "array",
+            "title": "Rule Report"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "engine_id",
+          "task_id",
+          "alt_reference",
+          "coordinate_context",
+          "status",
+          "route_mode",
+          "start_wkt",
+          "goal_wkt",
+          "departure_time"
+        ],
+        "title": "RouteResult"
+      },
+      "RouteResult-Output": {
+        "properties": {
+          "initial_velocity_xyz_mps": {
+            "prefixItems": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "number"
+              }
+            ],
+            "type": "array",
+            "maxItems": 3,
+            "minItems": 3,
+            "title": "Initial Velocity Xyz Mps",
+            "default": [
+              0,
+              0,
+              0
+            ]
+          },
+          "objectives": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RouteObjectives"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "optimization": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/OptimizationReport"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "alternatives": {
+            "items": {
+              "$ref": "#/components/schemas/RouteResult-Output"
+            },
+            "type": "array",
+            "title": "Alternatives"
+          },
+          "network_route": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/NetworkRoute"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "search_report": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SearchReport"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "traversed_grids": {
+            "items": {
+              "$ref": "#/components/schemas/TraversedGrid"
+            },
+            "type": "array",
+            "title": "Traversed Grids"
+          },
+          "grid_context": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/JsonValue"
+            },
+            "type": "object",
+            "title": "Grid Context"
+          },
           "engine_id": {
             "type": "string",
             "enum": [
@@ -3803,6 +5520,16 @@
       },
       "Scene": {
         "properties": {
+          "airway_graph": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AirwayGraph"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "scene_type": {
             "type": "string",
             "const": "LOW_ALTITUDE",
@@ -4115,6 +5842,113 @@
         "type": "object",
         "title": "ScopeGrid"
       },
+      "SearchOptions": {
+        "properties": {
+          "algorithm": {
+            "type": "string",
+            "enum": [
+              "ASTAR",
+              "DIJKSTRA"
+            ],
+            "title": "Algorithm",
+            "default": "ASTAR"
+          },
+          "neighbors": {
+            "type": "integer",
+            "enum": [
+              6,
+              18,
+              26
+            ],
+            "title": "Neighbors",
+            "default": 26
+          },
+          "grid_level": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Grid Level"
+          },
+          "max_expanded_nodes": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "exclusiveMinimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Expanded Nodes"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "SearchOptions"
+      },
+      "SearchReport": {
+        "properties": {
+          "algorithm": {
+            "type": "string",
+            "enum": [
+              "ASTAR",
+              "DIJKSTRA"
+            ],
+            "title": "Algorithm"
+          },
+          "neighbors": {
+            "type": "integer",
+            "enum": [
+              6,
+              18,
+              26
+            ],
+            "title": "Neighbors"
+          },
+          "grid_level": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Grid Level"
+          },
+          "expanded_nodes": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Expanded Nodes"
+          },
+          "max_expanded_nodes": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "exclusiveMinimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Expanded Nodes"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "algorithm",
+          "neighbors",
+          "expanded_nodes"
+        ],
+        "title": "SearchReport"
+      },
       "SingleRequest": {
         "properties": {
           "scene_id": {
@@ -4163,6 +5997,26 @@
       },
       "Task": {
         "properties": {
+          "objectives": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ObjectiveConfig"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "search": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SearchOptions"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "engine_id": {
             "anyOf": [
               {
@@ -4184,12 +6038,84 @@
             "title": "Id"
           },
           "start_wkt": {
-            "type": "string",
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Start Wkt"
           },
           "goal_wkt": {
-            "type": "string",
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Goal Wkt"
+          },
+          "start_grid": {
+            "anyOf": [
+              {
+                "prefixItems": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "integer"
+                  }
+                ],
+                "type": "array",
+                "maxItems": 3,
+                "minItems": 3
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Start Grid"
+          },
+          "goal_grid": {
+            "anyOf": [
+              {
+                "prefixItems": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "integer"
+                  }
+                ],
+                "type": "array",
+                "maxItems": 3,
+                "minItems": 3
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Goal Grid"
+          },
+          "network": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/NetworkSelection"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "departure_time": {
             "type": "string",
@@ -4326,8 +6252,6 @@
         "type": "object",
         "required": [
           "id",
-          "start_wkt",
-          "goal_wkt",
           "departure_time",
           "alt_reference"
         ],
@@ -4388,6 +6312,56 @@
         ],
         "title": "TimedTrajectory"
       },
+      "TraversedGrid": {
+        "properties": {
+          "grid_indices": {
+            "prefixItems": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "integer"
+              },
+              {
+                "type": "integer"
+              }
+            ],
+            "type": "array",
+            "maxItems": 3,
+            "minItems": 3,
+            "title": "Grid Indices"
+          },
+          "grid_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Grid Code"
+          },
+          "entry_time_s": {
+            "type": "number",
+            "title": "Entry Time S",
+            "ge": 0
+          },
+          "exit_time_s": {
+            "type": "number",
+            "title": "Exit Time S",
+            "ge": 0
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "grid_indices",
+          "entry_time_s",
+          "exit_time_s"
+        ],
+        "title": "TraversedGrid"
+      },
       "TurnConstraint": {
         "properties": {
           "maxTurnAngle": {
@@ -4427,6 +6401,38 @@
             "anyOf": [
               {
                 "$ref": "#/components/schemas/Scene"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "initial_velocity_xyz_mps": {
+            "prefixItems": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "number"
+              }
+            ],
+            "type": "array",
+            "maxItems": 3,
+            "minItems": 3,
+            "title": "Initial Velocity Xyz Mps",
+            "default": [
+              0,
+              0,
+              0
+            ]
+          },
+          "network_route": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/NetworkRoute"
               },
               {
                 "type": "null"

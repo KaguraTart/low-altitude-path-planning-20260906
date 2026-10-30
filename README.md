@@ -4,7 +4,7 @@
 
 本项目提供航路规划、管制区避让和多机协同规划服务。本次交付聚焦 ENG-06 航路航线网络规划与 ENG-07 低空三维路径规划。
 
-当前接口为 `/api/v2`。软件版本为 2.0.0。请求和响应使用 JSON，外部几何使用 WGS84 经纬度 WKT。内部计算使用米和秒，垂直基准统一为 EG 椭球高。契约版本为 `2026-10-29`，接口路径仍为 `/api/v2`。
+当前接口为 `/api/v2`。软件版本为 2.0.0。请求和响应使用 JSON，外部几何使用 WGS84 经纬度 WKT。内部计算使用米和秒，垂直基准统一为 EG 椭球高。契约版本为 `2026-10-30`，接口路径仍为 `/api/v2`。
 
 ## 文档入口
 
@@ -26,7 +26,7 @@
 
 平台负责规则 CRUD、绑定管理和设备类型准入管理；引擎消费 `scene.rules`、`task.rule_ids` 和 `airways[].allowed_profile_ids` 并执行约束。`strict/prefer` 自动归属 ENG-06，`free` 自动归属 ENG-07；也可显式填写一致的 `task.engine_id`。场景仅支持 `scene_type=LOW_ALTITUDE`。strict/prefer 将不准入航路体作为禁入区；free 不使用航路准入。
 
-[需求对照表](docs/REQUIREMENTS_API_MAPPING.md)覆盖源清单全部 41 项 ENG-06/07 需求，并逐项列出输入、输出、验证入口及缺口。地面/水上交通、Pareto 多目标优化、增量重规划、规则管理、持久历史与展示不作为已交付能力。顺序途经点与重新提交规划分别只满足相应子能力。
+[需求对照表](docs/REQUIREMENTS_API_MAPPING.md)覆盖源清单全部 41 项 ENG-06/07 需求，列出具体接口、参数、输出和验证入口。引擎提供显式航路图、三维网格搜索、多目标候选比较、增量重规划及配置参数。平台负责 32 项管理功能、设备下发、持久历史与展示；地面和水上交通由对应引擎负责。
 
 新契约使用 `origin_alt_ellipsoid`、`terrain_ellipsoid_m`。MSL 转换需提供大地水准面差及来源；EG/ELLIPSOID 可直接使用。每条规划结果返回 `engine_id`、`alt_reference` 和 `coordinate_context`。WIDTH 为全宽及外侧保护带硬检查；航向北 0°顺时针；星期 0 周日、1–6 周一至周六。详见 [API](docs/API.md)。
 
@@ -41,6 +41,11 @@
 - 调度多机连续时间间隔，检查交叉、对向、悬停和动态轨迹冲突。
 - 返回轨迹 WKT、顶点时间、解析运动段、关键点、规则报告与验证结果。
 - 使用 C++17 / pybind11 原生核执行搜索、调度和运动学验证。
+- 接收方向航路图、版本和边权，返回节点/边序列并分析强弱连通性。
+- 选择 ASTAR/DIJKSTRA、6/18/26 邻域和网格层级，输出完整途经网格。
+- 配置候选计算 workers/batch_size，统一预约全部任务。
+- 按距离、时间、能耗、风险和业务代价比较非支配方案。
+- 根据事件阈值和频率触发重规划，复用已验路径并保持起始速度及接续连续。
 
 场景、网格、任务、采样与输出不设固定资源上限。`time_budget_s` 省略或为 null 时持续计算。调用方可传正有限秒数设置计算时限。`horizon_s` 指定飞行时域，`max_radius_m` 指定场景覆盖半径。
 
@@ -106,7 +111,7 @@ bash tools/check_docker_release.sh "low-altitude-path-planning:$UAV_BUILD_SHA" \
 
 ## 测试与数据
 
-向对接方提供整个 [`test_api/`](test_api/README.md) 目录。对方使用 Python 3.11 或更新版本运行 `python run_tests.py`，即可测试 `https://api.kaguratart.com` 的全部接口和三套各 1000 个任务。目录内附完整输入和实测报告。最新容器与公网记录见 [测试索引](test_api/reports/README.md)。[2026-10-29 本地测试](test_api/reports/20261029_local/REPORT.md)通过 22 项检查，覆盖 14 个接口和三套各 1000 个任务。
+向对接方提供整个 [`test_api/`](test_api/README.md) 目录。对方使用 Python 3.11 或更新版本运行 `python run_tests.py`，即可测试 `https://api.kaguratart.com` 的全部接口和三套各 1000 个任务。目录内附完整输入和实测报告。最新容器与公网记录见 [测试索引](test_api/reports/README.md)。当前完整接口集合为 16 项；独立脚本同时检查航路图、完整网格、多目标方案、增量复用和初始速度。
 
 测试按接口、规划、原生核和集成流程分类。目录说明与分类运行命令见 [`tests/README.md`](tests/README.md)。
 

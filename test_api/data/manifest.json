@@ -112,6 +112,55 @@
       "path": "examples/validate_request.json",
       "bytes": 5291,
       "sha256": "a0cfe969498e97b90a64fa16ee0221b55a7dbc4ca6ca056567762b2854290f00"
+    },
+    {
+      "path": "features/network_analyze_request.json",
+      "bytes": 5113,
+      "sha256": "8a93f019b27f37dfd0090fe40edb2862f93e0d21b73a4396c474030c481e380d"
+    },
+    {
+      "path": "features/network_request.json",
+      "bytes": 5405,
+      "sha256": "44044d725fe382fe8cb8df712de6969d928f9f204669a455a15a6e8eab05e9af"
+    },
+    {
+      "path": "features/search_request.json",
+      "bytes": 2127,
+      "sha256": "282c88b2234a7d92d26db29486cfc2ca852c1bfa9887d9da261eebe11b97a11a"
+    },
+    {
+      "path": "features/objectives_request.json",
+      "bytes": 3796,
+      "sha256": "9fcad7882db7f1ca13d5b55ab63ff3c8eb74a4e3905eab80c01970be5e206940"
+    },
+    {
+      "path": "features/replan_request.json",
+      "bytes": 7603,
+      "sha256": "f31e8c4017e29e5a292b7c9c2b3c0eb64557b528cbc18878ffc1cc244f1c3a8e"
+    }
+  ],
+  "features": [
+    {
+      "name": "network",
+      "path": "features/network_request.json"
+    },
+    {
+      "name": "network_analyze",
+      "path": "features/network_analyze_request.json"
+    },
+    {
+      "name": "search",
+      "path": "features/search_request.json"
+    },
+    {
+      "name": "objectives",
+      "path": "features/objectives_request.json",
+      "description": "比较距离、时间、能耗、风险及两个自定义代价图层的非支配方案。"
+    },
+    {
+      "name": "replan",
+      "path": "features/replan_request.json",
+      "description": "新增障碍后复用安全路径段并连续减速、重算剩余路线。"
     }
   ]
 }

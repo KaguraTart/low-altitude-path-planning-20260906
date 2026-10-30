@@ -49,7 +49,7 @@ def test_manifest_lists_every_input_with_complete_integrity_metadata():
     assert manifest["schema_version"] == 1
     files = manifest["files"]
     paths = [entry["path"] for entry in files]
-    assert len(paths) == len(set(paths)) == 12
+    assert len(paths) == len(set(paths))
     assert set(paths) == {
         path.relative_to(DATA).as_posix()
         for path in DATA.rglob("*.json")
@@ -64,7 +64,7 @@ def test_manifest_lists_every_input_with_complete_integrity_metadata():
         json.loads(content)
     assert {item["path"] for item in manifest["examples"]} | {
         item[key] for item in manifest["benchmarks"] for key in ("scene", "tasks")
-    } == set(paths)
+    } | {item["path"] for item in manifest.get("features", [])} == set(paths)
 
 
 def test_six_examples_match_the_current_public_request_models():
@@ -120,3 +120,84 @@ def test_each_benchmark_has_one_complete_scene_and_1000_linked_tasks(suite):
     if suite == "mixed":
         assert {rule.rule_type for rule in scene.rules} == set(RULE_TYPES)
         assert scene.datasets and scene.obstacles and scene.control_zones
+
+
+def test_network_and_grid_handoff_inputs_match_request_contracts():
+    from server.schemas import NetworkAnalyzeRequest
+    from uav_planner.v2.engine import plan_single_v2
+    from server.v2 import analyze_network
+
+    source = load('features/network_request.json')
+    request = SingleRequest.model_validate(source)
+    check_references(request.scene, [request.task])
+    route = plan_single_v2(**source)
+    assert route['status'] == 'planned'
+    assert route['network_route']['node_ids'] == ['A', 'B', 'D']
+    assert route['network_route']['total_cost'] == 2
+    analysis = load('features/network_analyze_request.json')
+    NetworkAnalyzeRequest.model_validate(analysis)
+    result = analyze_network(NetworkAnalyzeRequest.model_validate(analysis))
+    assert ['E'] in result['weak_components']
+
+    source = load('features/search_request.json')
+    request = SingleRequest.model_validate(source)
+    check_references(request.scene, [request.task])
+    route = plan_single_v2(**source)
+    assert route['status'] == 'planned'
+    assert route['search_report']['algorithm'] == 'DIJKSTRA'
+    assert route['search_report']['neighbors'] == 6
+    assert route['grid_context']['level'] == 12
+    assert route['traversed_grids'][0]['grid_code'] == 'start-cell'
+    assert route['traversed_grids'][-1]['grid_code'] == 'goal-cell'
+
+
+def test_public_sdk_supports_graph_trace_and_connectivity():
+    from uav_planner import analyze_network_v2, plan_single_v2, validate_route_v2
+
+    source = load('features/network_request.json')
+    route = plan_single_v2(**source)
+    validation = validate_route_v2(**source, **{
+        key: route[key] for key in
+        ('trajectory_wkt', 'vertex_times_s', 'motion_segments', 'network_route')
+    })
+    assert validation['valid']
+    assert ['E'] in analyze_network_v2(**load('features/network_analyze_request.json'))['weak_components']
+
+
+def test_objective_handoff_input_has_real_competing_valid_routes():
+    from uav_planner import plan_single_v2, validate_route_v2
+
+    source = load('features/objectives_request.json')
+    SingleRequest.model_validate(source)
+    primary = plan_single_v2(**source)
+    assert primary['status'] == 'planned'
+    routes = [primary, *primary['alternatives']]
+    assert len(routes) >= 2
+    assert primary['optimization']['scope'] == 'validated_candidates'
+    assert primary['optimization']['status'] == 'generator_exhausted'
+    primary_values = primary['objectives']['values']
+    assert set(primary_values) == {'distance', 'time', 'energy', 'risk', 'north_cost', 'south_cost'}
+    assert any(route['objectives']['values']['distance']['raw'] < primary_values['distance']['raw']
+               and route['objectives']['values']['risk']['raw'] > primary_values['risk']['raw']
+               for route in routes[1:])
+    for route in routes:
+        assert route['objectives']['weighted_score'] >= primary['objectives']['weighted_score'] - 1e-8
+        assert validate_route_v2(**source, **{key: route[key] for key in
+            ('trajectory_wkt', 'vertex_times_s', 'motion_segments')})['valid']
+
+
+def test_replan_handoff_input_retains_prefix_and_declares_velocity():
+    from uav_planner import replan_v2, validate_route_v2
+    from uav_planner.v2.replanning import ReplanRequest
+
+    source = load('features/replan_request.json')
+    ReplanRequest.model_validate(source)
+    result = replan_v2(**source)
+    assert result['decision'] == 'replanned'
+    assert result['reused_distance_m'] > 0 and result['new_search_calls'] > 0
+    route = result['route']
+    payload = {'scene':source['scene'], 'task':source['remaining_task'],
+               **{key: route[key] for key in ('trajectory_wkt','vertex_times_s','motion_segments','initial_velocity_xyz_mps')}}
+    assert validate_route_v2(**payload)['valid']
+    payload['initial_velocity_xyz_mps'] = [0,0,0]
+    assert not validate_route_v2(**payload)['valid']
