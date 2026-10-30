@@ -872,6 +872,19 @@ class Conflict(StrictModel):
     minimum_distance_m: NonNegative | None = None
 
 
+class ExecutionOptions(StrictModel):
+    workers: Annotated[StrictInt, Field(gt=0)] = 1
+    batch_size: Annotated[StrictInt, Field(gt=0)] | None = None
+
+
+class ExecutionReport(StrictModel):
+    requested_workers: Annotated[StrictInt, Field(gt=0)]
+    actual_workers: Annotated[StrictInt, Field(gt=0)]
+    batch_size: Annotated[StrictInt, Field(gt=0)] | None = None
+    batches: Annotated[StrictInt, Field(ge=0)]
+    candidate_count: Annotated[StrictInt, Field(ge=0)]
+
+
 class BatchResult(StrictModel):
     planned_at: Timestamp
     request_id: StrictStr
@@ -885,6 +898,7 @@ class BatchResult(StrictModel):
     engine: StrictStr
     coordinate_context: dict[StrictStr, JsonValue] = Field(default_factory=dict)
     stage_timings_ms: dict[StrictStr, NonNegative] = Field(default_factory=dict)
+    execution_report: ExecutionReport | None = None
 
 
 def _ordered_times(start: datetime | None, end: datetime | None, *, equal: bool = False) -> None:

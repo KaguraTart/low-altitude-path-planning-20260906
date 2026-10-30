@@ -17,7 +17,7 @@ from shapely.geometry import LineString, Point
 from shapely.ops import nearest_points
 
 from uav_planner.errors import ErrorCode, PlanningError
-from .models import AircraftProfile, BatchResult, MotionSegment, Scene, Task
+from .models import AircraftProfile, BatchResult, ExecutionOptions, MotionSegment, Scene, Task
 from .motion import Motion, MotionError, Primitive, build_motion
 
 
@@ -870,10 +870,99 @@ def _result(compiled,model,task,profile,motion,wait=0):
     return RouteResult.model_validate(result).model_dump(mode="json")
 
 
-def plan_batch_v2(*,tasks,scene_id=None,scene=None,request_id=None,time_budget_s: float | None=None):
+def _prepare_candidate(index, task, model, compiled, dynamic_tracks, deadline, search_state):
+    """Prepare one independent route; reservation and final checks stay global."""
+    from . import native
+    if time.perf_counter()>=deadline:
+        return None, _failure(task,"TIME_BUDGET_EXCEEDED","Planning deadline exhausted")
+    profile=_profile(model,task)
+    limits=_limits(compiled,task,profile)
+    departure=_seconds(task.departure_time,model)
+    if departure<0 or departure>model.horizon_s:
+        raise PlanningError(ErrorCode.INVALID_INPUT,"Departure is outside scene horizon",{"task_id":task.id})
+    if task.route_mode=="strict" and not compiled.airways:
+        raise PlanningError(ErrorCode.INVALID_INPUT,"strict requires at least one active airway",{"task_id":task.id})
+    task,rtl=_rtl_task(compiled,task,profile)
+    if task.network and rtl and rtl["required"]:
+        raise PlanningError(ErrorCode.INVALID_INPUT, "Network selection cannot be combined with an RTL diversion")
+    anchors=[_local(compiled,task.start_wkt,task)]+[_local(compiled,w.wkt,task) for w in task.waypoints]+[_local(compiled,task.goal_wkt,task)]
+    if rtl and rtl["required"]:
+        altitude=rtl["rtl_altitude_m"]
+        a,b=anchors[0].copy(),anchors[-1].copy()
+        a[2]=b[2]=compiled.frame.altitude_to_local(altitude,"EG",
+            *compiled.frame._inverse.transform(float(a[0]),float(a[1])),task.departure_time)
+        anchors=[anchors[0],a,b,anchors[-1]]
+    try:
+        legs=[]; network_trace=None
+        if task.network:
+            selected=compiled.network.select(task,profile,departure,deadline)
+            if selected is None:
+                return None, _failure(task,"NETWORK_DISCONNECTED","No active, admissible directed network path connects the requested nodes")
+            legs,network_trace=selected
+        else:
+            for a,b in zip(anchors,anchors[1:]):
+                leg=_path_for_leg(compiled,a,b,task,profile,departure,deadline,search_state)
+                if leg is None:
+                    raise MotionError("No route found at the current resolution and constraints")
+                legs.append(leg)
+        limits=_airway_motion_limits(compiled,task,limits,np.concatenate(legs))
+        motion=_task_motion(legs,task,compiled,limits,departure)
+        latest=min(model.horizon_s,_seconds(task.latest_arrival,model)) if task.latest_arrival else model.horizon_s
+        if motion.times[-1]>latest+1e-7:
+            raise MotionError("Candidate exceeds arrival or scene time horizon")
+        if motion.times[-1]-motion.times[0]>profile.endurance_s+1e-7 or motion.distance>profile.max_range_m+1e-7:
+            raise MotionError("Candidate exceeds aircraft endurance or range")
+        if model.dynamic_obstacles:
+            reservations=[p for p,t in dynamic_tracks]
+            reservation_times=[t for p,t in dynamic_tracks]
+            sh,sv=compiled.rules.separation(task)
+            limits["horizontal_separation_m"]=max(sh,profile.radius_m+profile.safety_margin_m+
+                max(d.horizontal_separation_m for d in model.dynamic_obstacles))
+            limits["vertical_separation_m"]=max(sv,profile.height_m/2+profile.safety_margin_m+
+                max(d.vertical_separation_m for d in model.dynamic_obstacles))
+            motion=_sipp_motion(motion,reservations,reservation_times,task,profile,limits,latest,deadline)
+        certificate=native.validate_motion(motion.primitives,limits,starts=motion.starts)
+        if not certificate["valid"]:
+            raise MotionError("Independent motion validation rejected candidate: "+str(certificate["violations"]))
+        # Reject impossible durations before allocating the certified cover.
+        cp,ct=motion.collision_samples()
+    except _SearchBudgetExceeded as exc:
+        return None, _failure(task,"SEARCH_BUDGET_EXCEEDED",str(exc))
+    except (_DeadlineExceeded,TimeoutError) as exc:
+        return None, _failure(task,"TIME_BUDGET_EXCEEDED",str(exc))
+    except (MotionError,ValueError) as exc:
+        code="TIME_BUDGET_EXCEEDED" if time.perf_counter()>=deadline else "SEARCH_NOT_FOUND"
+        return None, _failure(task,code,str(exc))
+    # Dynamic reservations are checked on a certified space-time chord cover.
+    h,v=compiled.rules.separation(task)
+    h=max(h,2*(profile.radius_m+profile.safety_margin_m))+.1
+    v=max(v,profile.height_m+2*profile.safety_margin_m)+.1
+    earliest_delay=max(0,_seconds(task.earliest_arrival,model)-float(ct[-1])) if task.earliest_arrival else 0
+    window=latest-float(ct[-1])
+    passages=_waypoint_passages(motion,task,compiled)
+    if passages is None:
+        window=-1
+    for waypoint,passed in zip(task.waypoints,passages or []):
+        if waypoint.earliest:
+            earliest_delay=max(earliest_delay,_seconds(waypoint.earliest,model)-passed)
+        if waypoint.latest:
+            window=min(window,_seconds(waypoint.latest,model)-passed)
+    if window<earliest_delay-1e-7:
+        return None, _failure(task,"TIME","No departure can satisfy the arrival window")
+    from .time_windows import departure_windows
+    alternatives=departure_windows(compiled,task,motion,float(ct[0])+earliest_delay,float(ct[0])+window)
+    if not alternatives:
+        return None, _failure(task,"TIME","No permitted TIME-rule departure window")
+    return {"index":index,"task":task,"profile":profile,"motion":motion,
+                       "network_trace":network_trace,"points":cp,"times":ct,"h":h,"v":v,"lo":alternatives[0][0],
+                       "hi":alternatives[0][1],"windows":alternatives,"latest":latest}, None
+
+
+def plan_batch_v2(*,tasks,scene_id=None,scene=None,request_id=None,time_budget_s: float | None=None,execution=None):
     from . import native
     native.require_native()
     start=time.perf_counter();deadline=_planning_deadline(start,time_budget_s)
+    execution_options = _parse(ExecutionOptions, execution if execution is not None else {})
     if (scene_id is None)==(scene is None):
         raise PlanningError(ErrorCode.INVALID_INPUT,"Provide exactly one of scene_id or scene")
     if scene is not None:
@@ -892,93 +981,17 @@ def plan_batch_v2(*,tasks,scene_id=None,scene=None,request_id=None,time_budget_s
     results=[None]*len(task_models)
     candidates=[]
     search_states={t.id:{"remaining":t.search.max_expanded_nodes,"expanded":0} for t in task_models if t.search}
-    for index,task in ordered:
-        if time.perf_counter()>=deadline:
-            results[index]=_failure(task,"TIME_BUDGET_EXCEEDED","Planning deadline exhausted")
-            continue
-        profile=_profile(model,task)
-        limits=_limits(compiled,task,profile)
-        departure=_seconds(task.departure_time,model)
-        if departure<0 or departure>model.horizon_s:
-            raise PlanningError(ErrorCode.INVALID_INPUT,"Departure is outside scene horizon",{"task_id":task.id})
-        if task.route_mode=="strict" and not compiled.airways:
-            raise PlanningError(ErrorCode.INVALID_INPUT,"strict requires at least one active airway",{"task_id":task.id})
-        task,rtl=_rtl_task(compiled,task,profile)
-        if task.network and rtl and rtl["required"]:
-            raise PlanningError(ErrorCode.INVALID_INPUT, "Network selection cannot be combined with an RTL diversion")
-        anchors=[_local(compiled,task.start_wkt,task)]+[_local(compiled,w.wkt,task) for w in task.waypoints]+[_local(compiled,task.goal_wkt,task)]
-        if rtl and rtl["required"]:
-            altitude=rtl["rtl_altitude_m"]
-            a,b=anchors[0].copy(),anchors[-1].copy()
-            a[2]=b[2]=compiled.frame.altitude_to_local(altitude,"EG",
-                *compiled.frame._inverse.transform(float(a[0]),float(a[1])),task.departure_time)
-            anchors=[anchors[0],a,b,anchors[-1]]
-        try:
-            legs=[]; network_trace=None
-            search_state=search_states.get(task.id)
-            if task.network:
-                selected=compiled.network.select(task,profile,departure,deadline)
-                if selected is None:
-                    results[index]=_failure(task,"NETWORK_DISCONNECTED","No active, admissible directed network path connects the requested nodes")
-                    continue
-                legs,network_trace=selected
-            else:
-                for a,b in zip(anchors,anchors[1:]):
-                    leg=_path_for_leg(compiled,a,b,task,profile,departure,deadline,search_state)
-                    if leg is None:
-                        raise MotionError("No route found at the current resolution and constraints")
-                    legs.append(leg)
-            limits=_airway_motion_limits(compiled,task,limits,np.concatenate(legs))
-            motion=_task_motion(legs,task,compiled,limits,departure)
-            latest=min(model.horizon_s,_seconds(task.latest_arrival,model)) if task.latest_arrival else model.horizon_s
-            if motion.times[-1]>latest+1e-7:
-                raise MotionError("Candidate exceeds arrival or scene time horizon")
-            if motion.times[-1]-motion.times[0]>profile.endurance_s+1e-7 or motion.distance>profile.max_range_m+1e-7:
-                raise MotionError("Candidate exceeds aircraft endurance or range")
-            if model.dynamic_obstacles:
-                reservations=[p for p,t in dynamic_tracks]
-                reservation_times=[t for p,t in dynamic_tracks]
-                sh,sv=compiled.rules.separation(task)
-                limits["horizontal_separation_m"]=max(sh,profile.radius_m+profile.safety_margin_m+
-                    max(d.horizontal_separation_m for d in model.dynamic_obstacles))
-                limits["vertical_separation_m"]=max(sv,profile.height_m/2+profile.safety_margin_m+
-                    max(d.vertical_separation_m for d in model.dynamic_obstacles))
-                motion=_sipp_motion(motion,reservations,reservation_times,task,profile,limits,latest,deadline)
-            certificate=native.validate_motion(motion.primitives,limits,starts=motion.starts)
-            if not certificate["valid"]:
-                raise MotionError("Independent motion validation rejected candidate: "+str(certificate["violations"]))
-            # Reject impossible durations before allocating the certified cover.
-            cp,ct=motion.collision_samples()
-        except _SearchBudgetExceeded as exc:
-            results[index]=_failure(task,"SEARCH_BUDGET_EXCEEDED",str(exc));continue
-        except (_DeadlineExceeded,TimeoutError) as exc:
-            results[index]=_failure(task,"TIME_BUDGET_EXCEEDED",str(exc));continue
-        except (MotionError,ValueError) as exc:
-            code="TIME_BUDGET_EXCEEDED" if time.perf_counter()>=deadline else "SEARCH_NOT_FOUND"
-            results[index]=_failure(task,code,str(exc));continue
-        # Dynamic reservations are checked on a certified space-time chord cover.
-        h,v=compiled.rules.separation(task)
-        h=max(h,2*(profile.radius_m+profile.safety_margin_m))+.1
-        v=max(v,profile.height_m+2*profile.safety_margin_m)+.1
-        earliest_delay=max(0,_seconds(task.earliest_arrival,model)-float(ct[-1])) if task.earliest_arrival else 0
-        window=latest-float(ct[-1])
-        passages=_waypoint_passages(motion,task,compiled)
-        if passages is None:
-            window=-1
-        for waypoint,passed in zip(task.waypoints,passages or []):
-            if waypoint.earliest:
-                earliest_delay=max(earliest_delay,_seconds(waypoint.earliest,model)-passed)
-            if waypoint.latest:
-                window=min(window,_seconds(waypoint.latest,model)-passed)
-        if window<earliest_delay-1e-7:
-            results[index]=_failure(task,"TIME","No departure can satisfy the arrival window");continue
-        from .time_windows import departure_windows
-        alternatives=departure_windows(compiled,task,motion,float(ct[0])+earliest_delay,float(ct[0])+window)
-        if not alternatives:
-            results[index]=_failure(task,"TIME","No permitted TIME-rule departure window");continue
-        candidates.append({"index":index,"task":task,"profile":profile,"motion":motion,
-                           "network_trace":network_trace,"points":cp,"times":ct,"h":h,"v":v,"lo":alternatives[0][0],
-                           "hi":alternatives[0][1],"windows":alternatives,"latest":latest})
+    from .execution import run_candidates
+    outcomes, execution_report = run_candidates(
+        ordered, compiled, execution_options,
+        lambda index, task, worker_scene: _prepare_candidate(
+            index, task, model, worker_scene, dynamic_tracks, deadline, search_states.get(task.id)))
+    for (index, task), (candidate, failure) in zip(ordered, outcomes):
+        if failure is not None:
+            results[index] = failure
+        else:
+            candidates.append(candidate)
+    execution_report.candidate_count = len(candidates)
     # A single native batch shares its temporal index across every reservation.
     # Rebuilding that index once per task is cubic and defeats scene preloading.
     searched_at=time.perf_counter()
@@ -1094,7 +1107,7 @@ def plan_batch_v2(*,tasks,scene_id=None,scene=None,request_id=None,time_budget_s
     result=BatchResult.model_validate({"planned_at":datetime.now(timezone.utc),"request_id":request_id or uuid.uuid4().hex,
         "scene_id":scene_id,"scene_version":version,"routes":results,"success_count":count,
         "failed_count":len(results)-count,"conflicts":conflicts,"elapsed_ms":(time.perf_counter()-start)*1000,"engine":"native-v2",
-        "coordinate_context":compiled.frame.context,
+        "coordinate_context":compiled.frame.context, "execution_report":execution_report,
         "stage_timings_ms":{"scene_and_task_parsing":(parsed_at-start)*1000,
             "search_motion_and_certificate":(searched_at-parsed_at)*1000,
             "reservation_scheduling":(scheduled_at-searched_at)*1000,

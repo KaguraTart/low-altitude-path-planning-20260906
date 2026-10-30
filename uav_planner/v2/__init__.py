@@ -3,6 +3,16 @@
 from .coordinates import CoordinateError, CoordinateFrame, convert_coordinates
 from .models import (
     RULE_TYPES,
+    ExecutionReport,
+    ExecutionOptions,
+    TraversedGrid,
+    SearchReport,
+    SearchOptions,
+    NetworkRoute,
+    NetworkSelection,
+    NetworkEdge,
+    NetworkNode,
+    AirwayGraph,
     AircraftProfile,
     AircraftState,
     Airway,
@@ -28,6 +38,16 @@ from .models import (
 from .profiles import DJI_MINI_4_PRO, default_profile, resolve_profile
 
 __all__ = [
+    "AirwayGraph",
+    "NetworkNode",
+    "NetworkEdge",
+    "NetworkSelection",
+    "NetworkRoute",
+    "SearchOptions",
+    "SearchReport",
+    "TraversedGrid",
+    "ExecutionOptions",
+    "ExecutionReport",
     "RULE_TYPES", "AircraftProfile", "AircraftState", "Airway", "BatchResult",
     "Bounds3D", "Connector", "ControlZone", "CoordinateError", "CoordinateFrame",
     "CoordinateRequest", "CoordinateResponse", "CoordinateSpec", "Dataset",

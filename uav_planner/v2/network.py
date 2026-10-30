@@ -592,3 +592,22 @@ def normalize_task(compiled, task):
             if explicit is None:
                 updates[label+"_wkt"] = compiled.frame.to_wgs84(Point(point), task.alt_reference, task.departure_time)
     return task.model_copy(update=updates)
+
+
+def analyze_network_v2(*, scene_id=None, scene=None, at=None):
+    """Return structural connectivity at an explicit instant in the scene."""
+    from pydantic import TypeAdapter, ValidationError
+    from .engine import register_scene, registry
+    from .models import Timestamp
+    if (scene_id is None) == (scene is None):
+        invalid("Provide exactly one of scene_id or scene")
+    if scene is not None:
+        scene_id = register_scene(scene)["scene_id"]
+    model, compiled, _, _ = registry.get(scene_id)
+    if model.airway_graph is None:
+        invalid("Scene has no airway_graph")
+    try:
+        instant = TypeAdapter(Timestamp).validate_python(at) if at is not None else model.time_origin
+    except ValidationError as exc:
+        invalid("Network analysis at must be a timezone-aware timestamp: " + str(exc.errors()[0]["msg"]))
+    return compiled.network.analyze((instant-model.time_origin).total_seconds())

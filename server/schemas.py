@@ -6,7 +6,7 @@ from typing import Literal
 from pydantic import Field, JsonValue, model_validator
 
 from uav_planner.v2.models import (
-    AircraftProfile, BatchResult, MotionSegment, Number, Positive, RouteValidation,
+    AircraftProfile, BatchResult, ExecutionOptions, MotionSegment, Number, Positive, RouteValidation,
     RuleReport, Scene, StrictModel, Task, WKT, Timestamp, NetworkRoute,
 )
 
@@ -38,6 +38,7 @@ class SingleRequest(SceneSelection):
 
 
 class BatchRequest(SceneSelection):
+    execution: ExecutionOptions = Field(default_factory=ExecutionOptions)
     tasks: list[Task] = Field(min_length=1)
     request_id: str | None = None
     time_budget_s: Positive | None = None

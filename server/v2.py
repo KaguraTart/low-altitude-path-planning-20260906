@@ -139,11 +139,5 @@ def example_batch():
 
 @router.post("/networks/analyze", response_model=NetworkAnalysis)
 def analyze_network(request: NetworkAnalyzeRequest):
-    scene_id = request.scene_id
-    if request.scene is not None:
-        scene_id = register_scene(request.scene)["scene_id"]
-    model, compiled, _, _ = registry.get(scene_id)
-    if model.airway_graph is None:
-        raise PlanningError(ErrorCode.INVALID_INPUT, "Scene has no airway_graph")
-    at = request.at or model.time_origin
-    return compiled.network.analyze((at-model.time_origin).total_seconds())
+    from uav_planner.v2.network import analyze_network_v2
+    return analyze_network_v2(**request.model_dump())
