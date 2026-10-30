@@ -1,0 +1,1 @@
+{"version":"handoff-20261030","nodes":["A","B","C","D","E"],"active_edges":["ab","ac","bd","cd"],"weak_components":[["A","B","C","D"],["E"]],"strong_components":[["A"],["B"],["C"],["D"],["E"]],"inactive_edge_ids":[]}

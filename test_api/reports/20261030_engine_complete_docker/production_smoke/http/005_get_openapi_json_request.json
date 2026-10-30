@@ -1,0 +1,10 @@
+{
+  "method": "GET",
+  "url": "http://127.0.0.1:18000/openapi.json",
+  "path": "/openapi.json",
+  "headers": {
+    "User-Agent": "UAV-API-Test/1.0",
+    "Accept": "application/json"
+  },
+  "body_path": null
+}

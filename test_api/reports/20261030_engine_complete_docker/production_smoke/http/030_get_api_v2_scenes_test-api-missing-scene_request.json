@@ -1,0 +1,10 @@
+{
+  "method": "GET",
+  "url": "http://127.0.0.1:18000/api/v2/scenes/test-api-missing-scene",
+  "path": "/api/v2/scenes/test-api-missing-scene",
+  "headers": {
+    "User-Agent": "UAV-API-Test/1.0",
+    "Accept": "application/json"
+  },
+  "body_path": null
+}

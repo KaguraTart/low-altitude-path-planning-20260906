@@ -1,0 +1,11 @@
+{
+  "method": "POST",
+  "url": "https://api.kaguratart.com/api/v2/plan/single",
+  "path": "/api/v2/plan/single",
+  "headers": {
+    "User-Agent": "UAV-API-Test/1.0",
+    "Accept": "application/json",
+    "Content-Type": "application/json"
+  },
+  "body_path": "012_post_api_v2_plan_single_input.json"
+}
