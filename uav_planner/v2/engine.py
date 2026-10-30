@@ -68,9 +68,9 @@ class SceneRegistry:
 
     def describe(self, key: str) -> dict:
         model, compiled, version, elapsed = self.get(key)
-        return {"scene_id": key, "scene_version": version, "network_version": model.network_version, "scene_type": model.scene_type, "status": "ready", "compilation_ms": elapsed,
+        return {"scene_id": key, "scene_version": version, "network_version": model.airway_graph.version if model.airway_graph else model.network_version, "scene_type": model.scene_type, "status": "ready", "compilation_ms": elapsed,
                 "coordinate_context": compiled.frame.context, "warnings": compiled.warnings,
-                "counts": {name:len(getattr(model,name)) for name in ("airways","obstacles","control_zones","rules","datasets")}}
+                "counts": {**{name:len(getattr(model,name)) for name in ("airways","obstacles","control_zones","rules","datasets")}, **({"network_nodes": len(model.airway_graph.nodes), "network_edges": len(model.airway_graph.edges)} if model.airway_graph else {})}}
 
 
 registry = SceneRegistry()
@@ -379,7 +379,15 @@ def _grid_path(compiled,start,goal,task,profile,t,deadline,search_state=None):
         raise _SearchBudgetExceeded("Caller search expansion budget exhausted")
     if result["status"]=="deadline_exceeded":
         raise _DeadlineExceeded("Planning deadline exhausted during grid search")
-    return np.asarray(result["path"]) if result["status"]=="ok" else None
+    if result["status"] != "ok":
+        return None
+    points=np.asarray(result["path"])
+    # Geographic round trips can differ from a lattice vertex by nanometres.
+    # Keep exact task endpoints without introducing microscopic turn legs.
+    if len(points)>2:
+        interior=[p for p in points[1:-1] if np.linalg.norm(p-start)>1e-6 and np.linalg.norm(p-goal)>1e-6]
+        points=np.asarray([start,*interior,goal])
+    return points
 
 
 def _path_for_leg(compiled,start,goal,task,profile,t,deadline,search_state=None):
@@ -872,7 +880,8 @@ def plan_batch_v2(*,tasks,scene_id=None,scene=None,request_id=None,time_budget_s
         scene_id=register_scene(scene)["scene_id"]
     model,compiled,version,_=registry.get(scene_id)
     dynamic_tracks=_dynamic_tracks(compiled,model)
-    task_models=[_parse(Task,t) for t in tasks]
+    from .network import normalize_task
+    task_models=[normalize_task(compiled, _parse(Task,t)) for t in tasks]
     for task in task_models:
         if task.search and task.search.grid_level is not None and (model.grid is None or model.grid.level != task.search.grid_level):
             raise PlanningError(ErrorCode.INVALID_INPUT, "search.grid_level must match scene.grid.level", {"task_id": task.id})
@@ -895,6 +904,8 @@ def plan_batch_v2(*,tasks,scene_id=None,scene=None,request_id=None,time_budget_s
         if task.route_mode=="strict" and not compiled.airways:
             raise PlanningError(ErrorCode.INVALID_INPUT,"strict requires at least one active airway",{"task_id":task.id})
         task,rtl=_rtl_task(compiled,task,profile)
+        if task.network and rtl and rtl["required"]:
+            raise PlanningError(ErrorCode.INVALID_INPUT, "Network selection cannot be combined with an RTL diversion")
         anchors=[_local(compiled,task.start_wkt,task)]+[_local(compiled,w.wkt,task) for w in task.waypoints]+[_local(compiled,task.goal_wkt,task)]
         if rtl and rtl["required"]:
             altitude=rtl["rtl_altitude_m"]
@@ -903,13 +914,20 @@ def plan_batch_v2(*,tasks,scene_id=None,scene=None,request_id=None,time_budget_s
                 *compiled.frame._inverse.transform(float(a[0]),float(a[1])),task.departure_time)
             anchors=[anchors[0],a,b,anchors[-1]]
         try:
-            legs=[]
+            legs=[]; network_trace=None
             search_state=search_states.get(task.id)
-            for a,b in zip(anchors,anchors[1:]):
-                leg=_path_for_leg(compiled,a,b,task,profile,departure,deadline,search_state)
-                if leg is None:
-                    raise MotionError("No route found at the current resolution and constraints")
-                legs.append(leg)
+            if task.network:
+                selected=compiled.network.select(task,profile,departure,deadline)
+                if selected is None:
+                    results[index]=_failure(task,"NETWORK_DISCONNECTED","No active, admissible directed network path connects the requested nodes")
+                    continue
+                legs,network_trace=selected
+            else:
+                for a,b in zip(anchors,anchors[1:]):
+                    leg=_path_for_leg(compiled,a,b,task,profile,departure,deadline,search_state)
+                    if leg is None:
+                        raise MotionError("No route found at the current resolution and constraints")
+                    legs.append(leg)
             limits=_airway_motion_limits(compiled,task,limits,np.concatenate(legs))
             motion=_task_motion(legs,task,compiled,limits,departure)
             latest=min(model.horizon_s,_seconds(task.latest_arrival,model)) if task.latest_arrival else model.horizon_s
@@ -933,7 +951,7 @@ def plan_batch_v2(*,tasks,scene_id=None,scene=None,request_id=None,time_budget_s
             cp,ct=motion.collision_samples()
         except _SearchBudgetExceeded as exc:
             results[index]=_failure(task,"SEARCH_BUDGET_EXCEEDED",str(exc));continue
-        except _DeadlineExceeded as exc:
+        except (_DeadlineExceeded,TimeoutError) as exc:
             results[index]=_failure(task,"TIME_BUDGET_EXCEEDED",str(exc));continue
         except (MotionError,ValueError) as exc:
             code="TIME_BUDGET_EXCEEDED" if time.perf_counter()>=deadline else "SEARCH_NOT_FOUND"
@@ -959,7 +977,7 @@ def plan_batch_v2(*,tasks,scene_id=None,scene=None,request_id=None,time_budget_s
         if not alternatives:
             results[index]=_failure(task,"TIME","No permitted TIME-rule departure window");continue
         candidates.append({"index":index,"task":task,"profile":profile,"motion":motion,
-                           "points":cp,"times":ct,"h":h,"v":v,"lo":alternatives[0][0],
+                           "network_trace":network_trace,"points":cp,"times":ct,"h":h,"v":v,"lo":alternatives[0][0],
                            "hi":alternatives[0][1],"windows":alternatives,"latest":latest})
     # A single native batch shares its temporal index across every reservation.
     # Rebuilding that index once per task is cubic and defeats scene preloading.
@@ -1030,6 +1048,8 @@ def plan_batch_v2(*,tasks,scene_id=None,scene=None,request_id=None,time_budget_s
         violations=compiled.check_path(final_points,final_times,task,certified_profile,
             phase="rtl" if rtl and rtl["required"] else "route",speed_transient_segments=transients,
             slope_angles=_motion_slope_angles(motion,final_times))
+        if task.network:
+            violations.extend(compiled.network.validate(task,final_points,final_times,c["network_trace"],motion=motion))
         if ct[-1]>c["latest"]+1e-7:
             violations.append({"code":"TIME","message":"Latest arrival exceeded"})
         if task.earliest_arrival and ct[-1]<_seconds(task.earliest_arrival,model)-1e-7:
@@ -1037,6 +1057,7 @@ def plan_batch_v2(*,tasks,scene_id=None,scene=None,request_id=None,time_budget_s
         if violations:
             results[index]=_failure(task,"CONSTRAINT_VIOLATION","Final independent validation failed",violations,_report(compiled,task,violations));continue
         results[index]=_result(compiled,model,task,profile,motion,delay)
+        results[index]["network_route"]=c["network_trace"]
         accepted.append(cp);accepted_times.append(ct);accepted_profiles.append(profile);accepted_tasks.append(task)
     # Re-run independent pair validation, not only trust scheduling success.
     conflicts=[]
@@ -1175,14 +1196,17 @@ def _waypoint_errors(motion, task, compiled):
     return errors
 
 
-def validate_route_v2(*,task,trajectory_wkt,vertex_times_s,motion_segments=None,scene_id=None,scene=None):
+def validate_route_v2(*,task,trajectory_wkt,vertex_times_s,motion_segments=None,network_route=None,scene_id=None,scene=None):
     from . import native
     if (scene_id is None)==(scene is None):
         raise PlanningError(ErrorCode.INVALID_INPUT,"Provide exactly one of scene_id or scene")
     if scene is not None:
         scene_id=register_scene(scene)["scene_id"]
     model,compiled,_,_=registry.get(scene_id)
-    task=_parse(Task,task);profile=_profile(model,task)
+    from .network import normalize_task
+    task=normalize_task(compiled,_parse(Task,task));profile=_profile(model,task)
+    if network_route is not None and task.network is None:
+        raise PlanningError(ErrorCode.INVALID_INPUT,"network_route requires task.network")
     task,rtl=_rtl_task(compiled,task,profile)
     times=np.asarray(vertex_times_s,dtype=float)
     if times.ndim!=1 or not len(times) or not np.isfinite(times).all() or np.any(np.diff(times)<=0):
@@ -1216,6 +1240,11 @@ def validate_route_v2(*,task,trajectory_wkt,vertex_times_s,motion_segments=None,
         phase="rtl" if rtl and rtl["required"] else "route",
         speed_transient_segments=_transient_segments(motion,checked_times) if certified else [],
         slope_angles=_motion_slope_angles(motion,checked_times) if certified else None))
+    if task.network:
+        if network_route is not None:
+            from .models import NetworkRoute
+            network_route=_parse(NetworkRoute,network_route).model_dump()
+        errors.extend(compiled.network.validate(task,checked_points,checked_times,network_route,motion=motion if certified else None))
     if times[0]<_seconds(task.departure_time,model)-1e-7:
         errors.append({"code":"TIME","message":"Trajectory departs before the task departure window"})
     if task.latest_arrival and times[-1]>_seconds(task.latest_arrival,model)+1e-7:

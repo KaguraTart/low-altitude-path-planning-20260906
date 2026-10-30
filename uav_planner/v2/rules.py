@@ -444,8 +444,11 @@ class RuleSet:
                     reason = "aircraft capacity or task payload violates payload requirements"
             elif kind == "WAYPOINT":
                 # Count via points; start, goal and motion samples are not via points.
-                wps = [points[0]] + [self.scene.waypoint_local(w, task) for w in task_wps] + [points[-1]]
-                if len(task_wps) > c.get("maxWaypoints", float("inf")):
+                requested = [self.scene.waypoint_local(w, task) for w in task_wps]
+                if get(task, "network") is not None:
+                    requested.extend(self.scene.network.nodes[node] for node in task.network.via_node_ids)
+                wps = [points[0]] + requested + [points[-1]]
+                if len(requested) > c.get("maxWaypoints", float("inf")):
                     reason = "task waypoint count exceeds limit"
                 elif any(np.linalg.norm(b - a) + EPS < c.get("minWaypointInterval", 0) for a, b in zip(wps, wps[1:])):
                     reason = "adjacent task waypoints are too close"

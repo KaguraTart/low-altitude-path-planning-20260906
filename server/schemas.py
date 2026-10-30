@@ -7,7 +7,7 @@ from pydantic import Field, JsonValue, model_validator
 
 from uav_planner.v2.models import (
     AircraftProfile, BatchResult, MotionSegment, Number, Positive, RouteValidation,
-    RuleReport, Scene, StrictModel, Task, WKT,
+    RuleReport, Scene, StrictModel, Task, WKT, Timestamp, NetworkRoute,
 )
 
 
@@ -44,6 +44,7 @@ class BatchRequest(SceneSelection):
 
 
 class ValidateRequest(SceneSelection):
+    network_route: NetworkRoute | None = None
     task: Task
     trajectory_wkt: WKT
     vertex_times_s: list[Number] = Field(min_length=1)
@@ -118,3 +119,16 @@ class Capabilities(StrictModel):
     scene_limits: dict[str,int | None]
     max_registered_scenes: int | None
     max_registered_scene_bytes: int | None
+
+
+class NetworkAnalyzeRequest(SceneSelection):
+    at: Timestamp | None = None
+
+
+class NetworkAnalysis(StrictModel):
+    version: str
+    nodes: list[str]
+    active_edges: list[str]
+    weak_components: list[list[str]]
+    strong_components: list[list[str]]
+    inactive_edge_ids: list[str]

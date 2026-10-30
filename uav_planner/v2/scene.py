@@ -207,6 +207,9 @@ class CompiledScene:
         from .scopes import compile_scopes
         self.rule_scopes = compile_scopes(self)
         self.rules = RuleSet(self, self.model.rules)
+        if self.model.airway_graph is not None:
+            from .network import Network
+            self.network = Network(self)
 
     @staticmethod
     def _query(tree: Any, items: list, p0: np.ndarray, p1: np.ndarray, margin: float = 0) -> list:

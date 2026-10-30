@@ -15,7 +15,7 @@ from uav_planner.v2.models import (
 from uav_planner.v2 import native
 from .jobs import JobRegistry
 from .schemas import (
-    BatchRequest, Capabilities, ErrorBody, ErrorEnvelope, HealthResponse, JobError,
+    NetworkAnalyzeRequest, NetworkAnalysis, BatchRequest, Capabilities, ErrorBody, ErrorEnvelope, HealthResponse, JobError,
     JobResult, JobSubmitted, SceneResponse, SceneSelection, SingleRequest,
     ValidateRequest, ValidationResponse, VersionResponse,
 )
@@ -135,3 +135,15 @@ def example_batch():
     task=example.pop("task")
     second=dict(task,id="demo-v2-002")
     return {**example,"request_id":"demo-v2-batch","tasks":[task,second]}
+
+
+@router.post("/networks/analyze", response_model=NetworkAnalysis)
+def analyze_network(request: NetworkAnalyzeRequest):
+    scene_id = request.scene_id
+    if request.scene is not None:
+        scene_id = register_scene(request.scene)["scene_id"]
+    model, compiled, _, _ = registry.get(scene_id)
+    if model.airway_graph is None:
+        raise PlanningError(ErrorCode.INVALID_INPUT, "Scene has no airway_graph")
+    at = request.at or model.time_origin
+    return compiled.network.analyze((at-model.time_origin).total_seconds())
