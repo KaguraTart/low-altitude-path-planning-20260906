@@ -1,0 +1,10 @@
+{
+  "method": "GET",
+  "url": "https://api.kaguratart.com/api/v2/health",
+  "path": "/api/v2/health",
+  "headers": {
+    "User-Agent": "UAV-API-Test/1.0",
+    "Accept": "application/json"
+  },
+  "body_path": null
+}

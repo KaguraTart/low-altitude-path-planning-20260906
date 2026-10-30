@@ -10,17 +10,11 @@
 
 按业务需求选择接口，见[需求与 API 对照表](REQUIREMENTS_API_MAPPING.md)。表中包含源清单 ENG-06/ENG-07 全部 41 项需求、平台责任、真实接口、输入输出、测试证据和未交付项。
 
-最新容器完整测试见 [2 CPU、2 GiB 测试报告](reports/20261029_docker/REPORT.md)：22 项检查通过，三套各 1000 个任务全部成功，冲突为 0。
-
-本地 Python 完整测试见 [2026-10-29 测试报告](reports/20261029_local/REPORT.md)：22 项检查通过，覆盖 14 个接口及三套各 1000 个任务。
-
-历史公网实测记录见 [测试报告](reports/20261017T135804Z_public/REPORT.md)。该报告保留原始输入输出，不证明 2026-10-29 契约已部署或通过。
-
-最新公网测试及 mixed 复测见 [测试记录索引](reports/README.md)。对接时使用脚本默认的 120 秒客户端等待时间。
+最新容器与公网验证见 [测试记录索引](reports/README.md)。每份报告记录日期、运行版本、全部 HTTP 记录及输入输出校验和。历史目录保留原始内容。
 
 ## 本次契约
 
-核对运行服务 `/api/v2/capabilities` 的 `contract_version="2026-10-29"`、`canonical_alt_reference="EG"` 与 `engine_rules`。本次仍使用 14 个 v2 端点。
+核对运行服务 `/api/v2/capabilities` 的 `contract_version="2026-10-30"`、`canonical_alt_reference="EG"` 与 `engine_rules`。本次使用 16 个 v2 端点。
 
 - `strict/prefer` 对应 ENG-06，`free` 对应 ENG-07；显式 `task.engine_id` 必须匹配。仅支持 `scene_type=LOW_ALTITUDE`。
 - 平台负责规则/条件/绑定/机型准入 CRUD；引擎接收规则、选定 ID、航路机型白名单并执行约束。strict/prefer 中不准入航路体禁入；free 不使用航路准入。
@@ -28,7 +22,7 @@
 - WIDTH 是全宽；bufferWidth 是外侧保护带，障碍侵入已用段保护带时拒绝。航向北 0°顺时针，星期 0 周日、1–6 周一至周六。
 - RuleBO 兼容 type/constraints 别名及适用规则的 scope；SEPARATION 仅提供全局检查，带 scope 的输入会被拒绝；未绑定有效 CLIMB/TURN 时默认 5/3 m/s、90°/10 m。
 
-新增专用联调输入位于完整仓库 `input/engine_contract_20261029/`。本目录当前输入使用新契约；历史报告保持原样。保存本次运行的完整请求、响应和报告，分别验收成功路线、无解结果与非法输入。完整 41 项缺口见对照表，不能仅凭接口调用成功判定全部业务需求完成。
+本目录 `data/features/` 提供航路图、连通分析、指定网格搜索、多目标和增量重规划的完整输入。`data/examples/` 提供基础接口输入，`data/benchmarks/` 提供三套各 1000 个任务。需求对应表区分引擎计算和平台管理。
 
 ## 运行测试
 
@@ -47,7 +41,7 @@ python run_tests.py
 
 ## 选择测试
 
-只检查示例和全部 14 个接口：
+只检查示例和全部 16 个接口：
 
 ```bash
 python run_tests.py --examples-only
@@ -90,8 +84,13 @@ python run_tests.py --timeout 120 --poll-timeout 300
 | 错误输入 | 检查未知字段的 400 响应，以及未知场景、未知作业的 404 响应 |
 | 接口示例 | 获取单任务和批量示例，并提交示例中的输入 |
 | 三套批量数据 | 分别提交 strict、mixed、free 的 1000 个任务 |
+| 航路图 | 加权选路、图版本、边序列及连通分量 |
+| 网格搜索 | 网格端点、DIJKSTRA、6 邻域、层级及完整途经编码 |
+| 多目标 | 距离/风险竞争、能耗单位、两种业务代价、归一化和非支配方案 |
+| 增量重规划 | 障碍变更后的部分复用、未受影响的零搜索复用、实际初始速度验证 |
+| 并行执行 | 批量和异步传递并行参数，全部任务统一避让 |
 
-脚本从 OpenAPI 读取接口清单。报告逐项列出全部 14 个 v2 接口的 HTTP 调用结果。检查记录列出业务验证结果。
+脚本从 OpenAPI 读取接口清单。报告逐项列出全部 16 个 v2 接口的 HTTP 调用结果。检查记录列出业务验证结果。
 
 ## 输入数据
 
@@ -136,3 +135,7 @@ WKT 坐标顺序为经度、纬度、高度。当前输入使用 WGS84 经纬度
 | `http/*_output.json`、`http/*_output.html` | 实际收到的完整响应 |
 
 读取 `reports/` 中报告的服务提交 SHA，确认该次结果对应的运行版本。重跑脚本会记录当前服务版本。
+
+## 交付文件
+
+直接发送本目录或其压缩包。README 说明运行步骤，API.md 为接口总说明，API_FIELDS.md 解释每个字段及 JSON 修改方法，REQUIREMENTS_API_MAPPING.md 对应 41 项需求，openapi.json 提供机器可读规范。data 保存完整输入，reports 保存实测完整输出和带日期报告。

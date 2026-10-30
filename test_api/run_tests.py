@@ -31,6 +31,7 @@ OPERATIONS = (
     ("POST", "/api/v2/coordinates/convert"), ("POST", "/api/v2/plan/single"),
     ("POST", "/api/v2/plan/batch"), ("POST", "/api/v2/validate"),
     ("POST", "/api/v2/jobs"), ("GET", "/api/v2/jobs/{job_id}"),
+    ("POST", "/api/v2/networks/analyze"), ("POST", "/api/v2/plan/replan"),
 )
 
 
@@ -65,6 +66,8 @@ def verify_data(data_dir: Path) -> dict[str, Any]:
             json.loads(content)
     for example in manifest.get("examples", []):
         require(example["path"] in declared, f"Example is missing from file manifest: {example['path']}")
+    for feature in manifest.get("features", []):
+        require(feature["path"] in declared, f"Feature is missing from file manifest: {feature['path']}")
     for benchmark in manifest.get("benchmarks", []):
         for name in ("scene", "tasks"):
             require(benchmark[name] in declared, f"Benchmark is missing from file manifest: {benchmark[name]}")
@@ -192,6 +195,10 @@ class TestRun:
     def validate(self, source: dict[str, Any], route: dict[str, Any]) -> None:
         payload = {key: source[key] for key in ("scene", "scene_id", "task") if key in source}
         payload.update({key: route[key] for key in ("trajectory_wkt", "vertex_times_s", "motion_segments")})
+        if "initial_velocity_xyz_mps" in route:
+            payload["initial_velocity_xyz_mps"] = route["initial_velocity_xyz_mps"]
+        if route.get("network_route") is not None:
+            payload["network_route"] = route["network_route"]
         response = self.post("/api/v2/validate", payload)
         require(response.get("valid") is True and not response.get("violations"), "Independent route validation failed")
 
@@ -214,26 +221,177 @@ class TestRun:
 
     def _capabilities(self) -> None:
         result = self.get("/api/v2/capabilities")
-        require(result.get("canonical_alt_reference") == "EG" and result.get("contract_version") == "2026-10-29", "Service contract or altitude reference differs")
+        require(result.get("canonical_alt_reference") == "EG" and result.get("contract_version") == "2026-10-30", "Service contract or altitude reference differs")
         require(set(result.get("engine_rules", {})) == {"ENG-06", "ENG-07"}, "Engine rule allocation is missing")
         require(set(result.get("route_modes", [])) == {"strict", "prefer", "free"}, "Route modes differ")
         require(len(set(result.get("rule_types", []))) == 20, "Rule types do not contain 20 unique entries")
+        require(all(result.get(key) is True for key in ("airway_graph_supported", "network_analysis_supported",
+                    "traversed_grids_supported", "batch_execution_supported", "objective_optimization_supported",
+                    "incremental_replanning_supported", "initial_velocity_validation_supported")), "Current engine features are missing")
+        require(set(result.get("search_algorithms", [])) == {"ASTAR", "DIJKSTRA"}
+                and set(result.get("grid_neighbors", [])) == {6,18,26}, "Current search options differ")
 
     def _openapi(self) -> None:
         spec = self.get("/openapi.json")
         operations = {(method.upper(), path) for path, item in spec.get("paths", {}).items()
                       for method in item if method.upper() in {"GET", "POST", "PUT", "PATCH", "DELETE"}}
-        require(operations == set(OPERATIONS), "OpenAPI operations differ from the 14 v2 operations")
+        require(operations == set(OPERATIONS), f"OpenAPI operations differ from the {len(OPERATIONS)} v2 operations")
 
     def _swagger(self) -> None:
         page = self.client.request("GET", "/docs", as_text=True)
         require("SwaggerUIBundle" in page and "/openapi.json" in page, "Swagger page does not load the OpenAPI document")
 
+    def _resolved_task(self, source: dict[str, Any]) -> dict[str, Any]:
+        task = deepcopy(source["task"])
+        scene = source.get("scene", {})
+        for label in ("start", "goal"):
+            if task.get(label + "_wkt"):
+                continue
+            if task.get("network"):
+                require(task["alt_reference"] == "EG", "Graph handoff fixture uses EG heights")
+                node_id = task["network"][label + "_node_id"]
+                nodes = {node["id"]: node for node in scene["airway_graph"]["nodes"]}
+                task[label + "_wkt"] = nodes[node_id]["point_wkt"]
+            elif task.get(label + "_grid") is not None:
+                grid = scene["grid"]
+                center = [origin + (index + .5) * resolution for origin, index, resolution in
+                          zip(grid["origin"], task[label + "_grid"], grid["resolution"])]
+                point = "POINT Z (" + " ".join(str(value) for value in center) + ")"
+                converted = self.post("/api/v2/coordinates/convert", {
+                    "coordinates": scene["coordinates"], "direction": "local_to_wgs84",
+                    "alt_reference": task["alt_reference"], "at": task["departure_time"],
+                    "geometries_wkt": [point]})
+                task[label + "_wkt"] = converted["geometries_wkt"][0]
+            else:
+                raise AssertionError(f"Task {task['id']} has no {label} selector")
+        return task
+
     def _single(self, source: dict[str, Any]) -> dict[str, Any]:
+        expected_task = self._resolved_task(source)
         result = self.post("/api/v2/plan/single", source)
-        check_route(result, source["task"])
+        check_route(result, expected_task)
         self.validate(source, result)
         return result
+
+    def _network_feature(self) -> None:
+        result = self._single(load_json(self.data_dir / "features/network_request.json"))
+        trace = result.get("network_route", {})
+        require(trace.get("node_ids") == ["A", "B", "D"] and trace.get("edge_ids") == ["ab", "bd"],
+                "Weighted graph route differs from the fixture optimum")
+        require(trace.get("total_cost") == 2, "Graph raw weight sum differs")
+
+    def _network_analysis(self) -> None:
+        source = load_json(self.data_dir / "features/network_analyze_request.json")
+        result = self.post("/api/v2/networks/analyze", source)
+        require(result.get("version") == source["scene"]["airway_graph"]["version"], "Graph version differs")
+        require(["E"] in result.get("weak_components", []), "Isolated graph node is missing")
+        require(set(result.get("active_edges", [])) == {"ab", "bd", "ac", "cd"}, "Active graph edges differ")
+
+    def _grid_feature(self) -> None:
+        result = self._single(load_json(self.data_dir / "features/search_request.json"))
+        search = result.get("search_report", {})
+        require(search.get("algorithm") == "DIJKSTRA" and search.get("neighbors") == 6,
+                "Grid search configuration differs")
+        require(search.get("grid_level") == 12 and search.get("expanded_nodes", 0) > 0,
+                "Grid search level or expansion count differs")
+        require(result.get("grid_context", {}).get("level") == 12, "Exported grid level differs")
+        grids = result.get("traversed_grids", [])
+        require(len(grids) >= 2, "Complete traversed grid sequence is missing")
+        require(grids[0].get("grid_code") == "start-cell" and grids[-1].get("grid_code") == "goal-cell",
+                "Upstream grid codes are missing")
+        for left, right in zip(grids, grids[1:]):
+            require(abs(left["exit_time_s"] - right["entry_time_s"]) <= 1e-5, "Traversed grid times have a gap")
+
+    def _objectives_feature(self) -> None:
+        source = load_json(self.data_dir / "features/objectives_request.json")
+        primary = self._single(source)
+        routes = [primary, *primary.get("alternatives", [])]
+        require(len(routes) >= 2, "Objective fixture did not produce competing alternatives")
+        report = primary.get("optimization", {})
+        require(report.get("scope") == "validated_candidates" and report.get("status") == "generator_exhausted",
+                "Objective candidate generator did not finish")
+        require(report.get("returned_solutions") == len(routes) and report.get("primary_executed_only") is True,
+                "Objective solution report differs")
+        signatures = set()
+        vectors = []
+        scores = []
+        for route in routes:
+            check_route(route, source["task"])
+            if route is not primary:
+                self.validate(source, route)
+            signature = (route["trajectory_wkt"], tuple(route["vertex_times_s"]))
+            require(signature not in signatures, "Duplicate objective alternative")
+            signatures.add(signature)
+            objective = route.get("objectives", {})
+            values = objective.get("values", {})
+            require(set(values) == {"distance", "time", "energy", "risk", "north_cost", "south_cost"},
+                    "Objective dimensions are missing")
+            require(values["energy"]["unit"] == "Wh" and values["risk"]["unit"] == "risk*s",
+                    "Objective energy or risk unit differs")
+            require(objective.get("dataset_versions") == {item["id"]: item["version"] for item in source["scene"]["datasets"]},
+                    "Objective dataset versions differ")
+            score = 0.0
+            for value in values.values():
+                require(all(type(value[key]) in (int, float) and math.isfinite(value[key])
+                            for key in ("raw", "normalized", "normalization", "weight"))
+                        and value["raw"] >= 0 and value["normalization"] > 0 and value["weight"] >= 0,
+                        "Objective values or weights are invalid")
+                require(math.isclose(value["normalized"], value["raw"] / value["normalization"], abs_tol=1e-8),
+                        "Objective normalization differs")
+                score += value["normalized"] * value["weight"]
+            require(math.isclose(score, objective.get("weighted_score", math.inf), abs_tol=1e-8), "Objective total score differs")
+            scores.append(score)
+            vectors.append([values[key]["normalized"] for key in sorted(values)])
+        require(scores[0] <= min(scores) + 1e-8, "Primary route does not minimize returned objective scores")
+        require(all(not (all(x <= y+1e-8 for x,y in zip(left,right)) and any(x < y-1e-8 for x,y in zip(left,right)))
+                    for i,left in enumerate(vectors) for j,right in enumerate(vectors) if i != j),
+                "Returned objective alternatives contain a dominated route")
+        primary_values = primary["objectives"]["values"]
+        require(any(route["objectives"]["values"]["distance"]["raw"] < primary_values["distance"]["raw"]
+                    and route["objectives"]["values"]["risk"]["raw"] > primary_values["risk"]["raw"]
+                    for route in routes[1:]), "Objective fixture did not expose distance/risk tradeoff")
+
+    def _replan_feature(self) -> None:
+        source = load_json(self.data_dir / "features/replan_request.json")
+        result = self.post("/api/v2/plan/replan", source)
+        require(result.get("decision") == "replanned" and result.get("new_search_calls", 0) >= 1,
+                "Changed obstacle did not cause incremental recomputation")
+        require(result.get("reused_distance_m", 0) > 0 and result.get("reused_primitives", 0) > 0,
+                "Replanning did not retain its safe prefix")
+        route = result.get("route", {})
+        check_route(route, source["remaining_task"])
+        velocity = source["current_state"]["velocity_xyz_mps"]
+        require(all(abs(a-b) <= 1e-8 for a,b in zip(route.get("initial_velocity_xyz_mps", []), velocity))
+                and len(route.get("initial_velocity_xyz_mps", [])) == 3, "Replanning lost the current velocity")
+        validation_source = {"scene": source["scene"], "task": source["remaining_task"]}
+        self.validate(validation_source, route)
+        wrong_initial = {**validation_source, **{key: route[key] for key in
+                         ("trajectory_wkt", "vertex_times_s", "motion_segments")}, "initial_velocity_xyz_mps": [0,0,0]}
+        require(self.post("/api/v2/validate", wrong_initial).get("valid") is False,
+                "Independent validation accepted the wrong declared initial velocity")
+        unchanged = deepcopy(source)
+        unchanged["scene"] = unchanged["previous_scene"]
+        unchanged["event"] = {"id": "unchanged-route-demo", "type": "aircraft_state",
+                              "at": unchanged["current_state"]["at"], "old_value": 90, "new_value": 85}
+        reused = self.post("/api/v2/plan/replan", unchanged)
+        require(reused.get("decision") == "reused" and reused.get("new_search_calls") == 0,
+                "Unchanged suffix was not reused without search")
+        require(reused.get("reused_distance_m", 0) > 0, "Unchanged suffix reuse report is empty")
+        check_route(reused["route"], unchanged["remaining_task"])
+        self.validate({"scene": unchanged["scene"], "task": unchanged["remaining_task"]}, reused["route"])
+
+    def _parallel_feature(self) -> None:
+        source = self.fixture("batch_request")
+        source["execution"] = {"workers": 2, "batch_size": 2}
+        result = self._batch(source)
+        report = result.get("execution_report", {})
+        require(report.get("requested_workers") == 2 and 1 <= report.get("actual_workers", 0) <= 2,
+                "Candidate worker report differs")
+        require(report.get("batch_size") == 2 and report.get("batches") == 1 and report.get("candidate_count") == 2,
+                "Candidate group report differs")
+        for task in source["tasks"]:
+            route = next(route for route in result["routes"] if route["task_id"] == task["id"])
+            self.validate({"scene": source["scene"], "task": task}, route)
 
     def _batch(self, source: dict[str, Any]) -> dict[str, Any]:
         result = self.post("/api/v2/plan/batch", source)
@@ -272,6 +430,7 @@ class TestRun:
 
     def _async(self) -> None:
         source = self.fixture("batch_request")
+        source["execution"] = {"workers": 2, "batch_size": 2}
         submitted = self.client.request("POST", "/api/v2/jobs", source, expected_status=202)
         require(submitted.get("status") == "pending", "Submitted job is not pending")
         job_id = submitted["job_id"]
@@ -320,6 +479,12 @@ class TestRun:
         self.check("未知字段返回 400", lambda: self._error("POST", "/api/v2/plan/single", invalid, 400, "INVALID_INPUT"))
         self.check("未知场景返回 404", lambda: self._error("GET", "/api/v2/scenes/test-api-missing-scene", None, 404, "TASK_NOT_FOUND"))
         self.check("未知作业返回 404", lambda: self._error("GET", "/api/v2/jobs/test-api-missing-job", None, 404, "TASK_NOT_FOUND"))
+        self.check("航路图权重规划及验证", self._network_feature)
+        self.check("航路图连通性分析", self._network_analysis)
+        self.check("网格端点、搜索配置及完整网格序列", self._grid_feature)
+        self.check("批量并行与统一避让", self._parallel_feature)
+        self.check("多目标、能耗及自定义代价方案比较", self._objectives_feature)
+        self.check("增量重规划、零搜索复用及初始速度验证", self._replan_feature)
 
     def benchmark(self, config: dict[str, Any]) -> None:
         suite = config["suite"]

@@ -1,0 +1,6 @@
+{
+  "cpu.max": "200000 100000",
+  "memory.max": "2147483648",
+  "memory.peak": "460701696",
+  "memory.events": "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0"
+}

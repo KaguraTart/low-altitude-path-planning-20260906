@@ -124,7 +124,7 @@ PY
 | 复核规划输出 | 验证请求中的任务、场景、轨迹、时间数组和运动段 | 从同一次规划响应复制完整 `trajectory_wkt`、`vertex_times_s`、`motion_segments` |
 
 <a id="endpoints"></a>
-## 14 个接口与完整记录
+## 接口与完整记录
 
 接口地址为 `https://api.kaguratart.com`。下表中的路径接在这个地址后面。POST 请求使用 `Content-Type: application/json`。
 
@@ -144,10 +144,12 @@ PY
 | GET | `/api/v2/jobs/{job_id}` | 路径中的 `job_id` | [作业结果](#job-result) | 200 |
 | GET | `/api/v2/examples/single` | 无请求体 | [完整单任务请求](#single-request) | 200 |
 | GET | `/api/v2/examples/batch` | 无请求体 | [完整批量请求](#batch-request) | 200 |
+| POST | `/api/v2/networks/analyze` | scene 或 scene_id、可选 at | 图版本、节点/有效边、强弱连通分量、失效边 | 200 |
+| POST | `/api/v2/plan/replan` | 原始场景/任务/完整路线、当前状态、剩余任务、最新场景、事件 | decision、完整新路线、复用/搜索指标及触发原因 | 200 |
 
 `200` 表示接口已处理请求。读取 `RouteResult.status` 确认路线结果。读取 `BatchResult.success_count` 和 `failed_count` 确认批量结果。读取 `ValidationResponse.valid` 确认验证结果。
 
-下列链接指向本测试包保存的完整 HTTP 记录。GET 请求的输入文件保存方法、地址和请求头。POST 请求的输入文件保存实际 JSON 请求体。
+当前契约的完整记录见[最新测试索引](reports/README.md)。下列链接保留历史 HTTP 记录。GET 请求的输入文件保存方法、地址和请求头。POST 请求的输入文件保存实际 JSON 请求体。
 
 | 接口 | 完整输入 | 完整输出 |
 |---|---|---|
@@ -200,6 +202,7 @@ PY
 | `scene_id` | 字符串 | 与 `scene` 二选一 | 使用登记接口返回值。 |
 | `tasks` | Task 数组 | 必填，至少一个任务 | 每个对象是一条任务。为各任务填写不同的 `id`。 |
 | `request_id` | 字符串或 `null` | 默认 `null` | 填写业务批次编号。省略或填空字符串时，服务生成编号。 |
+| `execution` | ExecutionOptions 或 null | 默认 null | 设置候选计算 workers 与 batch_size；统一预约全部任务。 |
 | `time_budget_s` | 正数或 `null` | 默认 `null` | 秒。作用于整个批次。 |
 
 输入示例：[batch_request.json](data/examples/batch_request.json)。成功响应为[批量结果](#batch-result)，HTTP 状态为 `200`。
@@ -215,8 +218,12 @@ PY
 |---|---|---|---|
 | `id` | 非空字符串 | 必填 | 任务编号。结果中的 `task_id` 对应此值。 |
 | `engine_id` | ENG-06/ENG-07 或 null | 自动推断 | strict/prefer 对应 ENG-06；free 对应 ENG-07。显式输入须一致。 |
-| `start_wkt` | `POINT Z` 字符串 | 必填 | 起点。顺序为经度、纬度、高度。经纬度单位为度，高度单位为米。 |
-| `goal_wkt` | `POINT Z` 字符串 | 必填 | 任务终点。触发返航时，服务按 `state.home_wkt` 生成返航路线。 |
+| `network` | NetworkSelection 或 null | 默认 null | ENG-06 的图节点及权重选择，见本文件航路图说明。 |
+| `start_grid/goal_grid` | 三个整数的数组或 null | 默认 null | 起终点的外部网格索引，省略 WKT 时使用格中心。 |
+| `search` | SearchOptions 或 null | 默认 null | 网格搜索算法、邻域、层级及可选扩展预算。 |
+| `objectives` | ObjectiveConfig 或 null | 默认 null | ENG-07/free 的多目标权重、归一化、能耗模型和自定义代价，见多目标参数。 |
+| `start_wkt` | `POINT Z` 字符串或 null | 默认 null；端点选择必填一项 | 起点。使用 network 或 start_grid 时可省略。顺序为经度、纬度、高度。经纬度单位为度，高度单位为米。 |
+| `goal_wkt` | `POINT Z` 字符串或 null | 默认 null；端点选择必填一项 | 任务终点。使用 network 或 goal_grid 时可省略。触发返航时，服务按 `state.home_wkt` 生成返航路线。 |
 | `departure_time` | 带时区时间字符串 | 必填 | 允许开始任务的时刻，如 `2026-10-16T09:00:00+08:00`。服务可为避让安排较晚起飞。 |
 | `alt_reference` | 枚举字符串 | 必填 | 任务 WKT 的高度基准：`EG`、`MSL`、`AGL`、`ELLIPSOID`、`QNE`、`QNH`。见[坐标与高度](#coordinates)。 |
 | `route_mode` | 枚举字符串 | 默认 `strict` | `strict` 使用有效航路与已授权接驳；`prefer` 优先使用航路；`free` 使用合法自由空域。 |
@@ -273,6 +280,13 @@ PY
 | 字段 | 类型 | 含义 |
 |---|---|---|
 | `task_id` | 字符串 | 输入任务 `id`。 |
+| `network_route` | NetworkRoute 或 null | 图版本、节点/边序列、边权字段、原始及有效代价。 |
+| `search_report` | SearchReport 或 null | 显式算法、邻域、层级及实际扩展数。 |
+| `traversed_grids` | TraversedGrid 数组 | 实际全部途经网格、上游编码及进入/离开时刻。 |
+| `grid_context` | JSON 对象 | 完整途经网格的坐标框架、层级、分辨率及边界规则。 |
+| `objectives` | RouteObjectives 或 null | 原始/归一化目标值、单位、权重、总分、公式和数据版本。 |
+| `optimization` | OptimizationReport 或 null | 候选生成状态、迭代、候选与最终方案数量。 |
+| `alternatives` | RouteResult 数组 | 其他非支配完整方案，默认不参与执行。 |
 | `status` | 枚举字符串 | `planned`：已生成路线；`failed`：本任务规划失败；`timeout`：达到请求指定的计算时限。 |
 | `code` | 字符串或 `null` | 路线失败原因码。成功通常为 `null`。见[结果与错误状态](#errors)。 |
 | `message` | 字符串 | 路线结果说明。成功通常为空字符串。 |
@@ -284,6 +298,7 @@ PY
 | `time_origin` | 带时区时间或 `null` | 数值时间的零点。规划成功时对应 `scene.time_origin`。 |
 | `action` | 枚举字符串 | `mission`：执行任务；`return_to_home`：执行返航。 |
 | `vertex_times_s` | 数值数组 | WKT 顶点逐一对应的时间。单位秒，相对 `time_origin`。 |
+| `initial_velocity_xyz_mps` | 三个数值 | 局部东/北/上初始速度，m/s；复制到独立验证请求。 |
 | `motion_segments` | MotionSegment 数组 | 实际运动规律。包含加速、巡航、减速、转弯和等待。见[运动段](#motion-segment)。 |
 | `keypoints` | Keypoint 数组 | 起终点、转弯、升降、悬停、业务航点和航路切换事件。见[关键点](#keypoint)。 |
 | `metrics` | RouteMetrics 对象 | 航程、飞行时间和调度延迟。见[指标](#metrics)。 |
@@ -374,6 +389,8 @@ PY
 | `trajectory_wkt` | WKT 字符串 | 必填 | 复制规划响应的轨迹。 |
 | `vertex_times_s` | 数值数组 | 必填，至少一个值 | 复制规划响应的顶点时间。多顶点轨迹的时间严格递增。 |
 | `motion_segments` | MotionSegment 数组或 `null` | 默认 `null`；移动轨迹需要此字段 | 复制规划响应的完整运动段。 |
+| `network_route` | NetworkRoute 或 null | 默认 null | 图路线复制节点/边序列；省略时从轨迹证明图走法。 |
+| `initial_velocity_xyz_mps` | 三个数值 | 默认 [0,0,0] | 复制路线中的局部东/北/上起始速度，单位 m/s。 |
 
 输入示例：[validate_request.json](data/examples/validate_request.json)。响应包括 `valid`、`violations` 和 `rule_report`。HTTP 状态为 `200`，`valid` 表示本次验证结果。
 
@@ -568,7 +585,7 @@ PY
 <a id="capabilities"></a>
 ### GET /api/v2/capabilities：接口能力
 
-本次契约 `contract_version="2026-10-29"`。`engine_rules` 返回 ENG-06/ENG-07 规则分配；`canonical_alt_reference="EG"`。对接前核对运行服务的这些字段。
+本次契约 `contract_version="2026-10-30"`。`engine_rules` 返回 ENG-06/ENG-07 规则分配；`canonical_alt_reference="EG"`。对接前核对运行服务的这些字段。
 
 没有请求体。HTTP `200` 响应字段如下。
 
@@ -657,7 +674,8 @@ PY
 | 字段 | 类型、单位 | 默认值 | 填写方法与作用 |
 |---|---|---|---|
 | `scene_type` | 枚举 | `LOW_ALTITUDE` | 当前只接受低空场景；地面和水上暂无。 |
-| `network_version` | 字符串或 null | null | 上游路网版本，用于追溯。 |
+| `network_version` | 字符串或 null | null | 上游路网版本，用于追溯；提供 airway_graph 时须与图版本一致。 |
+| `airway_graph` | AirwayGraph 或 null | null | 节点、方向边、边权和关联航路；结构见本文件航路图说明。 |
 | `coordinates` | 对象 | 必填 | 配置 WGS84 与局部米制坐标。见[坐标配置](#coordinates)。 |
 | `bounds` | 对象，m | 必填 | 设置局部规划范围。六个字段为 `x_min`、`x_max`、`y_min`、`y_max`、`z_min`、`z_max`。x 向东，y 向北，z 为 EG 椭球高减 `origin_alt_ellipsoid`。每轴最大值大于最小值。 |
 | `resolution` | 三个正数，m | `[25,25,10]` | 按 `[dx,dy,dz]` 设置内部搜索网格分辨率。修改此值会改变搜索网格和结果中的内部网格索引。 |
@@ -925,7 +943,7 @@ AGL 航路和区域沿运动段使用对应地形。分区地形通过 `datasets
 | 字段 | 类型 | 默认值 | 填写方法与作用 |
 |---|---|---|---|
 | `id` | 非空字符串 | 必填 | 设置数据集 ID，供规则引用。 |
-| `kind` | 类型字符串 | 必填 | 使用 `terrain`、`weather`、`signal`、`noise`、`area`、`grid`、`risk` 或 `corridor`。值字段见下表。 |
+| `kind` | 类型字符串 | 必填 | 使用 `terrain`、`weather`、`signal`、`noise`、`area`、`grid`、`risk`、`cost` 或 `corridor`。值字段见下表。 |
 | `version` | 非空字符串 | 必填 | 记录数据版本，执行报告返回引用的数据版本。 |
 | `valid_from` | 带时区时间或 `null` | `null` | 设置数据集生效开始时刻。 |
 | `valid_to` | 带时区时间或 `null` | `null` | 设置数据集生效结束时刻。 |
@@ -954,10 +972,12 @@ AGL 航路和区域沿运动段使用对应地形。分区地形通过 `datasets
 | `weather` | `wind_speed_mps`，m/s；也接受 `windSpeed` | 天气规则将此值与 `maxWindSpeed` 比较。 |
 | `weather` | `precipitation`，布尔值或非负数；`precipitation_mm_h`，mm/h | `false` 或 `0` 表示无降水。若填写数值强度，优先使用 `precipitation_mm_h` 明确单位。两者都填写时读取 `precipitation`。 |
 | `weather` | `icing`，布尔值或非负数 | `false` 或 `0` 表示无结冰。 |
+| `weather` | `visibility_m`，非负米值 | 与 WEATHER.minVisibility 比较。 |
 | `signal` | `bands`，频段到 dBm 的对象 | 例如 `{"2.4GHz":-60,"5.8GHz":-65}`。信号规则结合机型频段执行 `any` 或 `all` 检查。 |
 | `signal` | `signal_strength_dbm`，dBm | 用一个数值表示各请求频段的统一强度。也可填写频段到 dBm 的对象。填写 `bands` 时优先读取 `bands`。 |
 | `noise` | `noise_db`，dB | 安静偏好读取此值。数值越低，噪声越小。 |
-| `risk` | `risk`，数值 | 低风险偏好读取此值。按统一风险标度填写，0 表示低风险，1 表示高风险。 |
+| `risk` | `risk`，数值 | 低风险偏好和多目标风险积分读取此值。使用非负统一标度，数值越大风险越高。 |
+| `cost` | `cost`，非负数值 | 由 objectives.cost_layers 引用，按距离或时间积分；积分后单位由 unit 声明。 |
 | `area` | `adminCode`、`gridCode`、`code` | 记录单元业务编码。`AREA` 规则按行政区编码或网格编码选择轮廓。 |
 | `grid` | `adminCode`、`gridCode`、`code`、`occupied` | 保存字段网格的编码和占用属性。外部占用网格输入使用场景 `grid`，见[网格](#grid)。 |
 | `corridor` | 使用整体 `geometry_wkt` 或单元轮廓 | 给 `BUILDING` 的 `CORRIDOR` 模式提供批准通道。 |
@@ -1234,6 +1254,8 @@ BUILDING/WEATHER/SIGNAL/WIDTH 使用 scope.grid；NO_FLY/ZONE/AREA 使用 scope.
 | `content` 字段 | 类型 / 单位 | 默认 | 含义与修改方法 |
 |---|---|---|---|
 | `maxClimbRate` | number >= 0 / m/s | 未设置 | 最大爬升速度。与机型、航路的爬升速度取较小值。 |
+| `maxClimbAngle` | number，0<值≤90 / 度 | 未设置 | 爬升轨迹相对水平面的最大角度。降低数值需要更长的水平距离。 |
+| `maxDescentAngle` | number，0<值≤90 / 度 | 未设置 | 下降轨迹相对水平面的最大角度，填写正值大小。 |
 | `maxDescentRate` | number >= 0 / m/s | 未设置 | 最大下降速度。填写正值的速度大小。0 表示本规则不允许下降。 |
 
 混合集将两项都设为 1 m/s。降低数值会增加升降时间。
@@ -1304,6 +1326,7 @@ BUILDING/WEATHER/SIGNAL/WIDTH 使用 scope.grid；NO_FLY/ZONE/AREA 使用 scope.
 | `content` 字段 | 类型 / 单位 | 默认 | 含义与修改方法 |
 |---|---|---|---|
 | `maxWindSpeed` | number >= 0 / m/s | 未设置 | 路线允许的最大风速。读取 `wind_speed_mps`，兼容 `windSpeed`。 |
+| `minVisibility` | number >=0 / m | 未设置 | 最小能见度。天气单元 `values.visibility_m` 必须提供同单位的有效观测值。 |
 | `noPrecipitation` | boolean | false | true 时只通过降水值为 0 或 false 的格子。读取 `precipitation`，兼容 `precipitation_mm_h`。 |
 | `noIcing` | boolean | false | true 时只通过 `icing` 为 0 或 false 的格子。 |
 
@@ -1389,3 +1412,102 @@ BUILDING/WEATHER/SIGNAL/WIDTH 使用 scope.grid；NO_FLY/ZONE/AREA 使用 scope.
 触发后，服务以 `home_wkt` 为终点，并生成返航路线。结果 `action=return_to_home`。服务检查返航路线与当前剩余时间、航程。平台使用该结果执行飞行。
 
 混合集使用最低返航 EG 椭球高 100 m、电量阈值 20%。提高阈值可更早触发返航。
+
+## 搜索与完整途经网格
+
+Task.search 接受 algorithm=ASTAR/DIJKSTRA、neighbors=6/18/26、可选 grid_level 和 max_expanded_nodes。层级须与 scene.grid.level 一致。扩展预算默认 null，表示不设固定上限；多个航段共用预算，耗尽返回 SEARCH_BUDGET_EXCEEDED。
+
+显式 search 表示按指定网格算法搜索。未填写时沿用组合规划。search_report 给出实际扩展数。traversed_grids 是完整运动穿越网格，不只是关键点：每项有 grid_indices、可空 grid_code 和相对场景零点的 entry_time_s/exit_time_s。grid_context 给出这份列表采用的原点、分辨率、shape 和层级。原有 keypoints 的索引仍对应内部规划网格。
+
+## 显式航路图输入
+
+完整样例在 [network_request.json](data/features/network_request.json)。修改 `scene.airway_graph.nodes[].point_wkt` 设置节点位置，固定用 EG 椭球高。每条边引用 from_node、to_node 和 airway_id；修改 weights 中的非负数值设置边权，task.network.weight_field 选择其中一个字段。direction 指定方向，status=CLOSED 关闭边。图版本与 scene.network_version 一致。
+
+示例任务省略 start_wkt/goal_wkt，由 A、D 两个节点生成准确端点。修改 task.network 的节点 ID 可更换起终点；如果另外填写 WKT，须与对应节点一致。via_node_ids 设置必须经过的业务节点。network_route 给出最终节点、边序列和代价。
+
+[network_analyze_request.json](data/features/network_analyze_request.json) 调用 POST /api/v2/networks/analyze。弱连通分量忽略方向，强连通分量要求相互可达；活动边列表已过滤关闭状态、时间和关联航路状态。
+
+[search_request.json](data/features/search_request.json) 使用 start_grid/goal_grid 索引格中心。索引对应 scene.grid，均从 0 开始；起终点不能超出 shape。请求填写 search.grid_level=12，与 scene.grid.level 一致。
+
+批量和异步请求可设置 `execution={"workers":2,"batch_size":100}`。`workers` 是候选计算最大线程数，`batch_size` 是每组候选提交数；两者为正整数，`batch_size=null` 表示一组。全部任务统一避让。响应 `execution_report.actual_workers` 是实际执行线程数，`batches` 是提交组数，`candidate_count` 是进入统一预约的候选数。最终结果读取 `success_count/failed_count/conflicts`。
+
+### 2026-10-30 新计算用例
+
+| 完整输入 | 用途 | 主要修改位置 |
+|---|---|---|
+| `data/features/network_request.json` | 按航路图权重选路 | 修改 `scene.airway_graph.nodes/edges` 与关联航路；`task.network` 选择节点、版本及权重字段。示例选 A→B→D，原始 `cost` 合计 2 |
+| `data/features/network_analyze_request.json` | 查询连通性 | 修改同一航路图和 `at`；响应区分弱连通、强连通和失效边，E 是孤立节点 |
+| `data/features/search_request.json` | 网格起终点与指定搜索 | 修改 `grid` 的层级、原点、分辨率、shape 和编码，再修改 `start_grid/goal_grid`；示例使用第 12 层、6 邻域 DIJKSTRA；天气场能见度 5000 m，规则最低 3000 m |
+
+网格端点没有 WKT 时使用对应单元格中心。若同时提交 WKT，该点必须位于指定格内。图端点没有 WKT 时使用图节点位置。图规划使用 `task.network`；网格搜索使用 `task.search`，两者不同时指定。
+
+### 多目标参数
+
+ENG-07/free 任务可增加 `objectives`。`weights.distance/time/energy/risk` 为非负权重，默认 1/0/0/0。`normalization.distance_m/time_s/energy_wh/risk_s` 是正归一化尺度，默认均为 1。总分为每项目标的原始值除以尺度再乘权重后求和，分数越小越优。
+
+能耗目标需提供 `energy_model.mass_kg/hover_power_w/cruise_power_w/climb_efficiency`，输出单位 Wh。风险目标需提供带版本的 risk 数据集，`values.risk` 为非负风险值，输出为风险×秒。自定义代价使用 cost 数据集的 `values.cost` 和 `cost_layers`：每项填写 `id/dataset_id/weight/normalization/basis/unit`；basis 为 distance 或 time，分别积分代价×米或代价×秒。图层 ID 不使用 distance/time/energy/risk。
+
+`max_iterations/max_solutions` 可填写正整数，也可保持 null。前者限制候选标签扩展次数，后者限制生成的完整候选路径数。响应 `optimization` 说明候选生成是否结束、是否遇到调用方预算，以及实际候选和方案数。`objectives.values` 给出每项 raw、normalized、normalization、unit、weight；`weighted_score` 是总分。`alternatives` 保存其他非支配完整方案，比较范围为已生成并通过验证的候选。批量默认执行主方案。
+
+| 完整输入 | 用途 | 修改方法 |
+|---|---|---|
+| `data/features/objectives_request.json` | 多目标与两个自定义代价图层 | 修改 weights 和 normalization 调整主方案；修改 energy_model 使用实际机型测量数据；修改 risk/north/south 数据集及版本更新风险和业务代价。示例同时返回短直线与低风险绕行方案 |
+
+## 增量重规划字段与修改方法
+
+完整输入：[replan_request.json](data/features/replan_request.json)。本例在原路径前方新增 block 障碍，复用安全前段并重算后续路线。
+
+| 请求字段 | 必填 / 默认 | 填写方法 |
+|---|---|---|
+| `previous_scene` | 必填 Scene | 前次规划使用的原始场景 |
+| `previous_task` | 必填 Task | 前次规划的原始任务 |
+| `previous_route` | 必填 RouteResult | 前次完整规划响应，保留 WKT、时间、运动段及坐标上下文；静止任务可为 POINT |
+| `scene` / `scene_id` | 二选一 | 最新场景，或其已登记 ID |
+| `remaining_task` | 必填 Task | 当前起点、目标及尚未完成的业务航点；departure_time 等于 current_state.at |
+| `current_state` | 必填 CurrentState | position_wkt、velocity_xyz_mps、at |
+| `event` | 必填 ReplanEvent | 变化事件与变化量或资源引用 |
+| `trigger` | 默认 {} | 数值阈值、频率和事件历史 |
+| `time_budget_s` | 默认 null | 本次证明、复用、搜索和最终验证共用的计算时限 |
+
+`current_state.position_wkt` 使用 remaining_task.alt_reference。`velocity_xyz_mps=[vx,vy,vz]` 是当前场景局部东、北、上速度，单位 m/s。`at` 是带时区时刻，位于最新场景时域内；remaining_task 起点与当前位置一致。前后场景使用相同投影、高度转换上下文和 time_origin，前次路线按其原始场景独立证明。
+
+| event 字段 | 填写方法 |
+|---|---|
+| `id` | 非空业务事件 ID |
+| `type` | obstacle、dynamic_obstacle、rule、dataset、aircraft_state、mission、scene、weather、control_zone、airspace |
+| `at` | 事件发生时刻，不晚于 current_state.at |
+| `old_value/new_value` | 同时提供的有限数值，用于变化阈值 |
+| `changed_resource_ids` | 已变化对象 ID；在前次或最新场景中存在，可表示新增、删除或更新 |
+
+事件提供数值 old/new 或变化资源 ID 至少一组。天气使用 weather/dataset，管制区使用 control_zone/airspace，数据和几何的实际更新放入最新 Scene。
+
+`trigger.threshold` 为非负绝对变化阈值，与事件数值同单位；启用后提供 old/new。`min_interval_s` 为非负秒数，`max_frequency_hz` 为正频率；同时提供时执行较长间隔。`last_event_time/last_replan_time` 由平台保存并回传，均不晚于当前状态时刻。事件不晚于 last_event_time 时为 stale_event；变化量小于阈值时为 below_threshold；未到下次允许时刻时为 frequency_limited。忽略事件的响应不返回执行路线。
+
+| 响应字段 | 含义 |
+|---|---|
+| `decision` | reused：复用已验后续路线；replanned：已重算；ignored：未触发；failed：本次未生成可执行路线 |
+| `reason` | 本次复用、重算、忽略或失败原因 |
+| `route` | 完整 RouteResult 或 null；包含实际初始速度和独立验证结果 |
+| `current_state` | 本次输入的当前位置、速度和时刻 |
+| `reused_primitives/reused_distance_m/reused_time_s` | 实际复用的原语数、米数和秒数 |
+| `new_search_calls` | 本次实际搜索调用数；未受影响后续路线可为 0 |
+| `recomputed_from_s` | 重算接续时刻，相对场景 time_origin |
+| `next_eligible_time` | 频率限制后的下次允许时刻，其他情况为 null |
+| `violations` | 本次失败的约束及原因 |
+
+服务复核原路线并裁剪已完成部分。后续路线有效时直接复用；受影响时，复用安全前段，按当前速度减速至可接续状态，再搜索后续路线。减速、原地偏航和等待均计入运动时间、预算和占用。最终检查完整剩余任务的航点、时间窗、续航、返航及动态冲突。多目标任务比较接续后的完整候选，并返回主方案与非支配备选。
+
+使用新场景和 remaining_task（作为 task），复制 route 的 trajectory_wkt、vertex_times_s、motion_segments、initial_velocity_xyz_mps 到 `/api/v2/validate`。普通规划的初始速度默认 [0,0,0]；飞行中重规划使用响应的实际值。
+
+### 能力查询新增字段
+
+| GET /api/v2/capabilities 字段 | 含义 |
+|---|---|
+| search_algorithms / grid_neighbors | 当前可用搜索算法和邻域 |
+| airway_graph_supported / network_analysis_supported | 航路图规划与连通分析支持状态 |
+| traversed_grids_supported | 完整途经网格支持状态 |
+| batch_execution_supported | 可配置并行提交支持状态 |
+| objective_optimization_supported / objective_dimensions | 多目标支持状态及基础目标维度 |
+| cost_layer_bases | 自定义代价可按 distance 或 time 积分 |
+| incremental_replanning_supported / replanning_engine_ids | 增量重规划支持状态及适用引擎 |
+| initial_velocity_validation_supported | 初始速度独立验证支持状态 |

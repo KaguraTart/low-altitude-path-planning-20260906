@@ -15,7 +15,7 @@ from uav_planner.v2.models import (
 from uav_planner.v2 import native
 from .jobs import JobRegistry
 from .schemas import (
-    BatchRequest, Capabilities, ErrorBody, ErrorEnvelope, HealthResponse, JobError,
+    NetworkAnalyzeRequest, NetworkAnalysis, BatchRequest, Capabilities, ErrorBody, ErrorEnvelope, HealthResponse, JobError,
     JobResult, JobSubmitted, SceneResponse, SceneSelection, SingleRequest,
     ValidateRequest, ValidationResponse, VersionResponse,
 )
@@ -51,7 +51,13 @@ def version():
 @router.get("/capabilities",response_model=Capabilities)
 def capabilities():
     from uav_planner.v2.budgets import SCENE_LIMITS
-    return {"contract_version":"2026-10-29", "engine_rules":{
+    return {"contract_version":"2026-10-30",
+            "incremental_replanning_supported":True,"initial_velocity_validation_supported":True,"replanning_engine_ids":["ENG-07"],
+            "objective_optimization_supported":True,"objective_dimensions":["distance","time","energy","risk"],
+            "cost_layer_bases":["distance","time"],
+            "search_algorithms":["ASTAR","DIJKSTRA"],"grid_neighbors":[6,18,26],
+            "airway_graph_supported":True,"network_analysis_supported":True,
+            "traversed_grids_supported":True,"batch_execution_supported":True, "engine_rules":{
                 "ENG-06":["HEIGHT_LAYER","WIDTH","DIRECTION","PRIORITY","SPEED","TIME","AREA","CLIMB","TURN","WAYPOINT"],
                 "ENG-07":["HEIGHT_LAYER","BUILDING","NO_FLY","ZONE","WEATHER","SIGNAL","CLIMB","TURN","HOVER","ENDURANCE","PAYLOAD","RTL","PRIORITY","WAYPOINT"]},
             "canonical_alt_reference":"EG", "api_version":"2.0.0","route_modes":["strict","prefer","free"],"default_route_mode":"strict",
@@ -135,3 +141,17 @@ def example_batch():
     task=example.pop("task")
     second=dict(task,id="demo-v2-002")
     return {**example,"request_id":"demo-v2-batch","tasks":[task,second]}
+
+
+@router.post("/networks/analyze", response_model=NetworkAnalysis)
+def analyze_network(request: NetworkAnalyzeRequest):
+    from uav_planner.v2.network import analyze_network_v2
+    return analyze_network_v2(**request.model_dump())
+
+
+from uav_planner.v2.replanning import replan_v2, ReplanRequest, ReplanResponse
+
+
+@router.post("/plan/replan", response_model=ReplanResponse)
+def replan(request: ReplanRequest):
+    return replan_v2(**request.model_dump())

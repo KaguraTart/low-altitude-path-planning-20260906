@@ -1,0 +1,10 @@
+{
+  "method": "GET",
+  "url": "https://api.kaguratart.com/api/v2/jobs/test-api-missing-job",
+  "path": "/api/v2/jobs/test-api-missing-job",
+  "headers": {
+    "User-Agent": "UAV-API-Test/1.0",
+    "Accept": "application/json"
+  },
+  "body_path": null
+}

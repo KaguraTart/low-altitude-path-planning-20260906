@@ -1,0 +1,316 @@
+{
+  "current_state": {
+    "position_wkt": "POINT Z (104.000092365567 28.999999999968 100)",
+    "velocity_xyz_mps": [
+      6.0,
+      3.2054016451334233e-09,
+      0.0
+    ],
+    "at": "2026-10-30T08:00:03+08:00"
+  },
+  "previous_route": {
+    "initial_velocity_xyz_mps": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "objectives": null,
+    "optimization": null,
+    "alternatives": [],
+    "network_route": null,
+    "search_report": null,
+    "traversed_grids": [
+      {
+        "grid_indices": [
+          20,
+          20,
+          20
+        ],
+        "grid_code": null,
+        "entry_time_s": 0.0,
+        "exit_time_s": 5.666666666665931
+      },
+      {
+        "grid_indices": [
+          21,
+          20,
+          20
+        ],
+        "grid_code": null,
+        "entry_time_s": 5.666666666665931,
+        "exit_time_s": 9.833333333333531
+      },
+      {
+        "grid_indices": [
+          22,
+          20,
+          20
+        ],
+        "grid_code": null,
+        "entry_time_s": 9.833333333333531,
+        "exit_time_s": 13.99999999999946
+      },
+      {
+        "grid_indices": [
+          23,
+          20,
+          20
+        ],
+        "grid_code": null,
+        "entry_time_s": 13.99999999999946,
+        "exit_time_s": 19.666666664143726
+      }
+    ],
+    "grid_context": {
+      "crs": "LOCAL_AEQD",
+      "origin": [
+        -500.0,
+        -500.0,
+        -100.0
+      ],
+      "resolution": [
+        25.0,
+        25.0,
+        10.0
+      ],
+      "shape": [
+        40,
+        40,
+        60
+      ],
+      "level": null,
+      "source": "scene.bounds",
+      "keypoint_indices_source": "scene.bounds/resolution",
+      "boundary_convention": "half-open; simultaneous face/corner crossings have no dwell"
+    },
+    "engine_id": "ENG-07",
+    "task_id": "replan-demo",
+    "alt_reference": "EG",
+    "coordinate_context": {
+      "input_horizontal_crs": "EPSG:4326",
+      "axis_order": "longitude,latitude,altitude",
+      "local_horizontal_crs": "+proj=aeqd +lat_0=29.0 +lon_0=104.0 +datum=WGS84 +units=m +no_defs +type=crs",
+      "local_axis_order": "east_m,north_m,ellipsoid_minus_origin_m",
+      "canonical_alt_reference": "EG",
+      "origin_lon": 104.0,
+      "origin_lat": 29.0,
+      "origin_alt_ellipsoid": 0.0,
+      "max_radius_m": 50000.0,
+      "terrain_source": null,
+      "geoid_source": null,
+      "height_correction_versions": []
+    },
+    "status": "planned",
+    "code": null,
+    "message": "",
+    "route_mode": "free",
+    "trajectory_wkt": "LINESTRING Z (104 29 100, 104.000092365567 28.999999999968 100, 104.00093391851 28.999999996756 100, 104.001026284077 28.999999996083 100)",
+    "start_wkt": "POINT Z (104 29 100)",
+    "goal_wkt": "POINT Z (104.001026284077 28.999999996083 100)",
+    "departure_time": "2026-10-30T08:00:00+08:00",
+    "time_origin": "2026-10-30T08:00:00+08:00",
+    "action": "mission",
+    "vertex_times_s": [
+      0.0,
+      3.0,
+      16.666666664143726,
+      19.666666664143726
+    ],
+    "motion_segments": [
+      {
+        "airway_ids": [],
+        "kind": "line",
+        "start_time_s": 0.0,
+        "end_time_s": 19.666666664143726,
+        "start": [
+          0.0,
+          0.0,
+          100.0
+        ],
+        "end": [
+          99.99999998486236,
+          5.3423360744136685e-08,
+          100.0
+        ],
+        "length_m": 99.99999998486236,
+        "distance_m": 0.0,
+        "points": [],
+        "times_s": [],
+        "max_speed_mps": null,
+        "radius_m": null,
+        "center": null,
+        "start_speed_mps": 0.0,
+        "end_speed_mps": 0.0,
+        "acceleration_mps2": 2.0,
+        "deceleration_mps2": null,
+        "peak_speed_mps": null,
+        "accel_time_s": null,
+        "cruise_time_s": null,
+        "decel_time_s": null,
+        "sweep_angle_deg": null,
+        "profile": {
+          "peak_speed_mps": 6.0,
+          "deceleration_mps2": 2.0,
+          "accel_time_s": 3.0,
+          "cruise_time_s": 13.666666664143726,
+          "decel_time_s": 3.0,
+          "sweep_angle_deg": 0.0
+        }
+      }
+    ],
+    "keypoints": [
+      {
+        "types": [
+          "START"
+        ],
+        "wkt": "POINT Z (104 29 100)",
+        "time_s": 0.0,
+        "grid_indices": [
+          20,
+          20,
+          20
+        ],
+        "grid_code": null,
+        "waypoint_index": null
+      },
+      {
+        "types": [
+          "GOAL"
+        ],
+        "wkt": "POINT Z (104.001026284077 28.999999996083 100)",
+        "time_s": 19.666666664143726,
+        "grid_indices": [
+          24,
+          20,
+          20
+        ],
+        "grid_code": null,
+        "waypoint_index": null
+      }
+    ],
+    "metrics": {
+      "distance_m": 99.99999998486236,
+      "flight_time_s": 19.666666664143726,
+      "wait_time_s": 0.0
+    },
+    "validation": {
+      "valid": true,
+      "violations": []
+    },
+    "rule_report": [
+      {
+        "rule_id": "turn",
+        "rule_type": "TURN",
+        "status": "applied",
+        "message": "",
+        "details": {
+          "reasons": [],
+          "dataset_versions": {}
+        },
+        "reasons": [],
+        "dataset_versions": {}
+      },
+      {
+        "rule_id": "default:CLIMB",
+        "rule_type": "CLIMB",
+        "status": "applied",
+        "message": "",
+        "details": {
+          "reasons": [],
+          "dataset_versions": {}
+        },
+        "reasons": [],
+        "dataset_versions": {}
+      }
+    ]
+  },
+  "previous_scene": {
+    "coordinates": {
+      "origin_lon": 104.0,
+      "origin_lat": 29.0,
+      "origin_alt_ellipsoid": 0
+    },
+    "bounds": {
+      "x_min": -500,
+      "x_max": 500,
+      "y_min": -500,
+      "y_max": 500,
+      "z_min": -100,
+      "z_max": 500
+    },
+    "time_origin": "2026-10-30T08:00:00+08:00",
+    "rules": [
+      {
+        "id": "turn",
+        "rule_type": "TURN",
+        "content": {
+          "minTurnRadius": 0,
+          "maxTurnAngle": 180
+        }
+      }
+    ],
+    "datasets": []
+  },
+  "previous_task": {
+    "id": "replan-demo",
+    "route_mode": "free",
+    "departure_time": "2026-10-30T08:00:00+08:00",
+    "alt_reference": "EG",
+    "payload_kg": 0,
+    "start_wkt": "POINT Z (104 29 100)",
+    "goal_wkt": "POINT Z (104.001026284077 28.999999996083 100)"
+  },
+  "remaining_task": {
+    "id": "replan-demo",
+    "route_mode": "free",
+    "departure_time": "2026-10-30T08:00:03+08:00",
+    "alt_reference": "EG",
+    "payload_kg": 0,
+    "start_wkt": "POINT Z (104.000092365567 28.999999999968 100)",
+    "goal_wkt": "POINT Z (104.001026284077 28.999999996083 100)"
+  },
+  "scene": {
+    "coordinates": {
+      "origin_lon": 104.0,
+      "origin_lat": 29.0,
+      "origin_alt_ellipsoid": 0
+    },
+    "bounds": {
+      "x_min": -500,
+      "x_max": 500,
+      "y_min": -500,
+      "y_max": 500,
+      "z_min": -100,
+      "z_max": 500
+    },
+    "time_origin": "2026-10-30T08:00:00+08:00",
+    "rules": [
+      {
+        "id": "turn",
+        "rule_type": "TURN",
+        "content": {
+          "minTurnRadius": 0,
+          "maxTurnAngle": 180
+        }
+      }
+    ],
+    "datasets": [],
+    "obstacles": [
+      {
+        "id": "block",
+        "geometry_wkt": "POLYGON ((104.000769712523 28.999927818928, 104.000769713593 29.000072176664, 104.000667085114 29.000072177212, 104.000667084187 28.999927819477, 104.000769712523 28.999927818928))",
+        "min_altitude": 80,
+        "max_altitude": 120,
+        "alt_reference": "EG"
+      }
+    ]
+  },
+  "event": {
+    "id": "replan-obstacle-demo",
+    "type": "obstacle",
+    "at": "2026-10-30T08:00:03+08:00",
+    "changed_resource_ids": [
+      "block"
+    ]
+  }
+}

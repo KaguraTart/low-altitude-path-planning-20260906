@@ -460,7 +460,7 @@ class FieldCell(StrictModel):
 
 class Dataset(StrictModel):
     id: StrictStr = Field(min_length=1)
-    kind: Literal["terrain", "weather", "signal", "noise", "area", "grid", "risk", "corridor"]
+    kind: Literal["terrain", "weather", "signal", "noise", "area", "grid", "risk", "corridor", "cost"]
     version: StrictStr = Field(min_length=1)
     valid_from: Timestamp | None = None
     valid_to: Timestamp | None = None
@@ -494,6 +494,7 @@ class GridCell(StrictModel):
 
 
 class GridSpec(StrictModel):
+    level: Annotated[StrictInt, Field(ge=0)] | None = None
     crs: StrictStr = "LOCAL_AEQD"
     origin: tuple[Number, Number, Number]
     resolution: tuple[Positive, Positive, Positive]
@@ -534,7 +535,61 @@ class TimedTrajectory(StrictModel):
         return self
 
 
+class NetworkNode(StrictModel):
+    id: StrictStr = Field(min_length=1)
+    point_wkt: GeographicWKT
+
+    @field_validator("point_wkt")
+    @classmethod
+    def point_z(cls, value):
+        return validated_wkt(value, kind="Point", require_z=True)
+
+
+class NetworkEdge(StrictModel):
+    id: StrictStr = Field(min_length=1)
+    from_node: StrictStr
+    to_node: StrictStr
+    airway_id: StrictStr
+    geometry_wkt: GeographicWKT | None = None
+    direction: Literal["FORWARD", "REVERSE", "BOTH"] = "BOTH"
+    status: Literal["ACTIVE", "CLOSED"] = "ACTIVE"
+    weights: dict[StrictStr, NonNegative]
+    valid_from: Timestamp | None = None
+    valid_to: Timestamp | None = None
+
+    @model_validator(mode="after")
+    def consistent(self):
+        if self.geometry_wkt is not None:
+            validated_wkt(self.geometry_wkt, kind="LineString", require_z=True)
+        _ordered_times(self.valid_from, self.valid_to)
+        return self
+
+
+class AirwayGraph(StrictModel):
+    version: StrictStr = Field(min_length=1)
+    nodes: list[NetworkNode]
+    edges: list[NetworkEdge]
+
+
+class NetworkSelection(StrictModel):
+    start_node_id: StrictStr
+    goal_node_id: StrictStr
+    weight_field: StrictStr = Field(min_length=1)
+    expected_version: StrictStr | None = None
+    via_node_ids: list[StrictStr] = Field(default_factory=list)
+
+
+class NetworkRoute(StrictModel):
+    network_version: StrictStr
+    node_ids: list[StrictStr]
+    edge_ids: list[StrictStr]
+    weight_field: StrictStr
+    total_cost: NonNegative
+    effective_cost: NonNegative | None = None
+
+
 class Scene(StrictModel):
+    airway_graph: AirwayGraph | None = None
     scene_type: Literal["LOW_ALTITUDE"] = "LOW_ALTITUDE"
     network_version: StrictStr | None = Field(default=None, description="Upstream airway network version; separate from the compiled scene content version.")
     coordinates: CoordinateSpec
@@ -558,6 +613,20 @@ class Scene(StrictModel):
             ids = [item.id for item in getattr(self, name)]
             if len(ids) != len(set(ids)):
                 raise ValueError(f"{name} ids must be unique")
+        if self.airway_graph:
+            graph = self.airway_graph
+            if self.network_version is not None and graph.version != self.network_version:
+                raise ValueError("airway_graph.version must match network_version")
+            for label, entries in (("nodes", graph.nodes), ("edges", graph.edges)):
+                if len({item.id for item in entries}) != len(entries):
+                    raise ValueError(f"airway_graph {label} ids must be unique")
+            nodes = {node.id for node in graph.nodes}
+            airways = {airway.id for airway in self.airways}
+            for edge in graph.edges:
+                if edge.from_node not in nodes or edge.to_node not in nodes:
+                    raise ValueError(f"Unknown graph node reference on edge {edge.id}")
+                if edge.airway_id not in airways:
+                    raise ValueError(f"Unknown airway reference on edge {edge.id}")
         return self
 
     @property
@@ -605,11 +674,108 @@ class AircraftState(StrictModel):
         return validated_wkt(value, kind="Point", require_z=True) if value is not None else None
 
 
+class SearchOptions(StrictModel):
+    algorithm: Literal["ASTAR", "DIJKSTRA"] = "ASTAR"
+    neighbors: Literal[6, 18, 26] = 26
+    grid_level: Annotated[StrictInt, Field(ge=0)] | None = None
+    max_expanded_nodes: Annotated[StrictInt, Field(gt=0)] | None = None
+
+    @field_validator("neighbors", mode="before")
+    @classmethod
+    def integer_neighbors(cls, value):
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise ValueError("neighbors must be an integer")
+        return value
+
+
+class ObjectiveWeights(StrictModel):
+    distance: NonNegative = 1
+    time: NonNegative = 0
+    energy: NonNegative = 0
+    risk: NonNegative = 0
+
+
+class ObjectiveNormalization(StrictModel):
+    distance_m: Positive = 1
+    time_s: Positive = 1
+    energy_wh: Positive = 1
+    risk_s: Positive = 1
+
+
+class EnergyModel(StrictModel):
+    """Caller supplied engineering model; powers include baseline propulsion."""
+    mass_kg: Positive = Field(description="Total moving mass in kg, including payload, supplied by the caller.")
+    hover_power_w: NonNegative
+    cruise_power_w: NonNegative
+    climb_efficiency: Annotated[Positive, Field(le=1)]
+
+
+class ObjectiveCostLayer(StrictModel):
+    id: StrictStr = Field(min_length=1)
+    dataset_id: StrictStr = Field(min_length=1)
+    weight: NonNegative
+    normalization: Positive
+    basis: Literal["distance", "time"]
+    unit: StrictStr = Field(min_length=1, description="Unit of the integrated objective (values.cost times metres or seconds).")
+
+
+class ObjectiveConfig(StrictModel):
+    weights: ObjectiveWeights = Field(default_factory=ObjectiveWeights)
+    normalization: ObjectiveNormalization = Field(default_factory=ObjectiveNormalization)
+    energy_model: EnergyModel | None = None
+    cost_layers: list[ObjectiveCostLayer] = Field(default_factory=list)
+    max_solutions: Annotated[StrictInt, Field(gt=0)] | None = None
+    max_iterations: Annotated[StrictInt, Field(gt=0)] | None = None
+
+    @model_validator(mode="after")
+    def consistent(self):
+        if not any(self.weights.model_dump().values()) and not any(c.weight for c in self.cost_layers):
+            raise ValueError("objective weights must not all be zero")
+        if self.weights.energy and self.energy_model is None:
+            raise ValueError("positive energy weight requires caller supplied energy_model")
+        if len({c.id for c in self.cost_layers}) != len(self.cost_layers):
+            raise ValueError("cost layer ids must be unique")
+        if {c.id for c in self.cost_layers} & {"distance", "time", "energy", "risk"}:
+            raise ValueError("cost layer ids must not shadow base objectives")
+        return self
+
+
+class ObjectiveValue(StrictModel):
+    raw: NonNegative
+    normalized: NonNegative
+    normalization: Positive
+    unit: StrictStr
+    weight: NonNegative
+
+
+class RouteObjectives(StrictModel):
+    values: dict[StrictStr, ObjectiveValue]
+    weighted_score: NonNegative
+    dataset_versions: dict[StrictStr, StrictStr] = Field(default_factory=dict)
+    energy_formula: StrictStr | None = None
+
+
+class OptimizationReport(StrictModel):
+    scope: Literal["validated_candidates"] = "validated_candidates"
+    status: Literal["generator_exhausted", "iteration_limit", "solution_limit", "deadline_exceeded", "search_budget_exceeded"]
+    iterations: Annotated[StrictInt, Field(ge=0)] = 0
+    generated_candidates: Annotated[StrictInt, Field(ge=0)] = 0
+    validated_candidates: Annotated[StrictInt, Field(ge=0)] = 0
+    returned_solutions: Annotated[StrictInt, Field(ge=0)] = 0
+    primary_executed_only: Literal[True] = True
+    description: StrictStr = "Pareto comparison covers independently validated candidates generated by a finite lattice search. Labels use incoming direction and rebuilt motion costs for candidate pruning."
+
+
 class Task(StrictModel):
+    objectives: ObjectiveConfig | None = None
+    search: SearchOptions | None = None
     engine_id: Literal["ENG-06", "ENG-07"] | None = None
     id: StrictStr = Field(min_length=1)
-    start_wkt: GeographicWKT
-    goal_wkt: GeographicWKT
+    start_wkt: GeographicWKT | None = None
+    goal_wkt: GeographicWKT | None = None
+    start_grid: GridIndex | None = None
+    goal_grid: GridIndex | None = None
+    network: NetworkSelection | None = None
     departure_time: Timestamp
     alt_reference: AltitudeReference
     route_mode: RouteMode = "strict"
@@ -627,11 +793,21 @@ class Task(StrictModel):
 
     @field_validator("start_wkt", "goal_wkt")
     @classmethod
-    def point_z(cls, value: str) -> str:
-        return validated_wkt(value, kind="Point", require_z=True)
+    def point_z(cls, value: str | None) -> str | None:
+        return validated_wkt(value, kind="Point", require_z=True) if value is not None else None
 
     @model_validator(mode="after")
     def consistent(self) -> Task:
+        if self.network:
+            if self.search is not None:
+                raise ValueError("task.search selects a GRID strategy and cannot be combined with task.network")
+            if self.route_mode == "free" or self.waypoints or self.start_grid is not None or self.goal_grid is not None:
+                raise ValueError("network requires ENG-06, via_node_ids instead of waypoints, and no grid selectors")
+        for label in ("start", "goal"):
+            if getattr(self, label + "_wkt") is None and getattr(self, label + "_grid") is None and self.network is None:
+                raise ValueError(f"{label} requires WKT, grid, or network node")
+        if self.objectives is not None and (self.route_mode != "free" or self.network is not None):
+            raise ValueError("task.objectives requires ENG-07/free without network")
         expected = "ENG-07" if self.route_mode == "free" else "ENG-06"
         if self.engine_id is None:
             self.engine_id = expected
@@ -728,7 +904,30 @@ class RuleReport(StrictModel):
     dataset_versions: dict[StrictStr, StrictStr] = Field(default_factory=dict)
 
 
+class SearchReport(StrictModel):
+    algorithm: Literal["ASTAR", "DIJKSTRA"]
+    neighbors: Literal[6, 18, 26]
+    grid_level: StrictInt | None = None
+    expanded_nodes: Annotated[StrictInt, Field(ge=0)]
+    max_expanded_nodes: Annotated[StrictInt, Field(gt=0)] | None = None
+
+
+class TraversedGrid(StrictModel):
+    grid_indices: GridIndex
+    grid_code: StrictStr | None = None
+    entry_time_s: NonNegative
+    exit_time_s: NonNegative
+
+
 class RouteResult(StrictModel):
+    initial_velocity_xyz_mps: tuple[Number, Number, Number] = (0, 0, 0)
+    objectives: RouteObjectives | None = None
+    optimization: OptimizationReport | None = None
+    alternatives: list[RouteResult] = Field(default_factory=list)
+    network_route: NetworkRoute | None = None
+    search_report: SearchReport | None = None
+    traversed_grids: list[TraversedGrid] = Field(default_factory=list)
+    grid_context: dict[StrictStr, JsonValue] = Field(default_factory=dict)
     engine_id: Literal["ENG-06", "ENG-07"]
     task_id: StrictStr
     alt_reference: AltitudeReference
@@ -758,6 +957,19 @@ class Conflict(StrictModel):
     minimum_distance_m: NonNegative | None = None
 
 
+class ExecutionOptions(StrictModel):
+    workers: Annotated[StrictInt, Field(gt=0)] = 1
+    batch_size: Annotated[StrictInt, Field(gt=0)] | None = None
+
+
+class ExecutionReport(StrictModel):
+    requested_workers: Annotated[StrictInt, Field(gt=0)]
+    actual_workers: Annotated[StrictInt, Field(gt=0)]
+    batch_size: Annotated[StrictInt, Field(gt=0)] | None = None
+    batches: Annotated[StrictInt, Field(ge=0)]
+    candidate_count: Annotated[StrictInt, Field(ge=0)]
+
+
 class BatchResult(StrictModel):
     planned_at: Timestamp
     request_id: StrictStr
@@ -771,6 +983,7 @@ class BatchResult(StrictModel):
     engine: StrictStr
     coordinate_context: dict[StrictStr, JsonValue] = Field(default_factory=dict)
     stage_timings_ms: dict[StrictStr, NonNegative] = Field(default_factory=dict)
+    execution_report: ExecutionReport | None = None
 
 
 def _ordered_times(start: datetime | None, end: datetime | None, *, equal: bool = False) -> None:

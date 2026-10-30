@@ -209,3 +209,10 @@ def test_cli_accepts_both_contract_options(api, tmp_path, capsys):
     assert smoke_v2.main(["--base-url", BASE, "--expected-git-sha", SHA,
                           "--openapi-snapshot", str(snapshot(tmp_path, api.spec))]) == 0
     assert json.loads(capsys.readouterr().out)["status"] == "passed"
+
+
+def test_output_specific_route_schema_is_accepted(api):
+    spec = api.spec
+    spec["components"]["schemas"]["RouteResult-Output"] = spec["components"]["schemas"]["RouteResult"]
+    spec["paths"]["/api/v2/plan/single"]["post"]["responses"]["200"]["content"]["application/json"]["schema"]["$ref"] = "#/components/schemas/RouteResult-Output"
+    assert smoke_v2.smoke(BASE)["status"] == "passed"

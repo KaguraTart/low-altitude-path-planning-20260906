@@ -26,13 +26,13 @@ RULE_KEYS = {
     "SPEED": {"minSpeed", "maxSpeed", "cruiseSpeed"},
     "TIME": {"dailyStart", "dailyEnd", "weekdays", "earliestDeparture", "latestArrival"},
     "AREA": {"scope", "adminCodes", "gridCodes", "zoneIds", "minLon", "maxLon", "minLat", "maxLat", "areaWkt"},
-    "CLIMB": {"maxClimbRate", "maxDescentRate"},
+    "CLIMB": {"maxClimbRate", "maxDescentRate", "maxClimbAngle", "maxDescentAngle"},
     "TURN": {"maxTurnAngle", "minTurnRadius"},
     "SEPARATION": {"verticalSeparation", "horizontalSeparation"},
     "NO_FLY": {"noFlyMode", "heightCeiling", "includeBuffer"},
     "BUILDING": {"avoidMode", "safeDistance", "bufferRadius"},
     "ZONE": {"zoneLevels", "coverageThreshold"},
-    "WEATHER": {"maxWindSpeed", "noPrecipitation", "noIcing"},
+    "WEATHER": {"maxWindSpeed", "noPrecipitation", "noIcing", "minVisibility"},
     "SIGNAL": {"minSignalStrength", "bands", "band_policy"},
     "PRIORITY": {"priorityScene", "costBonus"},
     "HOVER": {"maxHoverTime", "defaultHoverTime"},
@@ -102,7 +102,7 @@ def validate_rule(rule: Any) -> None:
     meaningful = {
         "HEIGHT_LAYER": {"minHeight", "maxHeight", "minAltitude", "maxAltitude"},
         "DIRECTION": {"direction", "directions"}, "TIME": {"dailyStart", "dailyEnd", "earliestDeparture", "latestArrival", "weekdays"},
-        "WEATHER": {"maxWindSpeed", "noPrecipitation", "noIcing"},
+        "WEATHER": {"maxWindSpeed", "noPrecipitation", "noIcing", "minVisibility"},
         "ZONE": {"zoneLevels", "coverageThreshold"},
     }.get(kind)
     if meaningful and not meaningful.intersection(content):
@@ -132,6 +132,10 @@ def validate_rule(rule: Any) -> None:
     for key in ("coverageThreshold", "costBonus"):
         _number(content, key, hi=1)
     _number(content, "lowBatteryPercent", hi=100)
+    for key in ("maxClimbAngle", "maxDescentAngle"):
+        _number(content, key, hi=90)
+        if key in content and content[key] <= 0:
+            invalid("Climb/descent angle must be positive degrees", field=key)
     _number(content, "maxTurnAngle", hi=180)
     for key in ("layerStep", "width", "maxSpeed", "cruiseSpeed", "maxRange", "minEndurance"):
         if key in content and content[key] <= 0:
@@ -222,6 +226,8 @@ class RuleSet:
                         continue
                     required_values = []
                     if kind == "WEATHER":
+                        if "minVisibility" in content:
+                            required_values.append(("visibility_m", values.get("visibility_m"), "number"))
                         if "maxWindSpeed" in content:
                             required_values.append(("wind_speed_mps", values.get("wind_speed_mps", values.get("windSpeed")), "number"))
                         if content.get("noPrecipitation"):
@@ -343,7 +349,7 @@ class RuleSet:
 
     rtl_required = rtl_requirements
 
-    def check_segment(self, p0: np.ndarray, p1: np.ndarray, t0: float, t1: float, task: Any, profile: Any, segment: int = 0, enforce_min_speed: bool = True, kinds: set | None = None) -> list[dict]:
+    def check_segment(self, p0: np.ndarray, p1: np.ndarray, t0: float, t1: float, task: Any, profile: Any, segment: int = 0, enforce_min_speed: bool = True, kinds: set | None = None, slope_angle: float | None = None) -> list[dict]:
         errors: list[dict] = []
         dt = t1 - t0
         delta = p1 - p0
@@ -365,6 +371,9 @@ class RuleSet:
                 if (enforce_min_speed and speed < c.get("minSpeed", 0) - EPS) or speed > c.get("maxSpeed", float("inf")) + EPS:
                     reason = "segment speed is outside allowed limits"
             elif kind == "CLIMB":
+                angle = slope_angle if slope_angle is not None else degrees(atan2(abs(float(delta[2])), float(np.linalg.norm(delta[:2]))))
+                if angle > c.get("maxClimbAngle" if delta[2] >= 0 else "maxDescentAngle", 90) + EPS:
+                    reason = "segment climb or descent angle exceeds limit"
                 if climb > c.get("maxClimbRate", float("inf")) + EPS or -climb > c.get("maxDescentRate", float("inf")) + EPS:
                     reason = "segment climb or descent rate exceeds limit"
             elif kind == "HEIGHT_LAYER":
@@ -435,8 +444,11 @@ class RuleSet:
                     reason = "aircraft capacity or task payload violates payload requirements"
             elif kind == "WAYPOINT":
                 # Count via points; start, goal and motion samples are not via points.
-                wps = [points[0]] + [self.scene.waypoint_local(w, task) for w in task_wps] + [points[-1]]
-                if len(task_wps) > c.get("maxWaypoints", float("inf")):
+                requested = [self.scene.waypoint_local(w, task) for w in task_wps]
+                if get(task, "network") is not None:
+                    requested.extend(self.scene.network.nodes[node] for node in task.network.via_node_ids)
+                wps = [points[0]] + requested + [points[-1]]
+                if len(requested) > c.get("maxWaypoints", float("inf")):
                     reason = "task waypoint count exceeds limit"
                 elif any(np.linalg.norm(b - a) + EPS < c.get("minWaypointInterval", 0) for a, b in zip(wps, wps[1:])):
                     reason = "adjacent task waypoints are too close"

@@ -1,5 +1,6 @@
 """The delivery kit runs independently and records real HTTP exchanges."""
 from contextlib import contextmanager
+from copy import deepcopy
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 from pathlib import Path
@@ -48,7 +49,61 @@ class FakeService:
         routes = [route_for(task) for task in body["tasks"]]
         if self.omit_last_route:
             routes = routes[:-1]
-        return {"routes": routes, "success_count": len(body["tasks"]), "failed_count": 0, "conflicts": []}
+        result = {"routes": routes, "success_count": len(body["tasks"]), "failed_count": 0, "conflicts": []}
+        if body.get("execution"):
+            result["execution_report"] = {"requested_workers": 2, "actual_workers": 2,
+                                          "batch_size": 2, "batches": 1, "candidate_count": len(routes)}
+        return result
+
+    @staticmethod
+    def grid_wkt(point):
+        x, y, z = point
+        return f"POINT Z ({104.77+x*.00001} {29.33+y*.00001} {z})"
+
+    def single_result(self, body):
+        task = dict(body["task"])
+        scene = body.get("scene", {})
+        for label in ("start", "goal"):
+            if task.get(label+"_wkt"):
+                continue
+            if task.get("network"):
+                node = task["network"][label+"_node_id"]
+                task[label+"_wkt"] = next(item["point_wkt"] for item in scene["airway_graph"]["nodes"] if item["id"] == node)
+            elif task.get(label+"_grid"):
+                grid = scene["grid"]
+                point = [o+(i+.5)*r for o,i,r in zip(grid["origin"],task[label+"_grid"],grid["resolution"])]
+                task[label+"_wkt"] = self.grid_wkt(point)
+        result = route_for(task)
+        if task.get("network"):
+            result["network_route"] = {"node_ids": ["A", "B", "D"], "edge_ids": ["ab", "bd"], "total_cost": 2}
+        if task.get("search"):
+            result["search_report"] = {"algorithm": "DIJKSTRA", "neighbors": 6, "grid_level": 12, "expanded_nodes": 42}
+            result["grid_context"] = {"level": 12}
+            result["traversed_grids"] = [{"grid_code": "start-cell", "entry_time_s": 0, "exit_time_s": 5},
+                                         {"grid_code": "goal-cell", "entry_time_s": 5, "exit_time_s": 10}]
+        if task.get("objectives"):
+            alternative = deepcopy(result)
+            start = [float(x) for x in task["start_wkt"].partition("(")[2].rstrip(") ").split()]
+            goal = [float(x) for x in task["goal_wkt"].partition("(")[2].rstrip(") ").split()]
+            middle = [(a+b)/2 for a,b in zip(start,goal)]
+            middle[1] += .0002
+            result["trajectory_wkt"] = "LINESTRING Z (" + ", ".join(" ".join(str(x) for x in point) for point in (start,middle,goal)) + ")"
+            result["vertex_times_s"] = [0,10,20]
+            result["motion_segments"][0]["end_time_s"] = 20
+            config = task["objectives"]
+            for route, distance, duration, energy, risk in ((result,100,20,.5,0),(alternative,80,10,.25,33)):
+                values = {}
+                for name, raw, unit, scale_key in (("distance",distance,"m","distance_m"),("time",duration,"s","time_s"),
+                                                   ("energy",energy,"Wh","energy_wh"),("risk",risk,"risk*s","risk_s")):
+                    scale = config["normalization"][scale_key]
+                    values[name] = {"raw":raw,"normalized":raw/scale,"normalization":scale,"unit":unit,"weight":config["weights"][name]}
+                for layer in config["cost_layers"]:
+                    values[layer["id"]] = {"raw":0,"normalized":0,"normalization":layer["normalization"],"unit":layer["unit"],"weight":layer["weight"]}
+                route["objectives"] = {"values":values,"weighted_score":sum(v["normalized"]*v["weight"] for v in values.values()),
+                                       "dataset_versions":{d["id"]:d["version"] for d in scene["datasets"]}}
+            result["alternatives"] = [alternative]
+            result["optimization"] = {"scope":"validated_candidates","status":"generator_exhausted","returned_solutions":2,"primary_executed_only":True}
+        return result
 
     def dispatch(self, method, path, body, headers):
         self.requests.append({"method": method, "path": path, "body": body,
@@ -69,7 +124,7 @@ class FakeService:
         if path == "/api/v2/version":
             return 200, {"api_version": "2.0.0", "engine": {"git_sha": "f" * 40}}
         if path == "/api/v2/capabilities":
-            return 200, {"canonical_alt_reference":"EG", "contract_version":"2026-10-29", "engine_rules":{"ENG-06":[],"ENG-07":[]}, "route_modes": ["strict", "prefer", "free"], "rule_types": list(range(20))}
+            return 200, {**{key:True for key in ("airway_graph_supported", "network_analysis_supported", "traversed_grids_supported", "batch_execution_supported", "objective_optimization_supported", "incremental_replanning_supported", "initial_velocity_validation_supported")}, "search_algorithms":["ASTAR","DIJKSTRA"], "grid_neighbors":[6,18,26], "canonical_alt_reference":"EG", "contract_version":"2026-10-30", "engine_rules":{"ENG-06":[],"ENG-07":[]}, "route_modes": ["strict", "prefer", "free"], "rule_types": list(range(20))}
         if path == "/api/v2/examples/single":
             return 200, read_example("single_strict_request")
         if path == "/api/v2/examples/batch":
@@ -80,17 +135,31 @@ class FakeService:
             if body["direction"] == "wgs84_to_local":
                 self.coordinate_input = body["geometries_wkt"]
                 result = ["POINT Z (100 100 80)" for _ in self.coordinate_input]
-            else:
+            elif self.coordinate_input is not None and all(point == "POINT Z (100 100 80)" for point in body["geometries_wkt"]):
                 result = self.coordinate_input
+            else:
+                result = [self.grid_wkt([float(v) for v in point.partition("(")[2].rstrip(") ").split()])
+                          for point in body["geometries_wkt"]]
             return 200, {"geometries_wkt": result, "direction": body["direction"]}
         if path == "/api/v2/plan/single":
             if "unknown_field" in body:
                 return 400, {"error": {"code": "INVALID_INPUT"}}
-            return 200, route_for(body["task"])
+            return 200, self.single_result(body)
+        if path == "/api/v2/networks/analyze":
+            return 200, {"version": body["scene"]["airway_graph"]["version"],
+                         "active_edges": ["ab", "bd", "ac", "cd"], "weak_components": [["A", "B", "C", "D"], ["E"]]}
         if path == "/api/v2/plan/batch":
             return 200, self.batch_result(body)
         if path == "/api/v2/validate":
+            if body.get("task", {}).get("id") == "replan-demo" and body.get("initial_velocity_xyz_mps") == [0,0,0]:
+                return 200, {"valid": False, "violations": [{"code":"INITIAL_VELOCITY"}]}
             return 200, {"valid": True, "violations": []}
+        if path == "/api/v2/plan/replan":
+            route = route_for(body["remaining_task"])
+            route["initial_velocity_xyz_mps"] = body["current_state"]["velocity_xyz_mps"]
+            changed = bool(body["scene"].get("obstacles"))
+            return 200, {"decision":"replanned" if changed else "reused", "route":route,
+                         "new_search_calls":1 if changed else 0,"reused_distance_m":37.5,"reused_primitives":2}
         if path == "/api/v2/jobs":
             self.batch = body
             return 202, {"job_id": "fixture-job", "status": "pending", "poll_url": "/api/v2/jobs/fixture-job"}
@@ -143,11 +212,11 @@ def test_delivery_kit_covers_all_operations_and_keeps_payloads(tmp_path):
         assert main(["--base-url", url + "/docs#/", "--examples-only", "--output", str(output)]) == 0
     report = json.loads((output / "report.json").read_text())
     assert report["status"] == "passed"
-    assert report["summary"] == {"passed": 19, "failed": 0, "operation_count": 14, "covered_operations": 14}
+    assert report["summary"] == {"passed": 25, "failed": 0, "operation_count": 16, "covered_operations": 16}
     assert (output / "REPORT.md").is_file()
     assert all(item["user_agent"] == USER_AGENT and item["accept"] == "application/json" for item in api.requests)
     batch_requests = [item for item in api.requests if item["path"] == "/api/v2/plan/batch"]
-    assert batch_requests[-1]["body"] == read_example("batch_request")
+    assert any(item["body"] == read_example("batch_request") for item in batch_requests)
     validation_requests = [item for item in api.requests if item["path"] == "/api/v2/validate"]
     assert all(item["body"]["motion_segments"] for item in validation_requests)
     for exchange in report["exchanges"]:

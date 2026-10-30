@@ -26,19 +26,30 @@ def plan_single_v2(*, task: Any, scene_id: str | None = None,
 
 def plan_batch_v2(*, tasks: Any, scene_id: str | None = None,
                   scene: Any = None, request_id: str | None = None,
-                  time_budget_s: float | None = None) -> dict[str, Any]:
+                  time_budget_s: float | None = None, execution: Any = None) -> dict[str, Any]:
     from .v2.engine import plan_batch_v2 as implementation
     return implementation(tasks=tasks, scene_id=scene_id, scene=scene,
-                          request_id=request_id, time_budget_s=time_budget_s)
+                          request_id=request_id, time_budget_s=time_budget_s, execution=execution)
 
 
 def validate_route_v2(*, task: Any, trajectory_wkt: str, vertex_times_s: Any,
-                      motion_segments: Any = None, scene_id: str | None = None,
-                      scene: Any = None) -> dict[str, Any]:
+                      motion_segments: Any = None, network_route: Any = None, scene_id: str | None = None,
+                      scene: Any = None, initial_velocity_xyz_mps: Any = (0, 0, 0)) -> dict[str, Any]:
     from .v2.engine import validate_route_v2 as implementation
     return implementation(task=task, trajectory_wkt=trajectory_wkt,
-                          vertex_times_s=vertex_times_s, motion_segments=motion_segments,
-                          scene_id=scene_id, scene=scene)
+                          vertex_times_s=vertex_times_s, motion_segments=motion_segments, network_route=network_route,
+                          scene_id=scene_id, scene=scene, initial_velocity_xyz_mps=initial_velocity_xyz_mps)
+
+
+def replan_v2(**kwargs: Any) -> dict[str, Any]:
+    from .v2.replanning import replan_v2 as implementation
+    return implementation(**kwargs)
+
+
+def analyze_network_v2(*, scene_id: str | None = None, scene: Any = None,
+                       at: Any = None) -> dict[str, Any]:
+    from .v2.network import analyze_network_v2 as implementation
+    return implementation(scene_id=scene_id, scene=scene, at=at)
 
 
 def convert_coordinates(request: Any) -> dict[str, Any]:
@@ -60,5 +71,5 @@ validate_route = validate_route_v2
 __all__ = [
     "register_scene", "plan_single", "plan_batch", "validate_route",
     "plan_single_v2", "plan_batch_v2", "validate_route_v2", "convert_coordinates",
-    "get_version", "ErrorCode", "PlanningError", "__version__",
+    "replan_v2", "analyze_network_v2", "get_version", "ErrorCode", "PlanningError", "__version__",
 ]
