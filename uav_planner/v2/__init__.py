@@ -59,3 +59,6 @@ __all__ = [
     "Rule", "Scene", "Task", "TimedTrajectory", "Volume", "Waypoint",
     "convert_coordinates", "default_profile", "resolve_profile",
 ]
+
+from .replanning import CurrentState, ReplanEvent, ReplanTrigger, ReplanRequest, ReplanResponse, replan_v2
+__all__ += ["CurrentState", "ReplanEvent", "ReplanTrigger", "ReplanRequest", "ReplanResponse", "replan_v2"]

@@ -45,6 +45,7 @@ class BatchRequest(SceneSelection):
 
 
 class ValidateRequest(SceneSelection):
+    initial_velocity_xyz_mps: tuple[Number, Number, Number] = (0, 0, 0)
     network_route: NetworkRoute | None = None
     task: Task
     trajectory_wkt: WKT
@@ -105,6 +106,18 @@ class VersionResponse(StrictModel):
 
 
 class Capabilities(StrictModel):
+    incremental_replanning_supported: bool
+    initial_velocity_validation_supported: bool
+    replanning_engine_ids: list[Literal["ENG-07"]]
+    objective_optimization_supported: bool
+    objective_dimensions: list[Literal["distance", "time", "energy", "risk"]]
+    cost_layer_bases: list[Literal["distance", "time"]]
+    search_algorithms: list[Literal["ASTAR", "DIJKSTRA"]]
+    grid_neighbors: list[Literal[6, 18, 26]]
+    airway_graph_supported: bool
+    network_analysis_supported: bool
+    traversed_grids_supported: bool
+    batch_execution_supported: bool
     contract_version: str
     engine_rules: dict[str,list[str]]
     canonical_alt_reference: Literal["EG"]
@@ -133,3 +146,6 @@ class NetworkAnalysis(StrictModel):
     weak_components: list[list[str]]
     strong_components: list[list[str]]
     inactive_edge_ids: list[str]
+
+
+from uav_planner.v2.replanning import ReplanRequest, ReplanResponse

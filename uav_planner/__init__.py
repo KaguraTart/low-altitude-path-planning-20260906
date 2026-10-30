@@ -34,11 +34,16 @@ def plan_batch_v2(*, tasks: Any, scene_id: str | None = None,
 
 def validate_route_v2(*, task: Any, trajectory_wkt: str, vertex_times_s: Any,
                       motion_segments: Any = None, network_route: Any = None, scene_id: str | None = None,
-                      scene: Any = None) -> dict[str, Any]:
+                      scene: Any = None, initial_velocity_xyz_mps: Any = (0, 0, 0)) -> dict[str, Any]:
     from .v2.engine import validate_route_v2 as implementation
     return implementation(task=task, trajectory_wkt=trajectory_wkt,
                           vertex_times_s=vertex_times_s, motion_segments=motion_segments, network_route=network_route,
-                          scene_id=scene_id, scene=scene)
+                          scene_id=scene_id, scene=scene, initial_velocity_xyz_mps=initial_velocity_xyz_mps)
+
+
+def replan_v2(**kwargs: Any) -> dict[str, Any]:
+    from .v2.replanning import replan_v2 as implementation
+    return implementation(**kwargs)
 
 
 def analyze_network_v2(*, scene_id: str | None = None, scene: Any = None,
@@ -66,5 +71,5 @@ validate_route = validate_route_v2
 __all__ = [
     "register_scene", "plan_single", "plan_batch", "validate_route",
     "plan_single_v2", "plan_batch_v2", "validate_route_v2", "convert_coordinates",
-    "analyze_network_v2", "get_version", "ErrorCode", "PlanningError", "__version__",
+    "replan_v2", "analyze_network_v2", "get_version", "ErrorCode", "PlanningError", "__version__",
 ]

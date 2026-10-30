@@ -182,6 +182,8 @@ def paths(compiled, task, profile, limits, deadline, search_state, report):
     solution limit is used. Exact endpoints connect to their nearest lattice
     vertex. Caller neighbours and blocked diagonal intermediary cells apply.
     """
+    if search_state is not None:
+        search_state["calls"] = search_state.get("calls", 0) + 1
     from .engine import _local, _seconds, _geometry_ok, _task_motion, _rtl_task
     config = task.objectives
     model = compiled.model
@@ -299,7 +301,7 @@ def paths(compiled, task, profile, limits, deadline, search_state, report):
             submit(stage,nxt,visited|{nxt},completed,[*current,p],node)
 
 
-def prepare(index, task, model, compiled, dynamic_tracks, deadline, search_state):
+def prepare(index, task, model, compiled, dynamic_tracks, deadline, search_state, *, retain_all_candidates=False):
     from .engine import (_prepare_candidate, _profile, _limits, _final_samples,
                          _transient_segments, _motion_slope_angles, _failure)
     config = task.objectives
@@ -350,7 +352,10 @@ def prepare(index, task, model, compiled, dynamic_tracks, deadline, search_state
             failure = _failure(task,"SEARCH_BUDGET_EXCEEDED","Objective exploration exhausted caller iteration/search budget")
         failure["optimization"] = report
         return None, failure
-    candidates = sorted(frontier(candidates),key=lambda c:(c["objective"]["weighted_score"],vector(c["objective"])))
+    # Incremental handoff yaw/wait depends on each tail heading. Tail-only
+    # dominance cannot eliminate candidates before that full motion is built.
+    candidates = sorted(candidates if retain_all_candidates else frontier(candidates),
+                        key=lambda c:(c["objective"]["weighted_score"],vector(c["objective"])))
     primary = candidates[0]
     primary["objective_candidates"] = candidates
     primary["optimization"] = report

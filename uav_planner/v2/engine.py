@@ -18,7 +18,7 @@ from shapely.ops import nearest_points
 
 from uav_planner.errors import ErrorCode, PlanningError
 from .models import AircraftProfile, BatchResult, ExecutionOptions, MotionSegment, Scene, Task
-from .motion import Motion, MotionError, Primitive, build_motion
+from .motion import Motion, MotionError, Primitive, build_motion, primitive_tangent
 
 
 class SceneRegistry:
@@ -393,6 +393,8 @@ def _grid_path(compiled,start,goal,task,profile,t,deadline,search_state=None):
 
 
 def _path_for_leg(compiled,start,goal,task,profile,t,deadline,search_state=None):
+    if search_state is not None:
+        search_state["calls"] = search_state.get("calls", 0) + 1
     if task.search is not None:
         return _grid_path(compiled,start,goal,task,profile,t,deadline,search_state)
     direct=_geometry_ok(compiled,start,goal,t,task,profile)
@@ -1339,7 +1341,7 @@ def _waypoint_errors(motion, task, compiled):
     return errors
 
 
-def validate_route_v2(*,task,trajectory_wkt,vertex_times_s,motion_segments=None,network_route=None,scene_id=None,scene=None):
+def validate_route_v2(*,task,trajectory_wkt,vertex_times_s,motion_segments=None,network_route=None,scene_id=None,scene=None,initial_velocity_xyz_mps=(0,0,0),_partial_goal_wkt=None):
     from . import native
     if (scene_id is None)==(scene is None):
         raise PlanningError(ErrorCode.INVALID_INPUT,"Provide exactly one of scene_id or scene")
@@ -1351,10 +1353,20 @@ def validate_route_v2(*,task,trajectory_wkt,vertex_times_s,motion_segments=None,
     if network_route is not None and task.network is None:
         raise PlanningError(ErrorCode.INVALID_INPUT,"network_route requires task.network")
     task,rtl=_rtl_task(compiled,task,profile)
+    if _partial_goal_wkt is not None:
+        # Internal incremental proof changes only the terminal endpoint; all
+        # effective RTL, temporal and other scene restrictions remain active.
+        task=task.model_copy(update={"goal_wkt":_partial_goal_wkt})
     times=np.asarray(vertex_times_s,dtype=float)
     if times.ndim!=1 or not len(times) or not np.isfinite(times).all() or np.any(np.diff(times)<=0):
         raise PlanningError(ErrorCode.INVALID_INPUT,"Trajectory times must be finite and strictly increase")
     points=_timed_local(compiled,trajectory_wkt,times,task.alt_reference,model)
+    try:
+        velocity=np.asarray(initial_velocity_xyz_mps,dtype=float)
+        if velocity.shape != (3,) or not np.isfinite(velocity).all():
+            raise ValueError("initial_velocity_xyz_mps must contain three finite components")
+    except (ValueError,TypeError) as exc:
+        raise PlanningError(ErrorCode.INVALID_INPUT,str(exc)) from exc
     errors=[];motion=None
     if motion_segments:
         try:
@@ -1364,9 +1376,13 @@ def validate_route_v2(*,task,trajectory_wkt,vertex_times_s,motion_segments=None,
             if not proof["valid"]:
                 errors.append({"code":"MOTION_MODEL","message":"Analytic motion violates aircraft or rule limits","details":{"violations":proof["violations"]}})
             errors.extend(_motion_view_errors(motion))
+            if not motion.primitives or np.linalg.norm(primitive_tangent(motion.primitives[0])*motion.primitives[0].v0-velocity)>1e-5:
+                errors.append({"code":"MOTION_MODEL","message":"Initial analytic velocity differs from declared initial_velocity_xyz_mps"})
         except (ValueError,TypeError,KeyError) as exc:
             errors.append({"code":"MOTION_MODEL","message":"Invalid analytic motion: "+str(exc)})
             motion=None
+    elif np.linalg.norm(velocity)>1e-8:
+        errors.append({"code":"MOTION_MODEL","message":"A nonzero initial velocity requires analytic moving motion"})
     elif len(points)>1:
         errors.append({"code":"MOTION_MODEL_REQUIRED","message":"Moving route validation requires motion_segments"})
     # A supplied law is checked against the WKT before its certified dense cover

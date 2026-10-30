@@ -285,3 +285,14 @@ def build_motion(points, limits: dict, start_time: float = 0.0, *, tolerance: fl
         vertices,times=[points[0]],[start_time]
     events.extend([(0,["START"]),(len(vertices)-1,["GOAL"])])
     return Motion(np.asarray(vertices),np.asarray(times),primitives,starts,events,sum(p.length for p in primitives))
+
+
+def primitive_tangent(p, end=False):
+    if p.length <= 1e-12:
+        return np.zeros(3)
+    if p.kind != 'arc':
+        return (p.end-p.start)/p.length
+    point = p.end if end else p.start
+    radius = point[:2]-p.center[:2]
+    horizontal = np.array([-radius[1],radius[0]])*(1 if p.sweep>0 else -1)/p.radius
+    return np.array([*(horizontal*abs(p.sweep)*p.radius/p.length), (p.end[2]-p.start[2])/p.length])
