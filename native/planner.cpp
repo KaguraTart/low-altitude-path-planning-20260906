@@ -607,14 +607,219 @@ ValidationResult validate_samples(const Trajectory& t,const Limits& limits) {
     }
     return out;
 }
-PYBIND11_MODULE(_native,m) {
-    m.doc()="C++17 continuous conflict checks, sparse reservations, A* and safe interval path planning";
-    m.attr("ENGINE_VERSION")="2.0.0";
-    m.def("validate_motion",[](const py::sequence& primitives,const Limits& limits,const std::vector<double>& starts){auto ps=motion_primitives(primitives);if(!starts.empty()&&starts.size()!=ps.size())throw std::invalid_argument("starts must contain one timestamp per primitive");for(auto t:starts)finite(t,"primitive start time");for(const auto& entry:limits){nonnegative(entry.second,entry.first.c_str());}ValidationResult r;{py::gil_scoped_release release;r=validate_motion(ps,limits,starts);}return validation_dict(r);},py::arg("primitives"),py::arg("limits"),py::arg("starts")=std::vector<double>{});
-    m.def("validate_trajectory",[](const RealArray& path,const RealArray& times,const Limits& limits){auto p=points(path,"path");auto t=numbers(times,"times");if(p.empty()||p.size()!=t.size())throw std::invalid_argument("path must have one timestamp per point");for(size_t i=1;i<t.size();++i)if(t[i]<=t[i-1])throw std::invalid_argument("times must be strictly increasing");for(const auto& entry:limits)nonnegative(entry.second,entry.first.c_str());ValidationResult r;{py::gil_scoped_release release;r=validate_samples({p,t},limits);}return validation_dict(r);},py::arg("path"),py::arg("times"),py::arg("limits"));
-    m.def("graph_search",[](const RealArray& ns,const IntArray& es,const RealArray& cs,int start,int goal,const std::vector<int>& blocked,size_t limit,double ms,bool directed){auto g=graph(ns,es,cs,directed);SearchResult r;{py::gil_scoped_release release;Deadline deadline(ms);r=astar(g,start,goal,blocked,limit,deadline);}return search_dict(r);},py::arg("nodes"),py::arg("edges"),py::arg("edge_costs"),py::arg("start"),py::arg("goal"),py::arg("blocked_nodes")=std::vector<int>{},py::arg("max_iterations")=0,py::arg("deadline_ms")=0.,py::arg("directed")=false);
-    m.def("grid_search",[](Vec start,Vec goal,const RealArray& bounds,Vec resolution,const IntArray& blocked,const py::object& allowed,size_t limit,double ms,const std::string& algorithm,int neighbors,double climb_angle,double descent_angle){auto bs=points(bounds,"bounds");auto blocked_set=cells(blocked);CellSet allowed_set;bool restrict_allowed=!allowed.is_none();if(restrict_allowed)allowed_set=cells(IntArray::ensure(allowed));GridResult r;{py::gil_scoped_release release;Deadline deadline(ms);r=grid_astar(start,goal,bs,resolution,blocked_set,allowed_set,restrict_allowed,limit,deadline,algorithm,neighbors,climb_angle,descent_angle);}py::dict d;d["status"]=r.status;d["path"]=r.path;d["cost"]=std::isfinite(r.cost)?py::cast(r.cost):py::none();d["expanded"]=r.expanded;return d;},py::arg("start"),py::arg("goal"),py::arg("bounds"),py::arg("resolution"),py::arg("blocked"),py::arg("allowed")=py::none(),py::arg("max_iterations")=0,py::arg("deadline_ms")=0.,py::arg("algorithm")="ASTAR",py::arg("neighbors")=26,py::arg("max_climb_angle")=90.,py::arg("max_descent_angle")=90.);
-    m.def("continuous_conflicts",[](const py::sequence& paths,const py::sequence& times,double h,double v,size_t cap,double ms){nonnegative(h,"horizontal_separation");nonnegative(v,"vertical_separation");auto ts=trajectories(paths,times);ConflictResult r;{py::gil_scoped_release release;Deadline deadline(ms);r=find_conflicts(ts,h,v,cap,deadline);}py::list records;for(auto rec:r.records){py::dict d;d["first"]=rec.first;d["second"]=rec.second;d["start"]=rec.collision.start;d["end"]=rec.collision.end;d["min_horizontal"]=rec.collision.horizontal;d["min_vertical"]=rec.collision.vertical;records.append(d);}py::dict d;d["status"]=r.status;d["conflicts"]=records;d["checked_pairs"]=r.checked;return d;},py::arg("paths"),py::arg("times"),py::arg("horizontal_separation"),py::arg("vertical_separation"),py::arg("max_conflicts")=0,py::arg("deadline_ms")=0.);
-    m.def("schedule_paths",[](const py::sequence& paths,const py::sequence& times,const RealArray& windows,double h,double v,const py::object& priority_arg,double ms,size_t fixed_count){nonnegative(h,"horizontal_separation");nonnegative(v,"vertical_separation");auto ts=trajectories(paths,times);if(fixed_count>ts.size())throw std::invalid_argument("fixed_count cannot exceed the number of trajectories");if(windows.ndim()!=2||windows.shape(1)!=2||static_cast<size_t>(windows.shape(0))!=ts.size())throw std::invalid_argument("departure_windows must have shape (N, 2)");auto w=windows.unchecked<2>();std::vector<std::array<double,2>> ws(ts.size());for(size_t i=0;i<ts.size();++i){finite(w(i,0),"departure_windows");finite(w(i,1),"departure_windows");if(w(i,0)>w(i,1))throw std::invalid_argument("departure windows must be ordered");ws[i]={w(i,0),w(i,1)};}std::vector<int> priorities(ts.size(),0);if(!priority_arg.is_none()){priorities=priority_arg.cast<std::vector<int>>();if(priorities.size()!=ts.size())throw std::invalid_argument("one priority is required per path");}ScheduleResult r;{py::gil_scoped_release release;Deadline deadline(ms);r=schedule(ts,ws,priorities,h,v,fixed_count,deadline);}py::list delays;for(auto x:r.delays)delays.append(std::isfinite(x)?py::cast(x):py::none());py::dict d;d["status"]=r.status;d["delays"]=delays;d["statuses"]=r.statuses;d["accepted"]=r.accepted;return d;},py::arg("paths"),py::arg("times"),py::arg("departure_windows"),py::arg("horizontal_separation"),py::arg("vertical_separation"),py::arg("priorities")=py::none(),py::arg("deadline_ms")=0.,py::arg("fixed_count")=0);
-    m.def("solve_sipp",[](const RealArray& ns,const IntArray& es,const RealArray& ds,int start,int goal,const py::sequence& paths,const py::sequence& times,double h,double v,double begin,double latest,size_t limit,double ms,bool directed,double turn,const py::object& wait_allowed,const py::object& edge_paths,const py::object& edge_times){nonnegative(h,"horizontal_separation");nonnegative(v,"vertical_separation");auto g=graph(ns,es,ds,directed);auto allowed=wait_mask(wait_allowed,g.nodes.size());auto shaped=sipp_edges(g,es,ds,edge_paths,edge_times);auto occupied=trajectories(paths,times);SearchResult r;{py::gil_scoped_release release;Deadline deadline(ms);r=sipp(g,start,goal,occupied,h,v,begin,latest,limit,turn,allowed,shaped,deadline);}return search_dict(r);},py::arg("nodes"),py::arg("edges"),py::arg("durations"),py::arg("start"),py::arg("goal"),py::arg("reservations_paths")=py::list(),py::arg("reservations_times")=py::list(),py::arg("horizontal_separation")=0.,py::arg("vertical_separation")=0.,py::arg("start_time")=0.,py::arg("latest_arrival")=INF,py::arg("max_iterations")=0,py::arg("deadline_ms")=0.,py::arg("directed")=false,py::arg("max_turn_angle")=3.141592653589793,py::arg("wait_allowed")=py::none(),py::arg("edge_paths")=py::none(),py::arg("edge_times")=py::none());
+// ---------------------------------------------------------------- Python bindings
+//
+// Each binding is split into three steps that mirror the Python call:
+// parse and validate the Python arguments, run the solver without the GIL, then
+// build the result dictionary. Keeping them separate means the module macro
+// below carries only names, argument spellings and defaults.
+
+template <class Fn>
+auto run_without_gil(Fn&& fn) -> decltype(fn()) {
+    py::gil_scoped_release release;
+    return fn();
+}
+
+void require_nonnegative_limits(const Limits& limits) {
+    for (const auto& entry : limits) nonnegative(entry.second, entry.first.c_str());
+}
+
+std::vector<std::array<double, 2>> departure_windows(const RealArray& windows, size_t count) {
+    if (windows.ndim() != 2 || windows.shape(1) != 2 || static_cast<size_t>(windows.shape(0)) != count)
+        throw std::invalid_argument("departure_windows must have shape (N, 2)");
+    auto w = windows.unchecked<2>();
+    std::vector<std::array<double, 2>> out(count);
+    for (size_t i = 0; i < count; ++i) {
+        finite(w(i, 0), "departure_windows");
+        finite(w(i, 1), "departure_windows");
+        if (w(i, 0) > w(i, 1)) throw std::invalid_argument("departure windows must be ordered");
+        out[i] = {w(i, 0), w(i, 1)};
+    }
+    return out;
+}
+
+std::vector<int> departure_priorities(const py::object& value, size_t count) {
+    std::vector<int> out(count, 0);
+    if (value.is_none()) return out;
+    out = value.cast<std::vector<int>>();
+    if (out.size() != count) throw std::invalid_argument("one priority is required per path");
+    return out;
+}
+
+py::dict grid_dict(const GridResult& r) {
+    py::dict d;
+    d["status"] = r.status;
+    d["path"] = r.path;
+    d["cost"] = std::isfinite(r.cost) ? py::cast(r.cost) : py::none();
+    d["expanded"] = r.expanded;
+    return d;
+}
+
+py::dict conflict_dict(const ConflictResult& r) {
+    py::list records;
+    for (const auto& rec : r.records) {
+        py::dict d;
+        d["first"] = rec.first;
+        d["second"] = rec.second;
+        d["start"] = rec.collision.start;
+        d["end"] = rec.collision.end;
+        d["min_horizontal"] = rec.collision.horizontal;
+        d["min_vertical"] = rec.collision.vertical;
+        records.append(d);
+    }
+    py::dict d;
+    d["status"] = r.status;
+    d["conflicts"] = records;
+    d["checked_pairs"] = r.checked;
+    return d;
+}
+
+py::dict schedule_dict(const ScheduleResult& r) {
+    py::list delays;
+    for (auto x : r.delays) delays.append(std::isfinite(x) ? py::cast(x) : py::none());
+    py::dict d;
+    d["status"] = r.status;
+    d["delays"] = delays;
+    d["statuses"] = r.statuses;
+    d["accepted"] = r.accepted;
+    return d;
+}
+
+py::dict py_validate_motion(const py::sequence& primitives, const Limits& limits,
+                            const std::vector<double>& starts) {
+    auto ps = motion_primitives(primitives);
+    if (!starts.empty() && starts.size() != ps.size())
+        throw std::invalid_argument("starts must contain one timestamp per primitive");
+    for (auto t : starts) finite(t, "primitive start time");
+    require_nonnegative_limits(limits);
+    return validation_dict(run_without_gil([&] { return validate_motion(ps, limits, starts); }));
+}
+
+py::dict py_validate_trajectory(const RealArray& path, const RealArray& times, const Limits& limits) {
+    auto p = points(path, "path");
+    auto t = numbers(times, "times");
+    if (p.empty() || p.size() != t.size())
+        throw std::invalid_argument("path must have one timestamp per point");
+    for (size_t i = 1; i < t.size(); ++i)
+        if (t[i] <= t[i - 1]) throw std::invalid_argument("times must be strictly increasing");
+    require_nonnegative_limits(limits);
+    return validation_dict(run_without_gil([&] { return validate_samples({p, t}, limits); }));
+}
+
+py::dict py_graph_search(const RealArray& nodes, const IntArray& edges, const RealArray& edge_costs,
+                         int start, int goal, const std::vector<int>& blocked,
+                         size_t limit, double ms, bool directed) {
+    auto g = graph(nodes, edges, edge_costs, directed);
+    return search_dict(run_without_gil([&] {
+        Deadline deadline(ms);
+        return astar(g, start, goal, blocked, limit, deadline);
+    }));
+}
+
+py::dict py_grid_search(Vec start, Vec goal, const RealArray& bounds, Vec resolution,
+                        const IntArray& blocked, const py::object& allowed,
+                        size_t limit, double ms, const std::string& algorithm,
+                        int neighbors, double climb_angle, double descent_angle) {
+    auto bs = points(bounds, "bounds");
+    auto blocked_set = cells(blocked);
+    CellSet allowed_set;
+    const bool restrict_allowed = !allowed.is_none();
+    if (restrict_allowed) allowed_set = cells(IntArray::ensure(allowed));
+    return grid_dict(run_without_gil([&] {
+        Deadline deadline(ms);
+        return grid_astar(start, goal, bs, resolution, blocked_set, allowed_set, restrict_allowed,
+                          limit, deadline, algorithm, neighbors, climb_angle, descent_angle);
+    }));
+}
+
+py::dict py_continuous_conflicts(const py::sequence& paths, const py::sequence& times,
+                                 double h, double v, size_t cap, double ms) {
+    nonnegative(h, "horizontal_separation");
+    nonnegative(v, "vertical_separation");
+    auto ts = trajectories(paths, times);
+    return conflict_dict(run_without_gil([&] {
+        Deadline deadline(ms);
+        return find_conflicts(ts, h, v, cap, deadline);
+    }));
+}
+
+py::dict py_schedule_paths(const py::sequence& paths, const py::sequence& times,
+                           const RealArray& windows, double h, double v,
+                           const py::object& priority_arg, double ms, size_t fixed_count) {
+    nonnegative(h, "horizontal_separation");
+    nonnegative(v, "vertical_separation");
+    auto ts = trajectories(paths, times);
+    if (fixed_count > ts.size())
+        throw std::invalid_argument("fixed_count cannot exceed the number of trajectories");
+    auto ws = departure_windows(windows, ts.size());
+    auto priorities = departure_priorities(priority_arg, ts.size());
+    return schedule_dict(run_without_gil([&] {
+        Deadline deadline(ms);
+        return schedule(ts, ws, priorities, h, v, fixed_count, deadline);
+    }));
+}
+
+py::dict py_solve_sipp(const RealArray& nodes, const IntArray& edges, const RealArray& durations,
+                       int start, int goal, const py::sequence& paths, const py::sequence& times,
+                       double h, double v, double begin, double latest, size_t limit,
+                       double ms, bool directed, double turn, const py::object& wait_allowed,
+                       const py::object& edge_paths, const py::object& edge_times) {
+    nonnegative(h, "horizontal_separation");
+    nonnegative(v, "vertical_separation");
+    auto g = graph(nodes, edges, durations, directed);
+    auto allowed = wait_mask(wait_allowed, g.nodes.size());
+    auto shaped = sipp_edges(g, edges, durations, edge_paths, edge_times);
+    auto occupied = trajectories(paths, times);
+    return search_dict(run_without_gil([&] {
+        Deadline deadline(ms);
+        return sipp(g, start, goal, occupied, h, v, begin, latest, limit, turn,
+                    allowed, shaped, deadline);
+    }));
+}
+
+PYBIND11_MODULE(_native, m) {
+    m.doc() = "C++17 continuous conflict checks, sparse reservations, A* and safe interval path planning";
+    m.attr("ENGINE_VERSION") = "2.0.0";
+
+    m.def("validate_motion", &py_validate_motion,
+          py::arg("primitives"), py::arg("limits"), py::arg("starts") = std::vector<double>{});
+
+    m.def("validate_trajectory", &py_validate_trajectory,
+          py::arg("path"), py::arg("times"), py::arg("limits"));
+
+    m.def("graph_search", &py_graph_search,
+          py::arg("nodes"), py::arg("edges"), py::arg("edge_costs"),
+          py::arg("start"), py::arg("goal"),
+          py::arg("blocked_nodes") = std::vector<int>{},
+          py::arg("max_iterations") = 0, py::arg("deadline_ms") = 0., py::arg("directed") = false);
+
+    m.def("grid_search", &py_grid_search,
+          py::arg("start"), py::arg("goal"), py::arg("bounds"), py::arg("resolution"),
+          py::arg("blocked"), py::arg("allowed") = py::none(),
+          py::arg("max_iterations") = 0, py::arg("deadline_ms") = 0.,
+          py::arg("algorithm") = "ASTAR", py::arg("neighbors") = 26,
+          py::arg("max_climb_angle") = 90., py::arg("max_descent_angle") = 90.);
+
+    m.def("continuous_conflicts", &py_continuous_conflicts,
+          py::arg("paths"), py::arg("times"),
+          py::arg("horizontal_separation"), py::arg("vertical_separation"),
+          py::arg("max_conflicts") = 0, py::arg("deadline_ms") = 0.);
+
+    m.def("schedule_paths", &py_schedule_paths,
+          py::arg("paths"), py::arg("times"), py::arg("departure_windows"),
+          py::arg("horizontal_separation"), py::arg("vertical_separation"),
+          py::arg("priorities") = py::none(), py::arg("deadline_ms") = 0.,
+          py::arg("fixed_count") = 0);
+
+    m.def("solve_sipp", &py_solve_sipp,
+          py::arg("nodes"), py::arg("edges"), py::arg("durations"),
+          py::arg("start"), py::arg("goal"),
+          py::arg("reservations_paths") = py::list(),
+          py::arg("reservations_times") = py::list(),
+          py::arg("horizontal_separation") = 0., py::arg("vertical_separation") = 0.,
+          py::arg("start_time") = 0., py::arg("latest_arrival") = INF,
+          py::arg("max_iterations") = 0, py::arg("deadline_ms") = 0.,
+          py::arg("directed") = false, py::arg("max_turn_angle") = 3.141592653589793,
+          py::arg("wait_allowed") = py::none(),
+          py::arg("edge_paths") = py::none(), py::arg("edge_times") = py::none());
 }
