@@ -10,7 +10,7 @@ from typing import Any
 
 import numpy as np
 import pytest
-from shapely import from_wkt, get_coordinates
+from shapely import from_wkt, get_coordinates, normalize
 
 from uav_planner.v2 import native
 from uav_planner.v2.models import RULE_TYPES, Scene
@@ -67,6 +67,12 @@ def assert_portable_generation_equal(expected: Any, actual: Any, path: str = "$"
             left, right = from_wkt(expected), from_wkt(actual)
         except Exception as exc:
             raise AssertionError(f"{path}: invalid WKT ({type(exc).__name__})") from None
+        # GEOS is free to emit the same areal geometry with a different ring
+        # start vertex, ring orientation, or component order. That is a
+        # representation change, not a geometry change. Linear geometry keeps
+        # its direction: a reversed route is a different route.
+        if left.geom_type in {"Polygon", "MultiPolygon"}:
+            left, right = normalize(left), normalize(right)
         if _geometry_structure(left) != _geometry_structure(right):
             raise AssertionError(f"{path}: WKT type, dimension, or ordered component/ring structure differs")
         left_coords = get_coordinates(left, include_z=left.has_z)
@@ -113,6 +119,14 @@ def test_portable_comparison_accepts_only_tiny_projection_and_numeric_roundoff()
     actual = {"scene": {"wkt": "LINESTRING Z (104.780000000001 29.34 100, 104.79 29.349999999999 101)",
                         "profile": {"speed": 4.0000000005}, "seed": 20261016,
                         "enabled": True, "modes": ["strict", "free"]}}
+    assert_portable_generation_equal(expected, actual)
+
+
+def test_portable_comparison_ignores_areal_ring_start_and_component_order():
+    # unary_union of buffered lines emits ring starts and multipolygon
+    # component order that vary with the GEOS build.
+    expected = {"scene": {"wkt": "POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))"}}
+    actual = {"scene": {"wkt": "POLYGON ((1 1, 0 1, 0 0, 1 0, 1 1))"}}
     assert_portable_generation_equal(expected, actual)
 
 
