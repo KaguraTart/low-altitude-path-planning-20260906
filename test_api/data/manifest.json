@@ -114,6 +114,16 @@
       "sha256": "a0cfe969498e97b90a64fa16ee0221b55a7dbc4ca6ca056567762b2854290f00"
     },
     {
+      "path": "features/evaluate_compare_request.json",
+      "bytes": 9711,
+      "sha256": "1999a7f30f5cdbb416ab594c859ce0a0d6dbe941af553b99d61d43675a1c3a1b"
+    },
+    {
+      "path": "features/evaluate_request.json",
+      "bytes": 4377,
+      "sha256": "43c64070d2b6d1a878d78d76c5d7b6fa8d7b8ba6b14277b495c30741fa29b99a"
+    },
+    {
       "path": "features/network_analyze_request.json",
       "bytes": 5113,
       "sha256": "8a93f019b27f37dfd0090fe40edb2862f93e0d21b73a4396c474030c481e380d"
@@ -124,11 +134,6 @@
       "sha256": "44044d725fe382fe8cb8df712de6969d928f9f204669a455a15a6e8eab05e9af"
     },
     {
-      "path": "features/search_request.json",
-      "bytes": 2127,
-      "sha256": "282c88b2234a7d92d26db29486cfc2ca852c1bfa9887d9da261eebe11b97a11a"
-    },
-    {
       "path": "features/objectives_request.json",
       "bytes": 3796,
       "sha256": "9fcad7882db7f1ca13d5b55ab63ff3c8eb74a4e3905eab80c01970be5e206940"
@@ -137,6 +142,11 @@
       "path": "features/replan_request.json",
       "bytes": 7603,
       "sha256": "f31e8c4017e29e5a292b7c9c2b3c0eb64557b528cbc18878ffc1cc244f1c3a8e"
+    },
+    {
+      "path": "features/search_request.json",
+      "bytes": 2127,
+      "sha256": "282c88b2234a7d92d26db29486cfc2ca852c1bfa9887d9da261eebe11b97a11a"
     }
   ],
   "features": [
@@ -161,6 +171,16 @@
       "name": "replan",
       "path": "features/replan_request.json",
       "description": "新增障碍后复用安全路径段并连续减速、重算剩余路线。"
+    },
+    {
+      "name": "evaluate",
+      "path": "features/evaluate_request.json",
+      "description": "验证硬约束并计算里程、航时、能耗与风险；缺失指标标为不可用。"
+    },
+    {
+      "name": "evaluate_compare",
+      "path": "features/evaluate_compare_request.json",
+      "description": "两套空域方案对比：禁飞区覆盖的方案判失败并排除，仅安全方案进入排序。"
     }
   ]
 }

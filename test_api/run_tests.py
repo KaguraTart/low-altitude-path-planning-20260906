@@ -30,6 +30,7 @@ OPERATIONS = (
     ("POST", "/api/v2/scenes"), ("GET", "/api/v2/scenes/{scene_id}"),
     ("POST", "/api/v2/coordinates/convert"), ("POST", "/api/v2/plan/single"),
     ("POST", "/api/v2/plan/batch"), ("POST", "/api/v2/validate"),
+    ("POST", "/api/v2/evaluate"), ("POST", "/api/v2/evaluate/compare"),
     ("POST", "/api/v2/jobs"), ("GET", "/api/v2/jobs/{job_id}"),
     ("POST", "/api/v2/networks/analyze"), ("POST", "/api/v2/plan/replan"),
 )
@@ -222,12 +223,16 @@ class TestRun:
     def _capabilities(self) -> None:
         result = self.get("/api/v2/capabilities")
         require(result.get("canonical_alt_reference") == "EG" and result.get("contract_version") == "2026-10-30", "Service contract or altitude reference differs")
-        require(set(result.get("engine_rules", {})) == {"ENG-06", "ENG-07"}, "Engine rule allocation is missing")
+        require(set(result.get("engine_rules", {})) == {"ENG-06", "ENG-07", "ENG-10"}, "Engine rule allocation is missing")
+        require(result.get("engine_rules", {}).get("ENG-10") == [
+            "NO_FLY", "ZONE", "HEIGHT_LAYER", "SEPARATION", "ENDURANCE", "PAYLOAD"],
+            "ENG-10 rule allocation differs")
         require(set(result.get("route_modes", [])) == {"strict", "prefer", "free"}, "Route modes differ")
         require(len(set(result.get("rule_types", []))) == 20, "Rule types do not contain 20 unique entries")
         require(all(result.get(key) is True for key in ("airway_graph_supported", "network_analysis_supported",
                     "traversed_grids_supported", "batch_execution_supported", "objective_optimization_supported",
-                    "incremental_replanning_supported", "initial_velocity_validation_supported")), "Current engine features are missing")
+                    "incremental_replanning_supported", "initial_velocity_validation_supported",
+                    "evaluation_supported", "plan_comparison_supported")), "Current engine features are missing")
         require(set(result.get("search_algorithms", [])) == {"ASTAR", "DIJKSTRA"}
                 and set(result.get("grid_neighbors", [])) == {6,18,26}, "Current search options differ")
 
@@ -380,6 +385,56 @@ class TestRun:
         check_route(reused["route"], unchanged["remaining_task"])
         self.validate({"scene": unchanged["scene"], "task": unchanged["remaining_task"]}, reused["route"])
 
+    def _evaluate_feature(self) -> None:
+        source = load_json(self.data_dir / "features/evaluate_request.json")
+        route = self._single({key: source[key] for key in ("scene", "scene_id", "task") if key in source})
+        payload = {key: source[key] for key in ("scene", "scene_id", "task") if key in source}
+        payload.update({key: route[key] for key in ("trajectory_wkt", "vertex_times_s", "motion_segments")})
+        payload["objectives"] = source["objectives"]
+        result = self.post("/api/v2/evaluate", payload)
+        require(result.get("engine_id") == "ENG-10" and result.get("valid") is True,
+                "Evaluation did not pass a valid route")
+        metrics = result.get("metrics", {})
+        for name, unit in (("distance_m", "m"), ("flight_time_s", "s"), ("wait_time_s", "s"),
+                           ("energy_wh", "Wh"), ("risk", "risk*s")):
+            item = metrics.get(name, {})
+            require(item.get("unit") == unit, f"Evaluation metric unit differs: {name}")
+            require(item.get("available") is (name != "risk"), f"Evaluation availability differs: {name}")
+            if not item.get("available"):
+                require(item.get("value") is None and item.get("reason"),
+                        f"Unavailable metric is not explained: {name}")
+        require(metrics["energy_wh"]["value"] > 0, "Energy metric was not integrated")
+        require(all(check.get("status") in {"applied", "failed", "not_applicable", "inactive", "unsupported"}
+                    for check in result.get("safety", {}).get("checks", [])), "Hard constraint status differs")
+        require(result.get("rankable") is True and result.get("score", {}).get("available") is True,
+                "Evaluated plan is not rankable")
+
+    def _compare_feature(self) -> None:
+        source = load_json(self.data_dir / "features/evaluate_compare_request.json")
+        plans = []
+        for item in source["plans"]:
+            route = self._single({"scene": source["scene"], "task": item["task"]})
+            plan = {"plan_id": item["plan_id"], "task": item["task"],
+                    "trajectory_wkt": route["trajectory_wkt"],
+                    "vertex_times_s": route["vertex_times_s"],
+                    "motion_segments": route["motion_segments"]}
+            if item.get("scene"):
+                plan["scene"] = item["scene"]
+            plans.append(plan)
+        result = self.post("/api/v2/evaluate/compare",
+                           {"request_id": source["request_id"], "scene": source["scene"],
+                            "objectives": source["objectives"], "plans": plans})
+        require(result.get("ranking") == ["plan-a"], "Plan ranking differs")
+        require(result.get("winner") == "plan-a" and result.get("scene_mode") == "per_plan",
+                "Plan comparison summary differs")
+        excluded = [plan for plan in result.get("plans", []) if plan.get("plan_id") == "plan-blocked"]
+        require(len(excluded) == 1 and excluded[0].get("rankable") is False
+                and excluded[0].get("exclusion_code") == "HARD_CONSTRAINT_FAILED",
+                "Blocked plan was not excluded")
+        failed = [check for check in excluded[0]["safety"]["checks"] if check.get("status") == "failed"]
+        require(failed and failed[0].get("point_wkt") and failed[0].get("threshold") and failed[0].get("reason"),
+                "Failed hard constraint lacks point, threshold or reason")
+
     def _parallel_feature(self) -> None:
         source = self.fixture("batch_request")
         source["execution"] = {"workers": 2, "batch_size": 2}
@@ -485,6 +540,8 @@ class TestRun:
         self.check("批量并行与统一避让", self._parallel_feature)
         self.check("多目标、能耗及自定义代价方案比较", self._objectives_feature)
         self.check("增量重规划、零搜索复用及初始速度验证", self._replan_feature)
+        self.check("硬约束验证与多指标评估", self._evaluate_feature)
+        self.check("多套空域方案对比与排序", self._compare_feature)
 
     def benchmark(self, config: dict[str, Any]) -> None:
         suite = config["suite"]

@@ -9,12 +9,15 @@ from uav_planner.v2.coordinates import CoordinateFrame, convert_coordinates
 from uav_planner.v2.engine import (
     plan_batch_v2, plan_single_v2, register_scene, registry, validate_route_v2,
 )
+from uav_planner.v2.evaluation import compare_plans_v2, evaluate_v2
 from uav_planner.v2.models import (
-    BatchResult, CoordinateRequest, CoordinateResponse, RouteResult, RULE_TYPES, Scene,
+    BatchResult, CoordinateRequest, CoordinateResponse, EvaluationResult, PlanComparison,
+    RouteResult, RULE_TYPES, Scene,
 )
 from uav_planner.v2 import native
 from .jobs import JobRegistry
 from .schemas import (
+    CompareRequest, EvaluateRequest,
     NetworkAnalyzeRequest, NetworkAnalysis, BatchRequest, Capabilities, ErrorBody, ErrorEnvelope, HealthResponse, JobError,
     JobResult, JobSubmitted, SceneResponse, SceneSelection, SingleRequest,
     ValidateRequest, ValidationResponse, VersionResponse,
@@ -55,11 +58,13 @@ def capabilities():
             "incremental_replanning_supported":True,"initial_velocity_validation_supported":True,"replanning_engine_ids":["ENG-07"],
             "objective_optimization_supported":True,"objective_dimensions":["distance","time","energy","risk"],
             "cost_layer_bases":["distance","time"],
+            "evaluation_supported":True,"plan_comparison_supported":True,
             "search_algorithms":["ASTAR","DIJKSTRA"],"grid_neighbors":[6,18,26],
             "airway_graph_supported":True,"network_analysis_supported":True,
             "traversed_grids_supported":True,"batch_execution_supported":True, "engine_rules":{
                 "ENG-06":["HEIGHT_LAYER","WIDTH","DIRECTION","PRIORITY","SPEED","TIME","AREA","CLIMB","TURN","WAYPOINT"],
-                "ENG-07":["HEIGHT_LAYER","BUILDING","NO_FLY","ZONE","WEATHER","SIGNAL","CLIMB","TURN","HOVER","ENDURANCE","PAYLOAD","RTL","PRIORITY","WAYPOINT"]},
+                "ENG-07":["HEIGHT_LAYER","BUILDING","NO_FLY","ZONE","WEATHER","SIGNAL","CLIMB","TURN","HOVER","ENDURANCE","PAYLOAD","RTL","PRIORITY","WAYPOINT"],
+                "ENG-10":["NO_FLY","ZONE","HEIGHT_LAYER","SEPARATION","ENDURANCE","PAYLOAD"]},
             "canonical_alt_reference":"EG", "api_version":"2.0.0","route_modes":["strict","prefer","free"],"default_route_mode":"strict",
             "rule_types":list(RULE_TYPES),"altitude_references":["EG","MSL","AGL","ELLIPSOID","QNE","QNH"],
             "geometric_tolerance_m":.1,"max_scene_radius_m":None,
@@ -98,6 +103,18 @@ def batch(request: BatchRequest):
 @router.post("/validate",response_model=ValidationResponse)
 def validate(request: ValidateRequest):
     return validate_route_v2(**request.model_dump(exclude_none=True))
+
+
+@router.post("/evaluate",response_model=EvaluationResult)
+def evaluate(request: EvaluateRequest):
+    """ENG-10: hard-constraint safety result plus distance/time/energy/risk metrics."""
+    return evaluate_v2(**request.model_dump(exclude_none=True))
+
+
+@router.post("/evaluate/compare",response_model=PlanComparison)
+def compare(request: CompareRequest):
+    """ENG-10: evaluate several airspace plans and rank the safe, complete ones."""
+    return compare_plans_v2(**request.model_dump(exclude_none=True))
 
 
 @router.post("/jobs",response_model=JobSubmitted,status_code=202)

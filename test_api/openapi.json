@@ -882,6 +882,190 @@
         }
       }
     },
+    "/api/v2/evaluate": {
+      "post": {
+        "tags": [
+          "v2 WKT / WGS84"
+        ],
+        "summary": "Evaluate",
+        "description": "ENG-10: hard-constraint safety result plus distance/time/energy/risk metrics.",
+        "operationId": "evaluate_api_v2_evaluate_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EvaluateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EvaluationResult"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Invalid input or unavailable resource",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Input or referenced constraints are invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown scene or job",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Service is shutting down",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected service error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Planning engine or memory unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v2/evaluate/compare": {
+      "post": {
+        "tags": [
+          "v2 WKT / WGS84"
+        ],
+        "summary": "Compare",
+        "description": "ENG-10: evaluate several airspace plans and rank the safe, complete ones.",
+        "operationId": "compare_api_v2_evaluate_compare_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CompareRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlanComparison"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Invalid input or unavailable resource",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Input or referenced constraints are invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown scene or job",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Service is shutting down",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected service error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Planning engine or memory unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v2/jobs": {
       "post": {
         "tags": [
@@ -2032,6 +2216,14 @@
             "type": "array",
             "title": "Cost Layer Bases"
           },
+          "evaluation_supported": {
+            "type": "boolean",
+            "title": "Evaluation Supported"
+          },
+          "plan_comparison_supported": {
+            "type": "boolean",
+            "title": "Plan Comparison Supported"
+          },
           "search_algorithms": {
             "items": {
               "type": "string",
@@ -2191,6 +2383,8 @@
           "objective_optimization_supported",
           "objective_dimensions",
           "cost_layer_bases",
+          "evaluation_supported",
+          "plan_comparison_supported",
           "search_algorithms",
           "grid_neighbors",
           "airway_graph_supported",
@@ -2235,6 +2429,56 @@
           "maxDescentRate"
         ],
         "title": "ClimbConstraint"
+      },
+      "CompareRequest": {
+        "properties": {
+          "request_id": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Request Id"
+          },
+          "objectives": {
+            "$ref": "#/components/schemas/ObjectiveConfig"
+          },
+          "plans": {
+            "items": {
+              "$ref": "#/components/schemas/PlanCandidate"
+            },
+            "type": "array",
+            "minItems": 2,
+            "title": "Plans"
+          },
+          "scene_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Scene Id"
+          },
+          "scene": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Scene"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "request_id",
+          "objectives",
+          "plans"
+        ],
+        "title": "CompareRequest",
+        "description": "ENG-10: evaluate and rank several airspace plans."
       },
       "Conflict": {
         "properties": {
@@ -2886,6 +3130,219 @@
         ],
         "title": "ErrorEnvelope"
       },
+      "EvaluateRequest": {
+        "properties": {
+          "scene_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Scene Id"
+          },
+          "scene": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Scene"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "plan_id": {
+            "type": "string",
+            "title": "Plan Id",
+            "default": "plan-001"
+          },
+          "task": {
+            "$ref": "#/components/schemas/Task"
+          },
+          "trajectory_wkt": {
+            "type": "string",
+            "title": "Trajectory Wkt"
+          },
+          "vertex_times_s": {
+            "items": {
+              "type": "number"
+            },
+            "type": "array",
+            "minItems": 1,
+            "title": "Vertex Times S"
+          },
+          "motion_segments": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/MotionSegment"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Motion Segments"
+          },
+          "network_route": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/NetworkRoute"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "initial_velocity_xyz_mps": {
+            "prefixItems": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "number"
+              }
+            ],
+            "type": "array",
+            "maxItems": 3,
+            "minItems": 3,
+            "title": "Initial Velocity Xyz Mps",
+            "default": [
+              0,
+              0,
+              0
+            ]
+          },
+          "objectives": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ObjectiveConfig"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "task",
+          "trajectory_wkt",
+          "vertex_times_s"
+        ],
+        "title": "EvaluateRequest",
+        "description": "ENG-10: validate one route and evaluate its metrics."
+      },
+      "EvaluationMetrics": {
+        "properties": {
+          "distance_m": {
+            "$ref": "#/components/schemas/MetricValue"
+          },
+          "flight_time_s": {
+            "$ref": "#/components/schemas/MetricValue"
+          },
+          "wait_time_s": {
+            "$ref": "#/components/schemas/MetricValue"
+          },
+          "energy_wh": {
+            "$ref": "#/components/schemas/MetricValue"
+          },
+          "risk": {
+            "$ref": "#/components/schemas/MetricValue"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "distance_m",
+          "flight_time_s",
+          "wait_time_s",
+          "energy_wh",
+          "risk"
+        ],
+        "title": "EvaluationMetrics"
+      },
+      "EvaluationResult": {
+        "properties": {
+          "plan_id": {
+            "type": "string",
+            "title": "Plan Id"
+          },
+          "scene_id": {
+            "type": "string",
+            "title": "Scene Id"
+          },
+          "scene_version": {
+            "type": "string",
+            "title": "Scene Version"
+          },
+          "engine_id": {
+            "type": "string",
+            "const": "ENG-10",
+            "title": "Engine Id",
+            "default": "ENG-10"
+          },
+          "valid": {
+            "type": "boolean",
+            "title": "Valid"
+          },
+          "safety": {
+            "$ref": "#/components/schemas/SafetyEvaluation"
+          },
+          "metrics": {
+            "$ref": "#/components/schemas/EvaluationMetrics"
+          },
+          "score": {
+            "$ref": "#/components/schemas/MetricValue"
+          },
+          "rankable": {
+            "type": "boolean",
+            "title": "Rankable"
+          },
+          "exclusion_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Exclusion Code"
+          },
+          "exclusion_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Exclusion Reason"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "plan_id",
+          "scene_id",
+          "scene_version",
+          "valid",
+          "safety",
+          "metrics",
+          "score",
+          "rankable"
+        ],
+        "title": "EvaluationResult"
+      },
       "ExecutionOptions": {
         "properties": {
           "workers": {
@@ -3288,6 +3745,129 @@
         ],
         "title": "GridSpec"
       },
+      "HardConstraintCheck": {
+        "properties": {
+          "code": {
+            "type": "string",
+            "title": "Code"
+          },
+          "category": {
+            "type": "string",
+            "enum": [
+              "rule",
+              "aircraft",
+              "motion",
+              "separation",
+              "scene"
+            ],
+            "title": "Category"
+          },
+          "rule_type": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "HEIGHT_LAYER",
+                  "WIDTH",
+                  "DIRECTION",
+                  "SPEED",
+                  "TIME",
+                  "AREA",
+                  "CLIMB",
+                  "TURN",
+                  "SEPARATION",
+                  "NO_FLY",
+                  "BUILDING",
+                  "ZONE",
+                  "WEATHER",
+                  "SIGNAL",
+                  "PRIORITY",
+                  "HOVER",
+                  "ENDURANCE",
+                  "PAYLOAD",
+                  "WAYPOINT",
+                  "RTL"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rule Type"
+          },
+          "rule_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rule Id"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "applied",
+              "failed",
+              "not_applicable",
+              "inactive",
+              "unsupported"
+            ],
+            "title": "Status"
+          },
+          "point_wkt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Point Wkt"
+          },
+          "time_s": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Time S"
+          },
+          "threshold": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/JsonValue"
+            },
+            "type": "object",
+            "title": "Threshold"
+          },
+          "actual": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/JsonValue"
+            },
+            "type": "object",
+            "title": "Actual"
+          },
+          "reason": {
+            "type": "string",
+            "title": "Reason",
+            "default": ""
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "code",
+          "category",
+          "status"
+        ],
+        "title": "HardConstraintCheck"
+      },
       "HealthResponse": {
         "properties": {
           "status": {
@@ -3598,6 +4178,49 @@
           "time_s"
         ],
         "title": "Keypoint"
+      },
+      "MetricValue": {
+        "properties": {
+          "value": {
+            "anyOf": [
+              {
+                "type": "number",
+                "ge": 0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Value"
+          },
+          "unit": {
+            "type": "string",
+            "title": "Unit"
+          },
+          "available": {
+            "type": "boolean",
+            "title": "Available"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "unit",
+          "available"
+        ],
+        "title": "MetricValue",
+        "description": "One evaluated metric. Unavailable inputs yield null, never zero."
       },
       "MotionSegment": {
         "properties": {
@@ -4450,6 +5073,180 @@
           "status"
         ],
         "title": "OptimizationReport"
+      },
+      "PlanCandidate": {
+        "properties": {
+          "plan_id": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Plan Id"
+          },
+          "scene_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Scene Id"
+          },
+          "scene": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Scene"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "task": {
+            "$ref": "#/components/schemas/Task"
+          },
+          "trajectory_wkt": {
+            "type": "string",
+            "title": "Trajectory Wkt"
+          },
+          "vertex_times_s": {
+            "items": {
+              "type": "number",
+              "ge": 0
+            },
+            "type": "array",
+            "minItems": 1,
+            "title": "Vertex Times S"
+          },
+          "motion_segments": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/MotionSegment"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Motion Segments"
+          },
+          "network_route": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/NetworkRoute"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "initial_velocity_xyz_mps": {
+            "prefixItems": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "number"
+              }
+            ],
+            "type": "array",
+            "maxItems": 3,
+            "minItems": 3,
+            "title": "Initial Velocity Xyz Mps",
+            "default": [
+              0,
+              0,
+              0
+            ]
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "plan_id",
+          "task",
+          "trajectory_wkt",
+          "vertex_times_s"
+        ],
+        "title": "PlanCandidate",
+        "description": "A candidate route. It may carry its own scene to compare airspace plans."
+      },
+      "PlanComparison": {
+        "properties": {
+          "request_id": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Request Id"
+          },
+          "evaluated_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Evaluated At"
+          },
+          "scene_mode": {
+            "type": "string",
+            "enum": [
+              "shared",
+              "per_plan"
+            ],
+            "title": "Scene Mode"
+          },
+          "ranking": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Ranking"
+          },
+          "winner": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Winner"
+          },
+          "plans": {
+            "items": {
+              "$ref": "#/components/schemas/EvaluationResult"
+            },
+            "type": "array",
+            "title": "Plans"
+          },
+          "weights": {
+            "$ref": "#/components/schemas/ObjectiveWeights"
+          },
+          "normalization": {
+            "$ref": "#/components/schemas/ObjectiveNormalization"
+          },
+          "notes": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Notes"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "request_id",
+          "evaluated_at",
+          "scene_mode",
+          "ranking",
+          "plans",
+          "weights",
+          "normalization"
+        ],
+        "title": "PlanComparison"
       },
       "ReplanEvent": {
         "properties": {
@@ -5517,6 +6314,34 @@
         "additionalProperties": false,
         "type": "object",
         "title": "RuleScope"
+      },
+      "SafetyEvaluation": {
+        "properties": {
+          "valid": {
+            "type": "boolean",
+            "title": "Valid"
+          },
+          "checks": {
+            "items": {
+              "$ref": "#/components/schemas/HardConstraintCheck"
+            },
+            "type": "array",
+            "title": "Checks"
+          },
+          "violations": {
+            "items": {
+              "$ref": "#/components/schemas/Violation"
+            },
+            "type": "array",
+            "title": "Violations"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "valid"
+        ],
+        "title": "SafetyEvaluation"
       },
       "Scene": {
         "properties": {

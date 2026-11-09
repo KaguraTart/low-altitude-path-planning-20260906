@@ -23,7 +23,7 @@
 
 ## 2. 能力与输入
 
-服务提供版本化场景、WKT/WGS84、显式高度换算、三种路径模式、20 类规则、运动建模、多机调度与轨迹验证。默认 `strict` 模式使用有效航路和显式起终点接驳。
+服务提供版本化场景、WKT/WGS84、显式高度换算、三种路径模式、20 类规则、运动建模、多机调度与轨迹验证。默认 `strict` 模式使用有效航路和显式起终点接驳。ENG-10 提供逐项硬约束校验（违规点、阈值、实际值、原因）、里程/航时/能耗/风险指标，以及多套空域方案的多指标对比与确定性排序。
 
 平台提供航路、障碍、管制区、网格、地形、天气、信号、风险数据，以及飞机当前状态。算法根据提交状态生成任务或返航方案。平台负责状态监测、变化事件和飞控执行；引擎通过 plan/replan 生成连续接续的新方案。
 
@@ -40,7 +40,7 @@ python tools/benchmark_v2.py --validate-only
 python tools/smoke_v2.py --base-url http://127.0.0.1:18000
 ```
 
-记录当次测试数量与结果。SDK 检查 `register_scene/plan_single_v2/plan_batch_v2/replan_v2/analyze_network_v2/validate_route_v2/convert_coordinates`。HTTP 检查 health、示例、场景、规划、异步完整结果、坐标转换和错误信封。
+记录当次测试数量与结果。SDK 检查 `register_scene/plan_single_v2/plan_batch_v2/replan_v2/analyze_network_v2/validate_route_v2/evaluate_v2/compare_plans_v2/convert_coordinates`。HTTP 检查 health、示例、场景、规划、异步完整结果、坐标转换、评估、方案对比和错误信封。
 
 分类运行命令见 [`../../tests/README.md`](../../tests/README.md)。归档校验见 `tests/integration/test_recordings.py`。
 

@@ -14,13 +14,14 @@
 
 ## 本次契约
 
-核对运行服务 `/api/v2/capabilities` 的 `contract_version="2026-10-30"`、`canonical_alt_reference="EG"` 与 `engine_rules`。本次使用 16 个 v2 端点。
+核对运行服务 `/api/v2/capabilities` 的 `contract_version="2026-10-30"`、`canonical_alt_reference="EG"` 与 `engine_rules`。本次使用 18 个 v2 端点。
 
 - `strict/prefer` 对应 ENG-06，`free` 对应 ENG-07；显式 `task.engine_id` 必须匹配。仅支持 `scene_type=LOW_ALTITUDE`。
 - 平台负责规则/条件/绑定/机型准入 CRUD；引擎接收规则、选定 ID、航路机型白名单并执行约束。strict/prefer 中不准入航路体禁入；free 不使用航路准入。
 - 内部高度统一 EG，字段使用 `origin_alt_ellipsoid`、`terrain_ellipsoid_m`；MSL 需差值和来源。结果带明确高度基准与坐标上下文。
 - WIDTH 是全宽；bufferWidth 是外侧保护带，障碍侵入已用段保护带时拒绝。航向北 0°顺时针，星期 0 周日、1–6 周一至周六。
 - RuleBO 兼容 type/constraints 别名及适用规则的 scope；SEPARATION 仅提供全局检查，带 scope 的输入会被拒绝；未绑定有效 CLIMB/TURN 时默认 5/3 m/s、90°/10 m。
+- ENG-10 由 `/api/v2/evaluate` 与 `/api/v2/evaluate/compare` 提供：逐项硬约束结果带违规点、阈值和原因，指标缺失标为不可用而不是 0，排序只纳入硬约束通过且指标齐全的方案。
 
 本目录 `data/features/` 提供航路图、连通分析、指定网格搜索、多目标和增量重规划的完整输入。`data/examples/` 提供基础接口输入，`data/benchmarks/` 提供三套各 1000 个任务。需求对应表区分引擎计算和平台管理。
 
@@ -41,7 +42,7 @@ python run_tests.py
 
 ## 选择测试
 
-只检查示例和全部 16 个接口：
+只检查示例和全部 18 个接口：
 
 ```bash
 python run_tests.py --examples-only
@@ -89,8 +90,10 @@ python run_tests.py --timeout 120 --poll-timeout 300
 | 多目标 | 距离/风险竞争、能耗单位、两种业务代价、归一化和非支配方案 |
 | 增量重规划 | 障碍变更后的部分复用、未受影响的零搜索复用、实际初始速度验证 |
 | 并行执行 | 批量和异步传递并行参数，全部任务统一避让 |
+| 硬约束与指标评估 | 安全校验通过；里程/航时/能耗可用，缺失的风险指标为不可用而非 0 |
+| 空域方案对比 | 两个方案分别评估；禁飞区覆盖的方案判失败并排除，仅安全方案进入排序 |
 
-脚本从 OpenAPI 读取接口清单。报告逐项列出全部 16 个 v2 接口的 HTTP 调用结果。检查记录列出业务验证结果。
+脚本从 OpenAPI 读取接口清单。报告逐项列出全部 18 个 v2 接口的 HTTP 调用结果。检查记录列出业务验证结果。
 
 ## 输入数据
 
@@ -102,6 +105,8 @@ python run_tests.py --timeout 120 --poll-timeout 300
 | `data/examples/batch_request.json` | 同步批量规划和异步作业 |
 | `data/examples/coordinates_to_local_request.json` | WGS84 与米制坐标转换 |
 | `data/examples/validate_request.json` | 轨迹独立验证 |
+| `data/features/evaluate_request.json` | 硬约束逐项校验与里程/航时/能耗/风险评估 |
+| `data/features/evaluate_compare_request.json` | 两套空域方案对比与排序 |
 | `data/benchmarks/{strict,mixed,free}_scene.json` | 三套完整场景，提交到场景登记接口 |
 | `data/benchmarks/{strict,mixed,free}_tasks.json` | 每套 1000 个完整任务 |
 

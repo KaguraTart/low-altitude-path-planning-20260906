@@ -45,6 +45,8 @@ curl --fail-with-body -sS http://127.0.0.1:8000/api/v2/health
 | POST | `/api/v2/networks/analyze` | 场景选择 + 可选 at → 航路图结构连通性 |
 | POST | `/api/v2/plan/batch` | 场景选择 + `tasks` → `BatchResult` |
 | POST | `/api/v2/validate` | 场景、任务与带时间航线 → 违规项和规则报告 |
+| POST | `/api/v2/evaluate` | 场景、任务与带时间航线 → 硬约束逐项结果和里程/航时/能耗/风险指标 |
+| POST | `/api/v2/evaluate/compare` | 多套方案（可各带场景）→ 安全校验、指标和确定性排序 |
 | POST | `/api/v2/jobs` | 与批量请求相同 → HTTP 202、`job_id`、`poll_url` |
 | GET | `/api/v2/jobs/{job_id}` | 作业状态及完整批量结果 |
 | GET | `/api/v2/examples/single` | 可直接提交的完整单任务请求 |
@@ -406,6 +408,65 @@ RTL 是**根据提交时当前状态生成的返航方案**：触发后将目标
 
 `BatchResult.execution_report` 返回 `requested_workers`、实际参与候选计算的线程数 `actual_workers`、`batch_size`、提交组数 `batches` 和成功候选数 `candidate_count`。候选成功后仍需通过预约和最终验证，最终成功数读取 `success_count`。
 
+### 安全验证与方案评估 `POST /api/v2/evaluate`
+
+ENG-10 在现有验证之上增加逐项硬约束结果和结果指标。请求与 `/api/v2/validate` 相同的场景、任务和航线，另可填 `plan_id` 和 `objectives`。
+
+| 字段 | 类型 / 默认 | 用法 |
+|---|---|---|
+| `scene_id` / `scene` | 二选一 | 已登记场景或内联场景 |
+| `task` | 必填 | 被评估的任务 |
+| `trajectory_wkt` | `POINT Z` / `LINESTRING Z` | 外部航线 |
+| `vertex_times_s` | 非负数值数组 | 与轨迹顶点一一对应且严格递增 |
+| `motion_segments` | 数组/null | 解析运动段；移动航线的能耗和风险积分需要它 |
+| `network_route` | 对象/null | 航路图航线；任务使用 `task.network` 时必须提供 |
+| `initial_velocity_xyz_mps` | 三元数组，`[0,0,0]` | 起始速度 |
+| `objectives` | 对象/null | 指标权重、归一化尺度、能耗模型和代价图层 |
+| `plan_id` | 字符串，`plan-001` | 结果中的方案标识 |
+
+返回字段：
+
+| 字段 | 说明 |
+|---|---|
+| `valid` | 任一硬约束失败即为 `false` |
+| `safety.checks[]` | 每个生效规则和每类非规则违规一项，含 `code`、`category`、`rule_type`、`rule_id`、`status`、`point_wkt`、`time_s`、`threshold`、`actual`、`reason` |
+| `safety.violations[]` | 与 `/validate` 相同的扁平违规列表 |
+| `metrics` | `distance_m`、`flight_time_s`、`wait_time_s`、`energy_wh`、`risk`，每项含 `value`、`unit`、`available`、`reason` |
+| `score` | 按 `objectives.weights` 和 `normalization` 求得的加权和，越小越优 |
+| `rankable` | 硬约束通过且所有正权重指标可用时为 `true` |
+| `exclusion_code` / `exclusion_reason` | 不可排序时的原因：`HARD_CONSTRAINT_FAILED` 或 `MISSING_METRIC` |
+
+`status` 取值与规则报告一致：`applied` 表示规则生效且通过，`failed` 表示违规，`not_applicable`、`inactive`、`unsupported` 表示未参与判定。`point_wkt` 是违规所在顶点的 WGS84 坐标；`threshold` 取自生效规则参数或机型限制，`actual` 由该段几何现算。
+
+**指标不补零。** 缺少 `objectives.energy_model` 时 `energy_wh.available=false`、`value=null`；场景没有版本化风险数据集或缺少解析运动段时 `risk` 同样不可用。理由写入 `reason`。正权重指标不可用时 `score` 也不可用，方案不会被当作 0 分参与排序。
+
+### 多方案对比 `POST /api/v2/evaluate/compare`
+
+| 字段 | 类型 / 默认 | 用法 |
+|---|---|---|
+| `request_id` | 必填 | 对比请求标识 |
+| `objectives` | 必填 | 排序权重、归一化、能耗模型；`weights` 不能全为 0 |
+| `plans` | 至少 2 项 | 每项含 `plan_id`、`task`、航线字段，以及可选的 `scene` / `scene_id` |
+| `scene_id` / `scene` | 二选一，可选 | 请求级默认场景；方案自带场景时以方案为准 |
+
+每个方案可携带自己的场景，用于比较不同禁飞区、管制区或规则配置下的航线；未携带时继承请求级场景。返回 `ranking`（仅含可排序方案，按加权和升序，同分按 `plan_id` 字典序）、`winner`、`scene_mode`（`shared` / `per_plan`）以及每个方案的完整评估结果。
+
+硬约束失败的方案进入 `plans` 但不出现在 `ranking`，`exclusion_code` 为 `HARD_CONSTRAINT_FAILED`；指标不全的方案同样被排除，代码为 `MISSING_METRIC`。排序不会用综合评分掩盖硬约束失败。
+
+```json
+{
+  "request_id": "compare-001",
+  "scene": { "...": "场景" },
+  "objectives": {"weights": {"distance": 0.5, "time": 0.5, "energy": 0, "risk": 0}},
+  "plans": [
+    {"plan_id": "plan-a", "task": { "...": "任务" }, "trajectory_wkt": "LINESTRING Z (...)",
+     "vertex_times_s": [0, 12.5], "motion_segments": []},
+    {"plan_id": "plan-b", "scene": { "...": "不同空域配置" }, "task": { "...": "任务" },
+     "trajectory_wkt": "LINESTRING Z (...)", "vertex_times_s": [0, 14.0], "motion_segments": []}
+  ]
+}
+```
+
 ## 3. 全部规则
 
 每条 `Rule` 必填 `id`、`rule_type`、非空 `content`；兼容样例名 `type`、`constraints`，分别对应前两项业务字段。可选 `scope`、`resource_ids`（默认 `[]`）、`effective_start/effective_end`。规则有效期可输入无时区时间（按 Asia/Shanghai 解释）；空字符串转 null。其他对象时间仍必须带时区。`content` 采用下表精确键名，未知类型、未知键、错误类型、反向区间和缺少必要字段都会报 `INVALID_INPUT`。时间与空间适用范围在整段上求交，不能只检查端点。无 `resource_ids` 时按规则类别选择场景中对应资源；给出引用时每个 ID 都必须存在。
@@ -414,7 +475,7 @@ RTL 是**根据提交时当前状态生成的返航方案**：触发后将目标
 
 `scope` 是规则外层作用域，与 `content.scope` 的 AREA 类型字段不同。`scope.grid[]` 每项填 `{x,y,z}` 或 `{geometry:"POINT Z / POLYGON Z ..."}`。索引必须能通过 `scene.grid` 的原点、分辨率和维度解析；不能将北斗编码整数直接当局部索引。几何形式的 Z 使用 EG。`scope.geom[]` 每项填 `type` 和适用的 `geom/center_point/boundary_2d`，类型为 CONTROL_ZONE、NO_FLY_ZONE、ADMIN_DIVISION、AIRSPACE、LANDING_SITE。行政区使用二维边界（支持 MULTIPOLYGON）和可选 POINT 中心；其余体几何使用 POLYGON Z，起降场使用 POINT Z。非起降场要素必须提供区域 geom 或 boundary_2d，单独 center_point 不能代表区域；同时给出 geom 与 boundary_2d 时，水平足迹须在 0.1 m 容差内一致。天气、信号作用域只限定检查范围，仍须提供版本化数据值。
 
-ENG-06 消费 HEIGHT_LAYER、WIDTH、DIRECTION、PRIORITY、SPEED、TIME、AREA、CLIMB、TURN、WAYPOINT；ENG-07 消费 HEIGHT_LAYER、BUILDING、NO_FLY、ZONE、WEATHER、SIGNAL、CLIMB、TURN、HOVER、ENDURANCE、PAYLOAD、RTL、PRIORITY、WAYPOINT。此为业务归属，通用安全校验仍执行输入中选定的适用规则。SEPARATION 保留全局多机间隔检查，携带 scope 会被拒绝；区域邻近提醒归属 ENG-11，不在本次 ENG-06/07 交付范围。
+ENG-06 消费 HEIGHT_LAYER、WIDTH、DIRECTION、PRIORITY、SPEED、TIME、AREA、CLIMB、TURN、WAYPOINT；ENG-07 消费 HEIGHT_LAYER、BUILDING、NO_FLY、ZONE、WEATHER、SIGNAL、CLIMB、TURN、HOVER、ENDURANCE、PAYLOAD、RTL、PRIORITY、WAYPOINT；ENG-10 消费 NO_FLY、ZONE、HEIGHT_LAYER、SEPARATION、ENDURANCE、PAYLOAD。此为业务归属，通用安全校验仍执行输入中选定的适用规则。SEPARATION 保留全局多机间隔检查，携带 scope 会被拒绝；区域邻近提醒归属 ENG-11，不在本次 ENG-06/07 交付范围。
 
 | 类型 | `content` 全部允许键 | 执行语义和数据要求 |
 |------|------|------|
@@ -1319,7 +1380,7 @@ print(json.dumps(job["result"], ensure_ascii=False))
 
 ## 6. 数据归档与性能记录
 
-对接方使用 [`../test_api/`](../test_api/README.md) 执行公网接口测试。逐项字段说明与修改步骤见 [`接口字段与修改说明`](../test_api/API_FIELDS.md)。复制整个目录后运行 `python run_tests.py`。默认地址为 `https://api.kaguratart.com`。测试覆盖全部 16 个接口和三套各 1000 个任务，保存完整请求、响应与报告。
+对接方使用 [`../test_api/`](../test_api/README.md) 执行公网接口测试。逐项字段说明与修改步骤见 [`接口字段与修改说明`](../test_api/API_FIELDS.md)。复制整个目录后运行 `python run_tests.py`。默认地址为 `https://api.kaguratart.com`。测试覆盖全部 18 个接口和三套各 1000 个任务，保存完整请求、响应与报告。
 
 测试目录与分类运行命令见 [`../tests/README.md`](../tests/README.md)。完整测试请求与响应见 [`../tests/data/README.md`](../tests/data/README.md)。归档只包含 v2，保存接口示例、冻结场景和三套各 1000 条航线结果。每组记录输入、输出、运行环境和 SHA-256。重跑时先注册场景，再替换请求中的 `scene_id`。
 

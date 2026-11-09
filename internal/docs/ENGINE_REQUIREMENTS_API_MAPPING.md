@@ -6,7 +6,7 @@
 
 基线：2026-10-28《现有规则到算法引擎的分配与约束 JSON 样例》与《路径规划与导航服务系统算法引擎清单.xlsx》。本表保留清单中 ENG-06、ENG-07 的全部 **41 个原始编号**。编号不重新排序或替换。原表行号指需求映射工作表的行号。
 
-平台负责规则、条件、绑定和设备类型准入的增删改查、对象存在性、引用检查、审计及持久化。引擎消费平台下发的有效配置，执行路径计算和约束校验。新增管理功能不计为算法接口交付。服务提供 **16 个 v2 接口**。
+平台负责规则、条件、绑定和设备类型准入的增删改查、对象存在性、引用检查、审计及持久化。引擎消费平台下发的有效配置，执行路径计算和约束校验。新增管理功能不计为算法接口交付。服务提供 **18 个 v2 接口**。
 
 状态口径：**已实现**为当前可调用能力；**部分实现**为列明的子能力；**平台负责**为平台业务职责，引擎仅消费配置；**暂无**为未实现能力。测试入口对应实际计算行为。当前容器与公网的完整请求、响应和结果见 [测试记录索引](../../test_api/reports/README.md)。历史报告保留采集日期和版本。
 
@@ -23,7 +23,7 @@
 | ENG-07 低空三维路径规划 | HEIGHT_LAYER、BUILDING、NO_FLY、ZONE、WEATHER、SIGNAL、CLIMB、TURN、HOVER、ENDURANCE、PAYLOAD、RTL、PRIORITY、WAYPOINT | 本次主范围。free 三维搜索和校验；支持多目标、增量重规划及完整网格轨迹；地面/水上场景由对应引擎负责 |
 | ENG-08 地面交通路径规划 | DIRECTION、SPEED、AREA、TIME、HEIGHT_LAYER、PAYLOAD | 外部。车辆/道路场景及独立接口暂无 |
 | ENG-09 水上交通路径规划 | DIRECTION、SPEED、AREA、TIME、WEATHER | 外部。船舶/航道场景及独立接口暂无 |
-| ENG-10 安全验证与评估 | NO_FLY、ZONE、HEIGHT_LAYER、SEPARATION、ENDURANCE、PAYLOAD | 部分。/validate 与 metrics 已实现；综合评分、评级和方案排名暂无 |
+| ENG-10 安全验证与评估 | NO_FLY、ZONE、HEIGHT_LAYER、SEPARATION、ENDURANCE、PAYLOAD | 本次范围。/api/v2/evaluate 逐项返回硬约束结果（违规点、阈值、实际值、原因）与里程/航时/能耗/风险指标；/api/v2/evaluate/compare 对多套空域方案排序，硬约束失败或指标缺失的方案被排除。评级和历史排名由平台负责 |
 | ENG-11 多机冲突消解 | SEPARATION、PRIORITY | 部分。batch 内时序协调和 conflicts 已实现；跨请求常驻调度暂无 |
 | ENG-12 碰撞预警 | SEPARATION、PRIORITY | 部分。规划与验证检查已实现动态轨迹；运行时预警推送暂无 |
 | ENG-13 态势异常检测 | SPEED、HEIGHT_LAYER、TIME、SEPARATION | 外部。持续态势监测、异常事件服务暂无 |

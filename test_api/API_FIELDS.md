@@ -140,6 +140,8 @@ PY
 | POST | `/api/v2/plan/single` | [单任务请求](#single-request) | [路线结果](#route) | 200 |
 | POST | `/api/v2/plan/batch` | [批量请求](#batch-request) | [批量结果](#batch-result) | 200 |
 | POST | `/api/v2/validate` | [轨迹验证请求](#validate-request) | [验证结果](#validation)及规则报告 | 200 |
+| POST | `/api/v2/evaluate` | [评估请求](#evaluate-request) | [评估结果](#evaluation) | 200 |
+| POST | `/api/v2/evaluate/compare` | [方案对比请求](#compare-request) | [对比与排序结果](#comparison) | 200 |
 | POST | `/api/v2/jobs` | [批量请求](#batch-request) | [作业提交结果](#job-submitted) | 202 |
 | GET | `/api/v2/jobs/{job_id}` | 路径中的 `job_id` | [作业结果](#job-result) | 200 |
 | GET | `/api/v2/examples/single` | 无请求体 | [完整单任务请求](#single-request) | 200 |
@@ -431,6 +433,84 @@ PY
 `details.reasons` 是原因数组。`details.dataset_versions` 以数据集 ID 为键，以版本字符串为值。
 
 未绑定有效 CLIMB/TURN 时，默认约束也产生执行报告。当前规则引擎生成 `applied`、`not_applicable` 和 `failed`。`applied` 表示已选择且有效期与路线相交；`not_applicable` 表示未选择或时间不适用；`failed` 表示规则产生违规项。响应模型另接受 `inactive` 和 `unsupported` 这两个状态值。
+
+<a id="evaluate-request"></a>
+### POST /api/v2/evaluate：评估请求
+
+与轨迹验证请求相同，另可填写 `plan_id` 和 `objectives`。
+
+| 字段 | 类型 | 必填与默认值 | 填写方法 |
+|---|---|---|---|
+| `scene` / `scene_id` | Scene 对象 / 字符串 | 二选一 | 使用规划时的同一场景。 |
+| `task` | Task 对象 | 必填 | 使用规划时的完整任务。 |
+| `trajectory_wkt` | WKT 字符串 | 必填 | 复制规划响应的轨迹。 |
+| `vertex_times_s` | 数值数组 | 必填 | 复制规划响应的顶点时间，严格递增。 |
+| `motion_segments` | MotionSegment 数组或 `null` | 默认 `null` | 复制规划响应的运动段；能耗和风险指标需要它。 |
+| `network_route` | NetworkRoute 或 `null` | 默认 `null` | 航路图路线。 |
+| `initial_velocity_xyz_mps` | 三个数值 | 默认 [0,0,0] | 局部东/北/上起始速度，单位 m/s。 |
+| `objectives` | 对象或 `null` | 默认 `null` | 指标权重、归一化尺度、`energy_model` 和代价图层。 |
+| `plan_id` | 字符串 | 默认 `plan-001` | 结果中的方案标识。 |
+
+输入示例：[evaluate_request.json](data/features/evaluate_request.json)。
+
+<a id="evaluation"></a>
+### 评估结果 `EvaluationResult`
+
+| 字段 | 类型 | 含义 |
+|---|---|---|
+| `plan_id` | 字符串 | 请求中的方案标识。 |
+| `scene_id` / `scene_version` | 字符串 | 实际使用的场景及其版本。 |
+| `engine_id` | 枚举 | 固定为 `ENG-10`。 |
+| `valid` | 布尔值 | 任一硬约束失败即为 `false`。 |
+| `safety.checks` | 数组 | 逐项硬约束结果，字段见下表。 |
+| `safety.violations` | Violation 数组 | 与验证接口相同的扁平违规列表。 |
+| `metrics` | 对象 | `distance_m`、`flight_time_s`、`wait_time_s`、`energy_wh`、`risk`。 |
+| `score` | MetricValue | 按权重和归一化求得的加权和，越小越优。 |
+| `rankable` | 布尔值 | 硬约束通过且正权重指标齐全时为 `true`。 |
+| `exclusion_code` | 字符串或 `null` | `HARD_CONSTRAINT_FAILED` 或 `MISSING_METRIC`。 |
+| `exclusion_reason` | 字符串或 `null` | 不可排序的原因。 |
+
+`HardConstraintCheck` 字段：
+
+| 字段 | 类型 | 含义 |
+|---|---|---|
+| `code` | 字符串 | 规则类型或违规类别，如 `NO_FLY`、`AIRCRAFT_TURN`。 |
+| `category` | 枚举 | `rule`、`aircraft`、`motion`、`separation`、`scene`。 |
+| `rule_type` / `rule_id` | 枚举 / 字符串或 `null` | 产生该项的规则；非规则项为 `null`。 |
+| `status` | 枚举 | `applied`、`failed`、`not_applicable`、`inactive`、`unsupported`。 |
+| `point_wkt` | WKT 或 `null` | 违规所在顶点的 WGS84 坐标。 |
+| `time_s` | 数值或 `null` | 违规时刻，相对场景零点的秒数。 |
+| `threshold` | 对象 | 生效规则参数或机型限制。 |
+| `actual` | 对象 | 该段的速度、爬降率、高度、转弯半径等实测值。 |
+| `reason` | 字符串 | 违规原因；通过时为空或状态说明。 |
+
+`MetricValue` 字段：`value`、`unit`、`available`、`reason`。**不可用的指标 `value` 为 `null`、`available` 为 `false`，不会被填成 0。** 缺少 `objectives.energy_model` 时能耗不可用；场景没有版本化风险数据集或缺少运动段时风险不可用。
+
+<a id="compare-request"></a>
+### POST /api/v2/evaluate/compare：方案对比请求
+
+| 字段 | 类型 | 必填与默认值 | 填写方法 |
+|---|---|---|---|
+| `request_id` | 字符串 | 必填 | 本次对比的标识。 |
+| `objectives` | 对象 | 必填 | 排序权重与归一化；`weights` 不能全为 0。 |
+| `plans` | 数组 | 必填，至少 2 项 | 每项含 `plan_id`、`task`、轨迹字段，以及可选的 `scene` / `scene_id`。 |
+| `scene` / `scene_id` | Scene / 字符串 | 可选，二选一 | 请求级默认场景；方案自带场景时以方案为准。 |
+
+<a id="comparison"></a>
+### 对比与排序结果 `PlanComparison`
+
+| 字段 | 类型 | 含义 |
+|---|---|---|
+| `request_id` | 字符串 | 请求标识。 |
+| `evaluated_at` | 带时区时间字符串 | 评估时刻。 |
+| `scene_mode` | 枚举 | `shared` 表示共用一个场景，`per_plan` 表示至少一个方案自带场景。 |
+| `ranking` | 字符串数组 | 可排序方案的 `plan_id`，按加权和升序，同分按 `plan_id` 字典序。 |
+| `winner` | 字符串或 `null` | `ranking` 第一项；没有可排序方案时为 `null`。 |
+| `plans` | EvaluationResult 数组 | 全部方案的完整评估结果，含被排除的方案。 |
+| `weights` / `normalization` | 对象 | 本次使用的权重与归一化口径。 |
+| `notes` | 字符串数组 | 排序与排除规则说明。 |
+
+硬约束失败或指标不全的方案不会出现在 `ranking` 中，只在 `plans` 里保留，并通过 `exclusion_code` 和 `exclusion_reason` 说明原因。输入示例：[evaluate_compare_request.json](data/features/evaluate_compare_request.json)。
 
 <a id="batch-result"></a>
 ### BatchResult：批量结果

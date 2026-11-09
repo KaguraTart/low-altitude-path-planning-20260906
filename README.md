@@ -42,6 +42,8 @@
 - 返回轨迹 WKT、顶点时间、解析运动段、关键点、规则报告与验证结果。
 - 使用 C++17 / pybind11 原生核执行搜索、调度和运动学验证。
 - 接收方向航路图、版本和边权，返回节点/边序列并分析强弱连通性。
+- 逐项校验禁飞、管制区、限高、间隔、续航、载荷及机型能力，返回违规点、阈值和原因。
+- 评估里程、航时、能耗和风险；缺失指标标为不可用，并按多指标对多套空域方案排序。
 - 选择 ASTAR/DIJKSTRA、6/18/26 邻域和网格层级，输出完整途经网格。
 - 配置候选计算 workers/batch_size，统一预约全部任务。
 - 按距离、时间、能耗、风险和业务代价比较非支配方案。
@@ -111,7 +113,7 @@ bash tools/check_docker_release.sh "low-altitude-path-planning:$UAV_BUILD_SHA" \
 
 ## 测试与数据
 
-向对接方提供整个 [`test_api/`](test_api/README.md) 目录。对方使用 Python 3.11 或更新版本运行 `python run_tests.py`，即可测试 `https://api.kaguratart.com` 的全部接口和三套各 1000 个任务。目录内附完整输入和实测报告。最新容器与公网记录见 [测试索引](test_api/reports/README.md)。当前完整接口集合为 16 项；独立脚本同时检查航路图、完整网格、多目标方案、增量复用和初始速度。
+向对接方提供整个 [`test_api/`](test_api/README.md) 目录。对方使用 Python 3.11 或更新版本运行 `python run_tests.py`，即可测试 `https://api.kaguratart.com` 的全部接口和三套各 1000 个任务。目录内附完整输入和实测报告。最新容器与公网记录见 [测试索引](test_api/reports/README.md)。当前完整接口集合为 18 项；独立脚本同时检查航路图、完整网格、多目标方案、增量复用和初始速度。
 
 测试按接口、规划、原生核和集成流程分类。目录说明与分类运行命令见 [`tests/README.md`](tests/README.md)。
 
