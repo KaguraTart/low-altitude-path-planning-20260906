@@ -24,6 +24,10 @@ def read_example(name):
     return json.loads((KIT / "data" / "examples" / f"{name}.json").read_text(encoding="utf-8"))
 
 
+def metric(value, unit):
+    return {"value": value, "unit": unit, "available": True, "reason": None}
+
+
 def route_for(task):
     start = task["start_wkt"].partition("(")[2].rstrip(") ")
     goal = task["goal_wkt"].partition("(")[2].rstrip(") ")
@@ -124,7 +128,7 @@ class FakeService:
         if path == "/api/v2/version":
             return 200, {"api_version": "2.0.0", "engine": {"git_sha": "f" * 40}}
         if path == "/api/v2/capabilities":
-            return 200, {**{key:True for key in ("airway_graph_supported", "network_analysis_supported", "traversed_grids_supported", "batch_execution_supported", "objective_optimization_supported", "incremental_replanning_supported", "initial_velocity_validation_supported")}, "search_algorithms":["ASTAR","DIJKSTRA"], "grid_neighbors":[6,18,26], "canonical_alt_reference":"EG", "contract_version":"2026-10-30", "engine_rules":{"ENG-06":[],"ENG-07":[]}, "route_modes": ["strict", "prefer", "free"], "rule_types": list(range(20))}
+            return 200, {**{key:True for key in ("airway_graph_supported", "network_analysis_supported", "traversed_grids_supported", "batch_execution_supported", "objective_optimization_supported", "incremental_replanning_supported", "initial_velocity_validation_supported", "evaluation_supported", "plan_comparison_supported")}, "search_algorithms":["ASTAR","DIJKSTRA"], "grid_neighbors":[6,18,26], "canonical_alt_reference":"EG", "contract_version":"2026-10-30", "engine_rules":{"ENG-06":[],"ENG-07":[],"ENG-10":["NO_FLY","ZONE","HEIGHT_LAYER","SEPARATION","ENDURANCE","PAYLOAD"]}, "route_modes": ["strict", "prefer", "free"], "rule_types": list(range(20))}
         if path == "/api/v2/examples/single":
             return 200, read_example("single_strict_request")
         if path == "/api/v2/examples/batch":
@@ -160,6 +164,57 @@ class FakeService:
             changed = bool(body["scene"].get("obstacles"))
             return 200, {"decision":"replanned" if changed else "reused", "route":route,
                          "new_search_calls":1 if changed else 0,"reused_distance_m":37.5,"reused_primitives":2}
+        if path == "/api/v2/evaluate":
+            unavailable = {"value": None, "unit": "risk*s", "available": False,
+                           "reason": "scene has no versioned risk datasets"}
+            return 200, {
+                "plan_id": body.get("plan_id", "plan-001"), "scene_id": "fixture-scene",
+                "scene_version": "one", "engine_id": "ENG-10", "valid": True,
+                "safety": {"valid": True, "violations": [], "checks": [
+                    {"code": "CLIMB", "category": "rule", "rule_type": "CLIMB", "rule_id": "rule-CLIMB",
+                     "status": "applied", "point_wkt": None, "time_s": None,
+                     "threshold": {"maxClimbRate": 5}, "actual": {}, "reason": ""}]},
+                "metrics": {"distance_m": metric(100, "m"), "flight_time_s": metric(10, "s"),
+                            "wait_time_s": metric(0, "s"), "energy_wh": metric(.5, "Wh"),
+                            "risk": unavailable},
+                "score": metric(.5, "dimensionless"), "rankable": True,
+                "exclusion_code": None, "exclusion_reason": None}
+        if path == "/api/v2/evaluate/compare":
+            unavailable = {"value": None, "unit": "dimensionless", "available": False,
+                           "reason": "hard constraint failed"}
+            failed = {"code": "NO_FLY", "category": "rule", "rule_type": "NO_FLY",
+                      "rule_id": "rule-NO_FLY", "status": "failed",
+                      "point_wkt": "POINT Z (104.771 29.330 80)", "time_s": 0.0,
+                      "threshold": {"heightCeiling": 300}, "actual": {},
+                      "reason": "segment intersects an active forbidden volume"}
+            return 200, {
+                "request_id": body["request_id"], "evaluated_at": "2026-11-09T00:00:00+00:00",
+                "scene_mode": "per_plan", "ranking": ["plan-a"], "winner": "plan-a",
+                "plans": [
+                    {"plan_id": "plan-a", "scene_id": "fixture-scene", "scene_version": "one",
+                     "engine_id": "ENG-10", "valid": True, "rankable": True,
+                     "safety": {"valid": True, "violations": [], "checks": []},
+                     "metrics": {"distance_m": metric(100, "m"), "flight_time_s": metric(10, "s"),
+                                 "wait_time_s": metric(0, "s"),
+                                 "energy_wh": {"value": None, "unit": "Wh", "available": False,
+                                               "reason": "energy_model was not supplied"},
+                                 "risk": {"value": None, "unit": "risk*s", "available": False,
+                                          "reason": "scene has no versioned risk datasets"}},
+                     "score": metric(100, "dimensionless"),
+                     "exclusion_code": None, "exclusion_reason": None},
+                    {"plan_id": "plan-blocked", "scene_id": "fixture-scene", "scene_version": "one",
+                     "engine_id": "ENG-10", "valid": False, "rankable": False,
+                     "safety": {"valid": False, "violations": [], "checks": [failed]},
+                     "metrics": {"distance_m": metric(100, "m"), "flight_time_s": metric(10, "s"),
+                                 "wait_time_s": metric(0, "s"),
+                                 "energy_wh": {"value": None, "unit": "Wh", "available": False,
+                                               "reason": "energy_model was not supplied"},
+                                 "risk": {"value": None, "unit": "risk*s", "available": False,
+                                          "reason": "scene has no versioned risk datasets"}},
+                     "score": unavailable, "exclusion_code": "HARD_CONSTRAINT_FAILED",
+                     "exclusion_reason": "segment intersects an active forbidden volume"}],
+                "weights": body["objectives"]["weights"],
+                "normalization": body["objectives"]["normalization"], "notes": []}
         if path == "/api/v2/jobs":
             self.batch = body
             return 202, {"job_id": "fixture-job", "status": "pending", "poll_url": "/api/v2/jobs/fixture-job"}
@@ -212,7 +267,7 @@ def test_delivery_kit_covers_all_operations_and_keeps_payloads(tmp_path):
         assert main(["--base-url", url + "/docs#/", "--examples-only", "--output", str(output)]) == 0
     report = json.loads((output / "report.json").read_text())
     assert report["status"] == "passed"
-    assert report["summary"] == {"passed": 25, "failed": 0, "operation_count": 16, "covered_operations": 16}
+    assert report["summary"] == {"passed": 27, "failed": 0, "operation_count": 18, "covered_operations": 18}
     assert (output / "REPORT.md").is_file()
     assert all(item["user_agent"] == USER_AGENT and item["accept"] == "application/json" for item in api.requests)
     batch_requests = [item for item in api.requests if item["path"] == "/api/v2/plan/batch"]

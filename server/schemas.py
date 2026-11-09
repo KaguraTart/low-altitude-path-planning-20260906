@@ -6,7 +6,8 @@ from typing import Literal
 from pydantic import Field, JsonValue, model_validator
 
 from uav_planner.v2.models import (
-    AircraftProfile, BatchResult, ExecutionOptions, MotionSegment, Number, Positive, RouteValidation,
+    AircraftProfile, BatchResult, EvaluationResult, ExecutionOptions, MotionSegment, Number,
+    ObjectiveConfig, PlanCandidate, PlanComparison, Positive, RouteValidation,
     RuleReport, Scene, StrictModel, Task, WKT, Timestamp, NetworkRoute,
 )
 
@@ -55,6 +56,37 @@ class ValidateRequest(SceneSelection):
 
 class ValidationResponse(RouteValidation):
     rule_report: list[RuleReport]
+
+
+class EvaluateRequest(SceneSelection):
+    """ENG-10: validate one route and evaluate its metrics."""
+    plan_id: str = "plan-001"
+    task: Task
+    trajectory_wkt: WKT
+    vertex_times_s: list[Number] = Field(min_length=1)
+    motion_segments: list[MotionSegment] | None = None
+    network_route: NetworkRoute | None = None
+    initial_velocity_xyz_mps: tuple[Number, Number, Number] = (0, 0, 0)
+    objectives: ObjectiveConfig | None = None
+
+
+class CompareRequest(StrictModel):
+    """ENG-10: evaluate and rank several airspace plans."""
+    request_id: str = Field(min_length=1)
+    objectives: ObjectiveConfig
+    plans: list[PlanCandidate] = Field(min_length=2)
+    scene_id: str | None = None
+    scene: Scene | None = None
+
+    @model_validator(mode="after")
+    def scene_source(self):
+        if self.scene_id is not None and self.scene is not None:
+            raise ValueError("Provide at most one of scene_id or scene")
+        if self.scene_id is None and self.scene is None:
+            missing = [plan.plan_id for plan in self.plans if not (plan.scene_id or plan.scene)]
+            if missing:
+                raise ValueError(f"plans without a scene require a request scene: {missing}")
+        return self
 
 
 class SceneResponse(StrictModel):
@@ -112,6 +144,8 @@ class Capabilities(StrictModel):
     objective_optimization_supported: bool
     objective_dimensions: list[Literal["distance", "time", "energy", "risk"]]
     cost_layer_bases: list[Literal["distance", "time"]]
+    evaluation_supported: bool
+    plan_comparison_supported: bool
     search_algorithms: list[Literal["ASTAR", "DIJKSTRA"]]
     grid_neighbors: list[Literal[6, 18, 26]]
     airway_graph_supported: bool

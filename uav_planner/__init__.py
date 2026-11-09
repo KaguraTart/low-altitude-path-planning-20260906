@@ -46,6 +46,26 @@ def replan_v2(**kwargs: Any) -> dict[str, Any]:
     return implementation(**kwargs)
 
 
+def evaluate_v2(*, task: Any, trajectory_wkt: str, vertex_times_s: Any,
+                motion_segments: Any = None, network_route: Any = None,
+                scene_id: str | None = None, scene: Any = None,
+                initial_velocity_xyz_mps: Any = (0, 0, 0), objectives: Any = None,
+                plan_id: str = "plan-001") -> dict[str, Any]:
+    from .v2.evaluation import evaluate_v2 as implementation
+    return implementation(task=task, trajectory_wkt=trajectory_wkt,
+                          vertex_times_s=vertex_times_s, motion_segments=motion_segments,
+                          network_route=network_route, scene_id=scene_id, scene=scene,
+                          initial_velocity_xyz_mps=initial_velocity_xyz_mps,
+                          objectives=objectives, plan_id=plan_id)
+
+
+def compare_plans_v2(*, request_id: str, plans: Any, objectives: Any,
+                     scene_id: str | None = None, scene: Any = None) -> dict[str, Any]:
+    from .v2.evaluation import compare_plans_v2 as implementation
+    return implementation(request_id=request_id, plans=plans, objectives=objectives,
+                          scene_id=scene_id, scene=scene)
+
+
 def analyze_network_v2(*, scene_id: str | None = None, scene: Any = None,
                        at: Any = None) -> dict[str, Any]:
     from .v2.network import analyze_network_v2 as implementation
@@ -71,5 +91,6 @@ validate_route = validate_route_v2
 __all__ = [
     "register_scene", "plan_single", "plan_batch", "validate_route",
     "plan_single_v2", "plan_batch_v2", "validate_route_v2", "convert_coordinates",
-    "replan_v2", "analyze_network_v2", "get_version", "ErrorCode", "PlanningError", "__version__",
+    "replan_v2", "analyze_network_v2", "evaluate_v2", "compare_plans_v2",
+    "get_version", "ErrorCode", "PlanningError", "__version__",
 ]

@@ -25,8 +25,8 @@
 | 911 | 路径规划系统监控 | 监控路径规划系统的运行状态 | 部分实现；基础状态已实现 | `GET /api/v2/health`；`GET /api/v2/health/jobs`；`GET /api/v2/version`；`GET /api/v2/capabilities` | 读取健康状态、原生核状态、作业计数、构建版本及支持能力。CPU、内存、长期指标和告警由平台或部署监控系统采集。 |
 | 912 | 多目标路径规划 | 支持多目标的路径规划 | 已实现 | `POST /api/v2/plan/single`；`POST /api/v2/plan/batch` | 设置 `task.route_mode="free"` 和 `task.objectives`，填写距离、时间、能耗、风险权重及归一化尺度，可加入业务代价图层。读取 `objectives/alternatives/optimization`，比较范围为实际验证通过的候选。多个途经目的地使用 `task.waypoints`，多个飞行任务使用 `tasks`。 |
 | 913 | 动态路径重新规划 | 支持动态情况下的路径重新规划 | 已实现 | `POST /api/v2/plan/replan` | 提交 `previous_scene/previous_task/previous_route`、`current_state`、`remaining_task`、最新 `scene` 或 `scene_id`、`event` 和可选 `trigger`。读取 `decision/route`、复用量、`new_search_calls` 和触发原因。平台收到环境或任务变化后调用。 |
-| 914 | 路径规划安全验证 | 验证路径规划结果的安全性 | 已实现 | `POST /api/v2/validate`；规划结果同时包含自动验证 | 使用原场景和任务，提交轨迹 WKT、顶点时间、完整运动段及实际初始速度；航路图结果同时传 `network_route`。读取 `valid/violations/rule_report`。多机批量结果还需检查 `conflicts`。 |
-| 915 | 路径规划结果评估 | 评估路径规划结果的有效性 | 部分实现；有效性校验和指标已实现 | `POST /api/v2/validate`；`POST /api/v2/plan/single`；`POST /api/v2/plan/batch` | 验证接口核对轨迹和约束。`metrics` 提供航程、航时等指标，`validation/rule_report` 提供有效性依据；多目标结果的 `objectives` 用于候选比较。独立业务综合评分、评级及历史方案排名接口暂无。 |
+| 914 | 路径规划安全验证 | 验证路径规划结果的安全性 | 已实现 | `POST /api/v2/evaluate`；`POST /api/v2/validate`；规划结果同时包含自动验证 | ENG-10 接口逐项返回硬约束结果：禁飞、管制区、限高、安全间隔、续航、载荷，以及机型速度、爬降和转弯能力。任一硬约束失败即 `valid=false`，`safety.checks[]` 给出违规点 `point_wkt`、时刻、阈值 `threshold`、实际值 `actual` 和原因。`/validate` 保留扁平违规与规则报告。多机批量结果还需检查 `conflicts`。 |
+| 915 | 路径规划结果评估 | 评估路径规划结果的有效性 | 已实现 | `POST /api/v2/evaluate`；`POST /api/v2/evaluate/compare` | `evaluate` 输出里程、航时、等待、能耗和风险指标，每项带单位和 `available`；缺少能耗模型或风险数据集时标为不可用并给出原因，不按 0 计。`compare` 对多套空域方案（可各带场景）做多指标排序，只有硬约束通过且正权重指标齐全的方案进入 `ranking`，其余带 `exclusion_code` 说明。历史方案排名、评级和展示由平台保存结果后完成。 |
 | 916 | 路径规划策略配置 | 配置路径规划的策略和规则 | 已实现计算参数；平台保存策略档案 | `POST /api/v2/scenes`；`POST /api/v2/plan/single`；`POST /api/v2/plan/batch` | 在 `scene.rules` 配置规则，用 `task.rule_ids` 选择规则；通过 `route_mode/search/objectives` 设置规划方式，用 `profile_id/aircraft/state` 设置飞机和状态。配置参与搜索、定时和验证。平台保存策略名称、版本、绑定和增删改查。 |
 
 ## 完整接口清单
@@ -44,6 +44,8 @@
 | POST | `/api/v2/plan/single` | 单任务规划 |
 | POST | `/api/v2/plan/batch` | 多任务规划和批内冲突协调 |
 | POST | `/api/v2/validate` | 独立轨迹验证 |
+| POST | `/api/v2/evaluate` | 硬约束逐项校验与里程/航时/能耗/风险评估 |
+| POST | `/api/v2/evaluate/compare` | 多套空域方案的多指标对比与排序 |
 | POST | `/api/v2/coordinates/convert` | WGS84 与局部米制坐标换算 |
 | POST | `/api/v2/jobs` | 提交异步批量规划 |
 | GET | `/api/v2/jobs/{job_id}` | 查询当前进程异步作业及结果 |
@@ -69,6 +71,8 @@
 | 多目标候选比较 | [objectives_request.json](../test_api/data/features/objectives_request.json) | `POST /api/v2/plan/single` |
 | 环境变化后增量重规划 | [replan_request.json](../test_api/data/features/replan_request.json) | `POST /api/v2/plan/replan` |
 | 安全与有效性验证 | [validate_request.json](../test_api/data/examples/validate_request.json) | `POST /api/v2/validate` |
+| 硬约束与多指标评估 | [evaluate_request.json](../test_api/data/features/evaluate_request.json) | `POST /api/v2/evaluate` |
+| 多套空域方案对比排序 | [evaluate_compare_request.json](../test_api/data/features/evaluate_compare_request.json) | `POST /api/v2/evaluate/compare` |
 | 经纬度与米制换算 | [coordinates_to_local_request.json](../test_api/data/examples/coordinates_to_local_request.json) | `POST /api/v2/coordinates/convert` |
 
 在仓库根目录执行以下命令，测试三维无航路规划：
@@ -83,7 +87,7 @@ curl --fail-with-body https://api.kaguratart.com/api/v2/plan/single \
 
 ## 联调与交付核对
 
-在 `test_api` 目录执行 `python run_tests.py --examples-only`，检查全部 16 个 v2 接口和专用业务示例。执行 `python run_tests.py`，再运行三套各 1000 条任务。
+在 `test_api` 目录执行 `python run_tests.py --examples-only`，检查全部 18 个 v2 接口和专用业务示例。执行 `python run_tests.py`，再运行三套各 1000 条任务。
 
 验证记录见 [测试报告索引](../test_api/reports/README.md)，包含构建版本、完整输入输出、接口结果和三套任务的独立复核。本次只调整业务文档分类，接口和测试 JSON 保持现有契约。
 

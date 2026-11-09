@@ -950,11 +950,92 @@ class RouteResult(StrictModel):
     rule_report: list[RuleReport] = Field(default_factory=list)
 
 
+class MetricValue(StrictModel):
+    """One evaluated metric. Unavailable inputs yield null, never zero."""
+    value: NonNegative | None = None
+    unit: StrictStr
+    available: StrictBool
+    reason: StrictStr | None = None
+
+
+class EvaluationMetrics(StrictModel):
+    distance_m: MetricValue
+    flight_time_s: MetricValue
+    wait_time_s: MetricValue
+    energy_wh: MetricValue
+    risk: MetricValue
+
+
+class HardConstraintCheck(StrictModel):
+    code: StrictStr
+    category: Literal["rule", "aircraft", "motion", "separation", "scene"]
+    rule_type: RuleType | None = None
+    rule_id: StrictStr | None = None
+    status: Literal["applied", "failed", "not_applicable", "inactive", "unsupported"]
+    point_wkt: WKT | None = None
+    time_s: Number | None = None
+    threshold: dict[StrictStr, JsonValue] = Field(default_factory=dict)
+    actual: dict[StrictStr, JsonValue] = Field(default_factory=dict)
+    reason: StrictStr = ""
+
+
+class SafetyEvaluation(StrictModel):
+    valid: StrictBool
+    checks: list[HardConstraintCheck] = Field(default_factory=list)
+    violations: list[Violation] = Field(default_factory=list)
+
+
+class EvaluationResult(StrictModel):
+    plan_id: StrictStr
+    scene_id: StrictStr
+    scene_version: StrictStr
+    engine_id: Literal["ENG-10"] = "ENG-10"
+    valid: StrictBool
+    safety: SafetyEvaluation
+    metrics: EvaluationMetrics
+    score: MetricValue
+    rankable: StrictBool
+    exclusion_code: StrictStr | None = None
+    exclusion_reason: StrictStr | None = None
+
+
+class PlanCandidate(StrictModel):
+    """A candidate route. It may carry its own scene to compare airspace plans."""
+    plan_id: StrictStr = Field(min_length=1)
+    scene_id: StrictStr | None = None
+    scene: Scene | None = None
+    task: Task
+    trajectory_wkt: WKT
+    vertex_times_s: list[NonNegative] = Field(min_length=1)
+    motion_segments: list[MotionSegment] | None = None
+    network_route: NetworkRoute | None = None
+    initial_velocity_xyz_mps: tuple[Number, Number, Number] = (0, 0, 0)
+
+    @model_validator(mode="after")
+    def one_scene(self) -> PlanCandidate:
+        if self.scene_id is not None and self.scene is not None:
+            raise ValueError("Provide at most one of scene_id or scene per plan")
+        return self
+
+
+class PlanComparison(StrictModel):
+    request_id: StrictStr = Field(min_length=1)
+    evaluated_at: Timestamp
+    scene_mode: Literal["shared", "per_plan"]
+    ranking: list[StrictStr]
+    winner: StrictStr | None = None
+    plans: list[EvaluationResult]
+    weights: ObjectiveWeights
+    normalization: ObjectiveNormalization
+    notes: list[StrictStr] = Field(default_factory=list)
+
+
 class Conflict(StrictModel):
     task_ids: list[StrictStr]
     start_time_s: NonNegative
     end_time_s: NonNegative
     minimum_distance_m: NonNegative | None = None
+
 
 
 class ExecutionOptions(StrictModel):
