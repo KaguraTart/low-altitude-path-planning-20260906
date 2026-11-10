@@ -1,6 +1,6 @@
 # 低空无人机路径规划 API
 
-文档日期：2026-11-09。
+文档日期：2026-11-10。
 
 服务提供 `/api/v2` 接口。请求和响应使用 JSON。外部几何使用 WGS84 经纬度 WKT。接口支持航路、管制区、机型性能和 20 类规则。
 
@@ -1380,10 +1380,10 @@ print(json.dumps(job["result"], ensure_ascii=False))
 
 ## 6. 数据归档与性能记录
 
-对接方使用 [`../test_api/`](../test_api/README.md) 执行公网接口测试。逐项字段说明与修改步骤见 [`接口字段与修改说明`](../test_api/API_FIELDS.md)。复制整个目录后运行 `python run_tests.py`。默认地址为 `https://api.kaguratart.com`。测试覆盖全部 18 个接口和三套各 1000 个任务，保存完整请求、响应与报告。
+对接方使用本目录的 [测试说明](README.md) 执行公网接口测试。逐项字段说明与修改步骤见 [接口字段与修改说明](API_FIELDS.md)。复制整个目录后运行 `python run_tests.py`。默认地址为 `https://api.kaguratart.com`。测试覆盖全部 18 个接口和三套各 1000 个任务，保存完整请求、响应与报告。
 
-测试目录与分类运行命令见 [`../tests/README.md`](../tests/README.md)。完整测试请求与响应见 [`../tests/data/README.md`](../tests/data/README.md)。归档只包含 v2，保存接口示例、冻结场景和三套各 1000 条航线结果。每组记录输入、输出、运行环境和 SHA-256。重跑时先注册场景，再替换请求中的 `scene_id`。
+本包的 [测试记录索引](reports/README.md) 列出随包报告。报告包含实际输入、输出、运行版本及 SHA-256。重跑时先注册场景，再替换请求中的 `scene_id`。源码仓库的 `tests/` 保存开发回归测试与历史数据。
 
-历史性能验收使用 `input/v2_benchmarks` 的冻结输入。strict/mixed/free 三套各有 1000 个任务，各运行 10 轮，资源为 8 CPU / 8 GiB。每轮全部任务成功，完整 JSON 在 10 秒内返回。场景注册单独计时。正式服务使用 2 CPU / 2 GiB，按实际场景和负载测量耗时。历史证据见 [`../internal/reports/v2-20261016/PERFORMANCE.md`](../internal/reports/v2-20261016/PERFORMANCE.md)。
+历史性能验收使用冻结输入。strict/mixed/free 三套各有 1000 个任务，各运行 10 轮，资源为 8 CPU / 8 GiB。每轮全部任务成功，完整 JSON 在 10 秒内返回。场景注册单独计时。正式服务使用 2 CPU / 2 GiB，按实际场景和负载测量耗时。历史证据保存在源码仓库的 `internal/reports/v2-20261016/`。
 
 批量结果 `stage_timings_ms` 记录各阶段毫秒耗时。完整 HTTP 耗时另外包含传输和 JSON 编解码。`GET /api/v2/version` 的 `engine.git_sha` 标识运行镜像的构建提交。

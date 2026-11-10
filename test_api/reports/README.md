@@ -1,10 +1,12 @@
 # 接口测试记录
 
-文档日期：2026-10-30。
+文档日期：2026-11-10。
 
-最新完整容器测试：[20261030_engine_complete_docker/REPORT.md](20261030_engine_complete_docker/REPORT.md)。配置为 2 CPU、2 GiB，检查全部 16 个接口、5 份新增功能输入和三套各 1000 个任务。源码回归及环境记录随该目录归档。
+2026-11-10 对构建提交 `f9d1ea6759f628a2f77766e0083d9882b51b1d16` 验证：2 CPU、2 GiB 容器的 30 项检查通过，覆盖 18 个接口和三套各 1000 个任务；公网的 27 项接口检查通过，覆盖 18 个接口。完整请求和响应保存在本地 `output/validation_20261110/`，可按项目 README 的打包命令选择后随联调包提供。`output/` 不提交源码仓库。
 
-最新公网接口测试：[20261030_engine_complete_public/REPORT.md](20261030_engine_complete_public/REPORT.md)。核对运行版本、16 个接口及图规划、网格、多目标、并行、增量重规划和独立速度验证。公网采用接口示例集；完整 3000 任务记录见上面的容器报告。
+仓库中最近一次完整容器记录：[20261030_engine_complete_docker/REPORT.md](20261030_engine_complete_docker/REPORT.md)。配置为 2 CPU、2 GiB，检查当时的 16 个接口、5 份新增功能输入和三套各 1000 个任务。源码回归及环境记录随该目录归档。
+
+仓库中最近一次公网记录：[20261030_engine_complete_public/REPORT.md](20261030_engine_complete_public/REPORT.md)。核对当时运行版本、16 个接口及图规划、网格、多目标、并行、增量重规划和独立速度验证。完整 3000 任务记录见上面的容器报告。
 
 ## 历史记录
 

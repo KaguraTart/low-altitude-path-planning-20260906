@@ -1,6 +1,6 @@
 # 接口字段与修改说明
 
-文档日期：2026-11-09。
+文档日期：2026-11-10。
 
 本说明解释 `test_api` 测试 JSON 的输入、输出和修改方法。服务地址为 `https://api.kaguratart.com`。Swagger 地址为 [在线接口文档](https://api.kaguratart.com/docs#/)。
 
@@ -151,24 +151,7 @@ PY
 
 `200` 表示接口已处理请求。读取 `RouteResult.status` 确认路线结果。读取 `BatchResult.success_count` 和 `failed_count` 确认批量结果。读取 `ValidationResponse.valid` 确认验证结果。
 
-当前契约的完整记录见[最新测试索引](reports/README.md)。下列链接保留历史 HTTP 记录。GET 请求的输入文件保存方法、地址和请求头。POST 请求的输入文件保存实际 JSON 请求体。
-
-| 接口 | 完整输入 | 完整输出 |
-|---|---|---|
-| GET health | [请求描述](reports/20261017T135804Z_public/http/001_get_api_v2_health_request.json) | [输出](reports/20261017T135804Z_public/http/001_get_api_v2_health_output.json) |
-| GET health/jobs | [请求描述](reports/20261017T135804Z_public/http/002_get_api_v2_health_jobs_request.json) | [输出](reports/20261017T135804Z_public/http/002_get_api_v2_health_jobs_output.json) |
-| GET version | [请求描述](reports/20261017T135804Z_public/http/003_get_api_v2_version_request.json) | [输出](reports/20261017T135804Z_public/http/003_get_api_v2_version_output.json) |
-| GET capabilities | [请求描述](reports/20261017T135804Z_public/http/004_get_api_v2_capabilities_request.json) | [输出](reports/20261017T135804Z_public/http/004_get_api_v2_capabilities_output.json) |
-| POST scenes | [输入](reports/20261017T135804Z_public/http/019_post_api_v2_scenes_input.json) | [输出](reports/20261017T135804Z_public/http/019_post_api_v2_scenes_output.json) |
-| GET scenes/{scene_id} | [请求描述](reports/20261017T135804Z_public/http/020_get_api_v2_scenes_scene-5c4cc87b4e9bf08cd5a7_request.json) | [输出](reports/20261017T135804Z_public/http/020_get_api_v2_scenes_scene-5c4cc87b4e9bf08cd5a7_output.json) |
-| POST coordinates/convert | [输入](reports/20261017T135804Z_public/http/023_post_api_v2_coordinates_convert_input.json) | [输出](reports/20261017T135804Z_public/http/023_post_api_v2_coordinates_convert_output.json) |
-| POST plan/single | [输入](reports/20261017T135804Z_public/http/012_post_api_v2_plan_single_input.json) | [输出](reports/20261017T135804Z_public/http/012_post_api_v2_plan_single_output.json) |
-| POST plan/batch | [输入](reports/20261017T135804Z_public/http/018_post_api_v2_plan_batch_input.json) | [输出](reports/20261017T135804Z_public/http/018_post_api_v2_plan_batch_output.json) |
-| POST validate | [输入](reports/20261017T135804Z_public/http/025_post_api_v2_validate_input.json) | [输出](reports/20261017T135804Z_public/http/025_post_api_v2_validate_output.json) |
-| POST jobs | [输入](reports/20261017T135804Z_public/http/026_post_api_v2_jobs_input.json) | [输出](reports/20261017T135804Z_public/http/026_post_api_v2_jobs_output.json) |
-| GET jobs/{job_id} | [请求描述](reports/20261017T135804Z_public/http/027_get_api_v2_jobs_d877fe14f8bb42e5_request.json) | [输出](reports/20261017T135804Z_public/http/027_get_api_v2_jobs_d877fe14f8bb42e5_output.json) |
-| GET examples/single | [请求描述](reports/20261017T135804Z_public/http/007_get_api_v2_examples_single_request.json) | [输出](reports/20261017T135804Z_public/http/007_get_api_v2_examples_single_output.json) |
-| GET examples/batch | [请求描述](reports/20261017T135804Z_public/http/010_get_api_v2_examples_batch_request.json) | [输出](reports/20261017T135804Z_public/http/010_get_api_v2_examples_batch_output.json) |
+完整请求和响应见[测试记录索引](reports/README.md)。每份报告的 `http/` 目录按调用顺序保存 `*_request.json`、`*_input.json` 和 `*_output.json`；报告列出实际路径和构建提交。可修改的请求模板在 `data/examples/` 与 `data/features/`。
 
 ### 选择场景
 
@@ -608,7 +591,7 @@ PY
 
 请求和响应字段见[坐标转换](#coordinates)。方向为 `wgs84_to_local` 或 `local_to_wgs84`。输入示例：[coordinates_to_local_request.json](data/examples/coordinates_to_local_request.json)。成功返回 HTTP `200`。
 
-正向完整记录：[输入](reports/20261017T135804Z_public/http/023_post_api_v2_coordinates_convert_input.json)、[输出](reports/20261017T135804Z_public/http/023_post_api_v2_coordinates_convert_output.json)。反向完整记录：[输入](reports/20261017T135804Z_public/http/024_post_api_v2_coordinates_convert_input.json)、[输出](reports/20261017T135804Z_public/http/024_post_api_v2_coordinates_convert_output.json)。
+正向和反向换算的完整输入输出见[测试记录索引](reports/README.md)中对应报告的 `http/` 目录。
 
 ### GET /api/v2/examples/single：取得单任务示例
 
@@ -731,7 +714,7 @@ PY
 | `error.detail.errors[].field` | 字符串 | 错误字段路径。 |
 | `error.detail.errors[].reason` | 字符串 | 字段错误原因。 |
 
-完整错误示例：[400 未知字段](reports/20261017T135804Z_public/http/028_post_api_v2_plan_single_output.json)、[404 未知场景](reports/20261017T135804Z_public/http/029_get_api_v2_scenes_test-api-missing-scene_output.json)、[404 未知作业](reports/20261017T135804Z_public/http/030_get_api_v2_jobs_test-api-missing-job_output.json)。
+400 未知字段、404 未知场景和 404 未知作业的完整响应见[测试记录索引](reports/README.md)中对应报告的 `http/` 目录。
 
 当前任务结果使用的原因码包括：
 

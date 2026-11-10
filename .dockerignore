@@ -4,6 +4,13 @@ test_api/
 tools/
 internal/
 .git/
+.github/
+.codex/
+.claude/
+.agents/
+.aws/
+.pytest_cache/
+外部需求/
 __pycache__/
 *.pyc
 .env
