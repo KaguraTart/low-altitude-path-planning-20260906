@@ -1,6 +1,6 @@
 # 低空无人机路径规划
 
-文档日期：2026-11-09。
+文档日期：2026-11-10。
 
 本项目提供航路规划、管制区避让和多机协同规划服务。对外交付按航路连通规划、三维无航路规划、多场景、验证与评估等业务功能核对。
 
@@ -113,7 +113,32 @@ bash tools/check_docker_release.sh "low-altitude-path-planning:$UAV_BUILD_SHA" \
 
 ## 测试与数据
 
-向对接方提供整个 [`test_api/`](test_api/README.md) 目录。对方使用 Python 3.11 或更新版本运行 `python run_tests.py`，即可测试 `https://api.kaguratart.com` 的全部接口和三套各 1000 个任务。目录内附完整输入和实测报告。最新容器与公网记录见 [测试索引](test_api/reports/README.md)。当前完整接口集合为 18 项；独立脚本同时检查航路图、完整网格、多目标方案、增量复用和初始速度。
+向对接方提供 [`test_api/`](test_api/README.md) 的联调包。对方使用 Python 3.11 或更新版本运行 `python run_tests.py`，即可测试服务的全部接口和三套各 1000 个任务。当前完整接口集合为 18 项；独立脚本也检查航路图、完整网格、多目标、增量重规划、初始速度和方案评估。
+
+### 测试目录与交付文件
+
+| 目录或文件 | 用途 | 发布选择 |
+|---|---|---|
+| `uav_planner/`、`native/`、`server/`、`serve.py`、构建及依赖配置 | 规划源码、原生核和服务 | 源码包保留；运行镜像安装构建结果 |
+| `docs/API.md`、`docs/openapi.json` | API 字段、调用说明和机器可读契约 | 保留；以运行服务的 `/openapi.json` 核对部署版本 |
+| `docs/REQUIREMENTS_API_MAPPING.md` | 901–916 业务功能与接口的对照 | 保留；`test_api/` 内同名文件为对接方副本 |
+| `tests/`、`tests/data/` | 开发回归、接口模型、原生核及完整测试输入输出 | 源码和测试交付保留；历史记录按记录中的版本使用 |
+| `test_api/`、`test_api/data/` | 独立 HTTP 联调脚本、字段说明和请求数据 | 向后端交付，附本次运行的完整报告 |
+| `tools/`、`input/`、`.github/workflows/` | 测试、打包、冻结基准和 CI | 源码开发与测试保留；运行镜像不需要 |
+| `output/`、`test_api/results/`、缓存和中间构建产物 | 本地生成结果 | 不提交源码；需交付的测试报告单独打包 |
+| `internal/docs/archive/`、`internal/reports/`、旧版 `test_api/reports/` | 设计和历史测试证据 | 按需单独归档；不作为当前版本的接口依据 |
+
+`tests/` 面向开发者，主要通过 pytest 检查源码行为；`test_api/` 面向对接方，用标准库向运行中的服务发送真实 HTTP 请求。业务功能以 `docs/REQUIREMENTS_API_MAPPING.md` 为准；修改后同步 `test_api/REQUIREMENTS_API_MAPPING.md`。接口字段以 `docs/API.md` 和对应运行版本的 `/openapi.json` 为准。测试输入以当前 `test_api/data/manifest.json` 和实际服务版本为准；记录的输出标明采集版本。
+
+按需把本次 HTTP 测试报告加入独立联调包。未指定的历史报告不会进入压缩包：
+
+```bash
+python tools/package_test_api.py --output output/releases/test_api.zip \
+  --report output/validation_20261110/full-http \
+  --report output/validation_20261110/public-http
+```
+
+该命令中的报告目录由本次测试生成。其他发布使用当次实际生成的目录。
 
 测试按接口、规划、原生核和集成流程分类。目录说明与分类运行命令见 [`tests/README.md`](tests/README.md)。
 

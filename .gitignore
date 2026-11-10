@@ -29,6 +29,11 @@ ENV/
 # IDE
 .idea/
 .vscode/
+.codex/
+.claude/
+.agents/
+.aws/
+.pytest_cache/
 *.swp
 *.swo
 *~
