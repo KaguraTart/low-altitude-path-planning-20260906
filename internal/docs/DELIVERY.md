@@ -1,6 +1,6 @@
 # 交付说明
 
-文档日期：2026-11-09。
+文档日期：2026-11-10。
 
 服务仅提供 `/api/v2`。软件版本为 2.0.0。对接方阅读 [`../../docs/API.md`](../../docs/API.md)，机器可读字段以同一镜像的 `/openapi.json` 为准。
 
@@ -19,7 +19,7 @@
 | 固定基准 | `input/engine_contract_20261029/`、`tools/benchmark_v2.py` | 三套输入、参考调度和独立验证 |
 | 运维与架构 | `internal/docs/` | 部署、回滚、实现与验收记录 |
 
-`output/` 保存本次运行结果。当前交付记录保存在 `test_api/reports/`；历史 v2 记录保留在 `tests/data/recordings/`。每套记录附采集版本和校验和。
+`output/` 保存本次运行结果。完整报告按需打入联调包，索引见 `test_api/reports/README.md`；完整 v2 回归数据保留在 `tests/data/recordings/`。每套记录附采集版本和校验和。
 
 ## 2. 能力与输入
 

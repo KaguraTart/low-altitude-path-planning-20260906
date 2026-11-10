@@ -46,6 +46,8 @@ Thumbs.db
 output/
 results/
 test_api/results/
+test_api/reports/*
+!test_api/reports/README.md
 *.log
 
 # Jupyter

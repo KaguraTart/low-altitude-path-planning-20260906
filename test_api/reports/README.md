@@ -2,17 +2,8 @@
 
 文档日期：2026-11-10。
 
-2026-11-10 对构建提交 `f9d1ea6759f628a2f77766e0083d9882b51b1d16` 验证：2 CPU、2 GiB 容器的 30 项检查通过，覆盖 18 个接口和三套各 1000 个任务；公网的 27 项接口检查通过，覆盖 18 个接口。完整请求和响应保存在本地 `output/validation_20261110/`，可按项目 README 的打包命令选择后随联调包提供。`output/` 不提交源码仓库。
+2026-11-10 对构建提交 `f9d1ea6759f628a2f77766e0083d9882b51b1d16` 完成验证：2 CPU、2 GiB 容器的 30 项检查通过，覆盖 18 个接口和三套各 1000 个任务；公网的 27 项接口检查通过，覆盖 18 个接口。三套任务另行完成逐条运动与连续冲突复核。
 
-仓库中最近一次完整容器记录：[20261030_engine_complete_docker/REPORT.md](20261030_engine_complete_docker/REPORT.md)。配置为 2 CPU、2 GiB，检查当时的 16 个接口、5 份新增功能输入和三套各 1000 个任务。源码回归及环境记录随该目录归档。
+本次完整输入、输出和报告保存在本地 `output/validation_20261110/`，并已加入联调包 `output/releases/test_api_20261110.zip`。`output/` 不提交源码仓库。报告记录测试日期、服务构建提交和输入输出校验和。
 
-仓库中最近一次公网记录：[20261030_engine_complete_public/REPORT.md](20261030_engine_complete_public/REPORT.md)。核对当时运行版本、16 个接口及图规划、网格、多目标、并行、增量重规划和独立速度验证。完整 3000 任务记录见上面的容器报告。
-
-## 历史记录
-
-- [20261030_public_verified](20261030_public_verified/REPORT.md) 与 [mixed 复测](20261030_public_mixed_retry/REPORT.md)：旧契约的公网完整任务记录；mixed 使用默认 120 秒客户端等待时间后完成。
-- [20261029_docker](20261029_docker/REPORT.md)：旧契约 2 CPU、2 GiB 容器的 22 项检查及三套各 1000 个任务。
-- [20261029_local](20261029_local/REPORT.md)：旧契约本地 Python 测试。
-- [20261017 公网](20261017T135804Z_public/REPORT.md)：早期接口版本与原始数据。
-
-每组目录保存 REPORT.md、report.json 和 http/。http/ 保存实际请求、完整输入和完整响应。report.json 记录输入输出的 SHA-256 和运行版本。历史内容按采集版本保留。
+运行 `test_api/run_tests.py` 可重新生成测试记录。使用 `tools/package_test_api.py --report <报告目录>` 选择要加入联调包的报告；完整命令见项目 README。源码仓库的 `tests/data/recordings/` 保留一套完整 v2 请求、响应及三套各 1000 条路线的回归数据，其采集版本记录在数据清单中。
