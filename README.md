@@ -126,7 +126,8 @@ bash tools/check_docker_release.sh "low-altitude-path-planning:$UAV_BUILD_SHA" \
 | `test_api/`、`test_api/data/` | 独立 HTTP 联调脚本、字段说明和请求数据 | 向后端交付，附本次运行的完整报告 |
 | `tools/`、`input/`、`.github/workflows/` | 测试、打包、冻结基准和 CI | 源码开发与测试保留；运行镜像不需要 |
 | `output/`、`test_api/results/`、缓存和中间构建产物 | 本地生成结果 | 不提交源码；需交付的测试报告单独打包 |
-| `internal/docs/archive/`、`internal/reports/`、旧版 `test_api/reports/` | 设计和历史测试证据 | 按需单独归档；不作为当前版本的接口依据 |
+| `internal/reports/v2-20261016/` | 固定性能验收报告及原始证据 | 保留，按报告中的采集版本和资源配置使用 |
+| `test_api/reports/README.md` | 测试记录索引 | 保留索引；完整报告按需随联调包交付 |
 
 `tests/` 面向开发者，主要通过 pytest 检查源码行为；`test_api/` 面向对接方，用标准库向运行中的服务发送真实 HTTP 请求。业务功能以 `docs/REQUIREMENTS_API_MAPPING.md` 为准；修改后同步 `test_api/REQUIREMENTS_API_MAPPING.md`。接口字段以 `docs/API.md` 和对应运行版本的 `/openapi.json` 为准。测试输入以当前 `test_api/data/manifest.json` 和实际服务版本为准；记录的输出标明采集版本。
 
